@@ -84,7 +84,7 @@ def today_message(
         for line in md(f"{pig['description']}\n\n{pig['analysis']}").splitlines()
     )
     text = (
-        f"<@!{user['open_id']}>\n\n### 🐷 今日小猪\n\n"
+        f'<qqbot-at-user id="{user["open_id"]}" />\n\n### 🐷 今日小猪\n\n'
         f"{state}\n\n**{md(pig['name'])}**\n\n"
         f"![小猪 #512px #512px]({{{{image:0}}}})\n\n"
         f"{description}\n\n"

@@ -334,7 +334,7 @@ class ConfigAndButtonsTests(unittest.TestCase):
                 "name": "猪",
                 "asset": "pig.png",
                 "description": "第一行\n第二行",
-                "analysis": "性格\n<@!someone>",
+                "analysis": '性格\n<qqbot-at-user id="someone" />',
             },
             "created": True,
             "new_species": True,
@@ -344,13 +344,14 @@ class ConfigAndButtonsTests(unittest.TestCase):
         user = {"id": 1, "open_id": "actual-member", "nickname": "不应出现在正文的昵称"}
         progress = {"unlocked": 1, "active_total": 96, "total": 1}
         message = today_message(Settings(), Path("."), user, result, progress)
-        self.assertTrue(message.text.startswith("<@!actual-member>\n"))
+        self.assertTrue(message.text.startswith('<qqbot-at-user id="actual-member" />\n'))
         self.assertNotIn(user["nickname"], message.text)
         self.assertIn("\n\n首次解锁！\n\n**猪**\n\n![", message.text)
         self.assertIn("> 第一行\n> 第二行\n>\n> 性格\n> ", message.text)
-        self.assertNotIn("<@!someone>", message.text)
+        self.assertNotIn('<qqbot-at-user id="someone" />', message.text)
         result["created"] = False
         repeated = today_message(Settings(), Path("."), user, result, progress)
+        self.assertTrue(repeated.text.startswith('<qqbot-at-user id="actual-member" />\n'))
         self.assertNotIn("首次解锁", repeated.text)
         self.assertIn("今天已经抽过", repeated.text)
 
