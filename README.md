@@ -75,6 +75,47 @@
 
 快捷按钮会按「快捷指令唤醒词」生成命令。默认留空即可在 @机器人后直接使用；如果 AstrBot 设置了 `/`、`!` 等唤醒词，请在这里填写相同内容。
 
+## ⚙️ 配置项说明
+
+以下是插件配置页中的选项及默认值。不使用图床时，关闭四个「使用图床」开关即可，图床相关选项无需填写。
+
+| 消息与日常设置 | 默认值 | 说明 |
+| --- | --- | --- |
+| 今日小猪使用图床 | 开启 | 通过图床发送，附带快捷按钮；关闭后直接发送图片 |
+| 小猪图鉴 / 我的猪圈 / 小猪排行使用图床 | 关闭 | 可分别开启；开启后通过图床发送并附带快捷按钮 |
+| `command_prefix`（快捷指令唤醒词） | 留空 | 使用自定义唤醒词时，填与 AstrBot 相同的内容 |
+| `backup_keep`（本地备份保留份数） | `7` | 自动和手动备份最多保留的份数 |
+
+**R2 / S3 图床：** 将图床类型 `provider` 设为 `s3`（默认），再填写：
+
+| 配置项 | 默认值 | 填写内容 |
+| --- | --- | --- |
+| `endpoint` | 留空 | 上传接口；R2 格式为 `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` |
+| `bucket` | 留空 | 存储桶名称 |
+| `access_key` / `secret_key` | 留空 | 存储桶的上传凭据 |
+| `public_base_url` | 留空 | 可公开访问图片的域名，如 `https://img.example.com` |
+| `region` / `addressing_style` | `auto` / `path` | R2 保持默认；其他 S3 服务按供应商要求填写 |
+
+**HTTP 图床：** 将 `provider` 设为 `http`，并按图床服务的上传 API 填写：
+
+| 配置项 | 默认值 | 填写内容 |
+| --- | --- | --- |
+| `upload_url` | 留空 | 完整的上传地址 |
+| `upload_mode` | `multipart` | 文件上传用 `multipart`；要求 Base64 JSON 时选 `json_base64` |
+| `upload_headers` / `upload_fields` | `{}` / `{}` | 图床要求的请求头和附加字段，均填写 JSON 对象 |
+| `file_field` | `file` | 图片字段名 |
+| `response_url_path` | `data.links.url` | 上传结果中图片直链的位置，如 `image.url` |
+| `success_path` / `success_value` | 留空 / `true` | 图床返回成功标记时填写；无成功标记可留空 `success_path` |
+
+**重试与缓存：** 一般保持默认即可。
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `upload_retry_count` / `image_retry_count` | `2` / `3` | 上传失败、QQ 图片发送失败后的额外重试次数；`0` 表示不重试 |
+| `retry_base_delay` / `request_timeout` | `1` 秒 / `20` 秒 | 重试等待的基础间隔、单次网络请求的超时时间 |
+| `cache_ttl_hours` | `168` 小时 | 固定猪图的图床链接缓存时间；应短于图床链接有效期 |
+| `temp_cache_hours` | `12` 小时 | 临时卡片链接复用时间；不会自动删除图床图片 |
+
 <a id="catalog"></a>
 
 ## 🧩 猪库维护
