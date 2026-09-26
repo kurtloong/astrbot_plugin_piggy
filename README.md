@@ -89,7 +89,7 @@
 
 ## 💛 致谢
 
-初始猪库与图片来自 [MegSopern/astrbot_plugin_rollpig](https://github.com/MegSopern/astrbot_plugin_rollpig/tree/42490b1b88367260c137c1147b05a3c052f22d33)，感谢 前辈们留下的一群小猪~ 项目代码遵循 [MIT 许可证](LICENSE)；随包字体 [Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc) 遵循 `resources/fonts/OFL.txt` 中的 SIL Open Font License。
+初始猪库与图片来自 [MegSopern/astrbot_plugin_rollpig](https://github.com/MegSopern/astrbot_plugin_rollpig/tree/42490b1b88367260c137c1147b05a3c052f22d33)，感谢前辈们留下的一群小猪~ <br>项目代码遵循 [MIT 许可证](LICENSE)；随包字体 [Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc) 遵循 `resources/fonts/OFL.txt` 中的 SIL Open Font License。
 
 ---
 
@@ -97,7 +97,7 @@
 
 喜欢的话，给云云点一颗 ⭐ 吧！
 
-[更新日志](CHANGELOG.md) · [反馈问题](https://github.com/yun474/astrbot_plugin_qqofficial_buttons/issues) · [MIT License](LICENSE)
+[更新日志](CHANGELOG.md) · [反馈问题](https://github.com/yun474/astrbot_plugin_piggy/issues) · [MIT License](LICENSE)
 
 **插件问题反馈 QQ 群：947667614**
 
