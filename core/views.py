@@ -68,8 +68,16 @@ def today_message(
         if not result["created"]
         else "首次解锁！"
         if result["new_species"]
-        else "已收进猪圈"
+        else "老朋友又来啦！"
     )
+    protection = ""
+    streak = result.get("repeat_streak", 0)
+    if settings.duplicate_pity and streak and progress["unlocked"] < progress["active_total"]:
+        protection = (
+            "下次领取必出未收集小猪！"
+            if streak >= settings.duplicate_pity
+            else f"重复保护 {streak}/{settings.duplicate_pity}"
+        )
     if not settings.use_host("draw"):
         card = render_today(
             root,
@@ -77,6 +85,7 @@ def today_message(
             result,
             progress,
             "今日已领取" if not result["created"] else state,
+            protection,
         )
         return Message("", (card.data,), local=True)
     description = "\n".join(
@@ -91,6 +100,8 @@ def today_message(
         f"本猪累计 **{result['count']}** 次 · 总收获 **{progress['total']}** 只\n\n"
         f"已解锁 **{progress['unlocked']}/{progress['active_total']}** · {result['day']}"
     )
+    if protection:
+        text += f"\n\n{protection}"
     return Message(text, (root / "assets" / pig["asset"],), keyboard(settings, user["open_id"]))
 
 

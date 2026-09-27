@@ -216,7 +216,9 @@ class Canvas:
         return lines
 
 
-def render_today(root: Path, name: str, result: dict, progress: dict, state: str) -> Card:
+def render_today(
+    root: Path, name: str, result: dict, progress: dict, state: str, protection: str = ""
+) -> Card:
     pig = result["pig"]
     canvas = Canvas(root, WIDTH, 1)
     description = " ".join(pig["description"].split())
@@ -257,7 +259,7 @@ def render_today(root: Path, name: str, result: dict, progress: dict, state: str
         canvas.draw.rounded_rectangle(
             (68, y, 68 + max(10, int(944 * min(ratio, 1))), y + 10), radius=5, fill=ACCENT
         )
-    canvas.text("每天一只小猪，慢慢填满收藏。", 68, y + 34, 19, SUB)
+    canvas.text(protection or "每天一只小猪，慢慢填满收藏。", 68, y + 34, 19, SUB)
     return finish(canvas.image)
 
 

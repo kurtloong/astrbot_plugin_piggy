@@ -26,7 +26,7 @@ MAX_INFLIGHT = 12
 REQUEST_TIMEOUT = 240
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集", "1.0.1")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集", "1.1.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -167,7 +167,11 @@ class PiggyPlugin(Star):
                 if self.settings.use_host(command):
                     self.settings.check_host()
                 result = await self.db.draw(
-                    user["id"], event.get_group_id(), event.message_obj.message_id
+                    user["id"],
+                    event.get_group_id(),
+                    event.message_obj.message_id,
+                    duplicate_rate_cap=self.settings.duplicate_rate_cap,
+                    duplicate_pity=self.settings.duplicate_pity,
                 )
                 message = await asyncio.to_thread(
                     today_message,

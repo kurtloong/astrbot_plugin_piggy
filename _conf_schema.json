@@ -1,4 +1,16 @@
 {
+  "duplicate_rate_cap": {
+    "description": "每日抽猪重复概率上限（%）",
+    "type": "int",
+    "default": 20,
+    "hint": "0–100。实际重复率取已收集比例与此上限的较小值。0=有新猪就必出新猪；100=自然概率。集齐后仍会重复。"
+  },
+  "duplicate_pity": {
+    "description": "连续重复保底次数",
+    "type": "int",
+    "default": 2,
+    "hint": "0–30，0=关闭。连续抽到指定次数的重复猪后，下次必出未收集猪（如有）。漏签不清零，当天重复查看不累计；已有历史也计入。"
+  },
   "display": {
     "description": "消息展示",
     "type": "object",

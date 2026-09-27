@@ -149,7 +149,14 @@ class Database:
         await self.run(lambda c: c.execute("UPDATE users SET alias=? WHERE id=?", (alias, user_id)))
 
     async def draw(
-        self, user_id: int, group_id: str, event_id: str, now: datetime | None = None
+        self,
+        user_id: int,
+        group_id: str,
+        event_id: str,
+        now: datetime | None = None,
+        *,
+        duplicate_rate_cap: int = 20,
+        duplicate_pity: int = 2,
     ) -> dict:
         now = now or datetime.now(timezone.utc)
         if now.tzinfo is None:
@@ -158,6 +165,22 @@ class Database:
 
         def draw(conn):
             conn.execute("BEGIN IMMEDIATE")
+
+            def repeat_streak():
+                records = conn.execute(
+                    """
+                    SELECT EXISTS(SELECT 1 FROM draw_records earlier
+                        WHERE earlier.user_id=d.user_id AND earlier.pig_id=d.pig_id
+                        AND earlier.id<d.id) AS repeated
+                    FROM draw_records d WHERE d.user_id=? AND d.day<=?
+                    ORDER BY d.day DESC LIMIT ?
+                    """,
+                    (user_id, day, duplicate_pity),
+                ).fetchall()
+                return next(
+                    (i for i, row in enumerate(records) if not row["repeated"]), len(records)
+                )
+
             existing = conn.execute(
                 "SELECT * FROM draw_records WHERE user_id=? AND day=?", (user_id, day)
             ).fetchone()
@@ -168,7 +191,23 @@ class Database:
                 ).fetchall()
                 if not available:
                     raise PiggyError("猪库没有启用的小猪，请联系管理员检查。")
-                pig = dict(secrets.choice(available))
+                owned_ids = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT pig_id FROM collections WHERE user_id=?", (user_id,)
+                    )
+                }
+                owned = [p for p in available if p["id"] in owned_ids]
+                unseen = [p for p in available if p["id"] not in owned_ids]
+                if not unseen:
+                    pool = owned
+                elif not owned or (duplicate_pity and repeat_streak() >= duplicate_pity):
+                    pool = unseen
+                else:
+                    # Integer comparison preserves the natural rate without rounding.
+                    threshold = min(len(owned) * 100, duplicate_rate_cap * len(available))
+                    pool = owned if secrets.randbelow(100 * len(available)) < threshold else unseen
+                pig = dict(secrets.choice(pool))
                 timestamp = now.timestamp()
                 conn.execute(
                     """
@@ -204,6 +243,7 @@ class Database:
                 "created": created,
                 "count": count,
                 "new_species": created and count == 1,
+                "repeat_streak": repeat_streak() if duplicate_pity else 0,
             }
 
         return await self.run(draw)

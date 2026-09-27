@@ -33,6 +33,146 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.temp.cleanup()
 
+    async def test_duplicate_cap_and_natural_probability_boundaries(self):
+        start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        first = await self.db.draw(self.user["id"], "a", "first", start)
+        for offset, cap, roll, repeated in (
+            (1, 20, 39, True),
+            (2, 20, 40, False),
+            (3, 100, 99, True),
+            (4, 100, 100, False),
+            (5, 0, 0, False),
+        ):
+            # Keep exactly one of the two species owned for each boundary check.
+            await self.db.run(
+                lambda c: c.execute(
+                    "DELETE FROM collections WHERE user_id=? AND pig_id<>?",
+                    (self.user["id"], first["pig"]["id"]),
+                )
+            )
+            with patch("core.database.secrets.randbelow", return_value=roll):
+                result = await self.db.draw(
+                    self.user["id"],
+                    "a",
+                    str(offset),
+                    start + timedelta(days=offset),
+                    duplicate_rate_cap=cap,
+                    duplicate_pity=0,
+                )
+            self.assertEqual(result["pig"]["id"] == first["pig"]["id"], repeated)
+
+    async def test_pity_survives_gaps_restart_and_same_day_replays(self):
+        start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        first = await self.db.draw(self.user["id"], "a", "first", start)
+        with patch("core.database.secrets.randbelow", return_value=0):
+            for offset in (1, 8):
+                result = await self.db.draw(
+                    self.user["id"],
+                    "b",
+                    str(offset),
+                    start + timedelta(days=offset),
+                )
+                self.assertEqual(result["pig"]["id"], first["pig"]["id"])
+            self.assertEqual(result["repeat_streak"], 2)
+            replay = await Database(self.root).draw(
+                self.user["id"],
+                "c",
+                "replay",
+                start + timedelta(days=8),
+            )
+            self.assertFalse(replay["created"])
+            self.assertEqual(replay["repeat_streak"], 2)
+            guaranteed = await self.db.draw(
+                self.user["id"],
+                "a",
+                "pity",
+                start + timedelta(days=9),
+            )
+        self.assertTrue(guaranteed["new_species"])
+        self.assertEqual(guaranteed["repeat_streak"], 0)
+        complete = await self.db.draw(
+            self.user["id"],
+            "a",
+            "complete",
+            start + timedelta(days=10),
+            duplicate_rate_cap=0,
+        )
+        self.assertFalse(complete["new_species"])
+        self.write_catalog(["pig", "cat", "new"])
+        await self.db.catalog(read_catalog(self.root))
+        added = await self.db.draw(
+            self.user["id"],
+            "a",
+            "added",
+            start + timedelta(days=11),
+            duplicate_rate_cap=0,
+        )
+        self.assertEqual(added["pig"]["id"], "new")
+
+    def test_duplicate_settings_validation(self):
+        schema = json.loads((Path(__file__).parents[1] / "_conf_schema.json").read_text("utf-8"))
+        for key, maximum in (("duplicate_rate_cap", 100), ("duplicate_pity", 30)):
+            self.assertEqual(schema[key]["default"], getattr(Settings(), key))
+            for invalid in (-1, maximum + 1, True, 1.5, "2", None):
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(PiggyError):
+                    Settings.from_dict({key: invalid})
+            for valid in (0, maximum):
+                self.assertEqual(getattr(Settings.from_dict({key: valid}), key), valid)
+
+    async def test_disabled_species_do_not_affect_duplicate_probability(self):
+        start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        first = await self.db.draw(self.user["id"], "a", "first", start)
+        self.write_catalog([first["pig"]["id"], "new"])
+        await self.db.catalog(read_catalog(self.root))
+        with patch("core.database.secrets.randbelow", return_value=99) as random:
+            result = await self.db.draw(
+                self.user["id"],
+                "a",
+                "next",
+                start + timedelta(days=1),
+                duplicate_rate_cap=100,
+                duplicate_pity=0,
+            )
+        random.assert_called_once_with(200)
+        self.assertEqual(result["pig"]["id"], first["pig"]["id"])
+
+    async def test_protection_messages_in_both_display_modes(self):
+        start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        await self.db.draw(self.user["id"], "a", "first", start)
+        with patch("core.database.secrets.randbelow", return_value=0):
+            for offset, expected in ((1, "重复保护 1/2"), (2, "下次领取必出未收集小猪！")):
+                result = await self.db.draw(
+                    self.user["id"],
+                    "a",
+                    str(offset),
+                    start + timedelta(days=offset),
+                )
+                progress = await self.db.collection(self.user["id"])
+                hosted = today_message(Settings(), self.root, self.user, result, progress)
+                self.assertIn(expected, hosted.text)
+                labels = []
+                original = ImageDraw.ImageDraw.text
+
+                def record(canvas, xy, text, *args, **kwargs):
+                    labels.append(str(text))
+                    return original(canvas, xy, text, *args, **kwargs)
+
+                with patch.object(ImageDraw.ImageDraw, "text", record):
+                    local = today_message(
+                        Settings(display={"draw": False}),
+                        self.root,
+                        self.user,
+                        result,
+                        progress,
+                    )
+                self.assertTrue(local.local)
+                self.assertIn(expected, labels)
+        disabled = today_message(Settings(duplicate_pity=0), self.root, self.user, result, progress)
+        self.assertNotIn("下次领取", disabled.text)
+        progress["unlocked"] = progress["active_total"]
+        complete = today_message(Settings(), self.root, self.user, result, progress)
+        self.assertNotIn("下次领取", complete.text)
+
     def write_catalog(self, ids):
         definitions = []
         for index, pig_id in enumerate(ids):

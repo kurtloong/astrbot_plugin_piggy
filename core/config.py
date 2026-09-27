@@ -23,6 +23,8 @@ def https_url(value: str) -> str:
 
 @dataclass(frozen=True)
 class Settings:
+    duplicate_rate_cap: int = 20
+    duplicate_pity: int = 2
     display: dict = field(
         default_factory=lambda: {
             "draw": True,
@@ -78,6 +80,8 @@ class Settings:
             if definition.type is str and not isinstance(getattr(obj, name), str):
                 raise PiggyError(f"配置 {name} 必须为字符串。")
         for key, low, high in (
+            ("duplicate_rate_cap", 0, 100),
+            ("duplicate_pity", 0, 30),
             ("upload_retry_count", 0, 10),
             ("image_retry_count", 0, 10),
             ("backup_keep", 1, 30),
