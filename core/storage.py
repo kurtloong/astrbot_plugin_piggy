@@ -80,7 +80,7 @@ class S3Host:
                     aws_secret_access_key=self.settings.secret_key,
                     region_name=self.settings.region,
                     config=Config(
-                        signature_version="s3v4",
+                        signature_version=self.settings.signature_version,
                         s3={"addressing_style": self.settings.addressing_style},
                         retries={"total_max_attempts": 1},
                         connect_timeout=self.settings.request_timeout,

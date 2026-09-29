@@ -1,6 +1,93 @@
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
+
+S3_PROVIDERS = {
+    "Cloudflare R2": ("r2", "auto", "path", "s3v4"),
+    "AWS S3": ("aws", "", "virtual", "s3v4"),
+    "阿里云 OSS": ("oss", "us-east-1", "virtual", "s3"),
+    "腾讯云 COS": ("cos", "", "virtual", "s3v4"),
+    "七牛云 Kodo": ("qiniu", "", "virtual", "s3v4"),
+    "MinIO": ("minio", "us-east-1", "path", "s3v4"),
+    "Backblaze B2": ("b2", "", "path", "s3v4"),
+    "DigitalOcean Spaces": ("spaces", "", "virtual", "s3v4"),
+    "其他 S3 兼容存储": ("s3", "us-east-1", "path", "s3v4"),
+}
+S3_FIELDS = (
+    "endpoint",
+    "bucket",
+    "access_key",
+    "secret_key",
+    "region",
+    "public_base_url",
+    "addressing_style",
+)
+HTTP_FIELDS = (
+    "upload_url",
+    "upload_mode",
+    "upload_headers",
+    "upload_fields",
+    "file_field",
+    "response_url_path",
+    "success_path",
+    "success_value",
+)
+
+
+def migrate_host_config(data: dict) -> bool:
+    """Preserve both legacy backends once, including schema-filled defaults."""
+    if data.get("image_host_migrated", False):
+        return False
+    host = data.setdefault("image_host", {})
+    if not isinstance(host, dict):
+        raise PiggyError("图床配置必须为对象。")
+    defaults = Settings()
+    legacy_values = {
+        key: data[key] for key in (*S3_FIELDS, *HTTP_FIELDS, "provider") if key in data
+    }
+    for key in ("upload_headers", "upload_fields", "success_value"):
+        if isinstance(legacy_values.get(key), str):
+            try:
+                legacy_values[key] = json.loads(legacy_values[key])
+            except ValueError:
+                pass  # Preserve malformed legacy input for normal settings validation.
+    legacy = any(value != getattr(defaults, key) for key, value in legacy_values.items())
+    if legacy:
+        for section, fields in (("s3", S3_FIELDS), ("http", HTTP_FIELDS)):
+            target = host.setdefault(section, {})
+            if not isinstance(target, dict):
+                raise PiggyError(f"图床 {section} 配置必须为对象。")
+            section_defaults = {key: getattr(defaults, key) for key in fields}
+            if section == "s3":
+                section_defaults.update(region="us-east-1", addressing_style="auto")
+            else:
+                section_defaults.update(
+                    upload_headers="{}", upload_fields="{}", success_value="true"
+                )
+            if all(target.get(key, value) == value for key, value in section_defaults.items()):
+                target.update({key: data.get(key, getattr(defaults, key)) for key in fields})
+                if section == "http":
+                    for key in ("upload_headers", "upload_fields", "success_value"):
+                        if not isinstance(target[key], str):
+                            target[key] = json.dumps(target[key], ensure_ascii=False)
+        # A previously saved new provider choice takes precedence over old fields.
+        r2_defaults = {key: getattr(defaults, key) for key in S3_FIELDS}
+        r2_defaults["addressing_style"] = "auto"
+        r2 = host.get("r2", {})
+        if not isinstance(r2, dict):
+            raise PiggyError("图床 r2 配置必须为对象。")
+        if host.get("provider", "Cloudflare R2") == "Cloudflare R2" and all(
+            r2.get(key, value) == value for key, value in r2_defaults.items()
+        ):
+            old_provider = data.get("provider", "s3")
+            host["provider"] = {"s3": "其他 S3 兼容存储", "http": "自定义 HTTP"}.get(
+                old_provider, old_provider
+            )
+    for key in (*S3_FIELDS, *HTTP_FIELDS, "provider"):
+        data.pop(key, None)
+    data["image_host_migrated"] = True
+    return True
 
 
 class PiggyError(Exception):
@@ -42,6 +129,7 @@ class Settings:
     region: str = "auto"
     public_base_url: str = ""
     addressing_style: str = "path"
+    signature_version: str = "s3v4"
     upload_url: str = ""
     upload_mode: str = "multipart"
     upload_headers: dict = field(default_factory=dict, repr=False)
@@ -61,6 +149,48 @@ class Settings:
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":
         values = {key: data[key] for key in cls.__dataclass_fields__ if key in data}
+        if "image_host" in data:
+            data = deepcopy(dict(data))
+            migrate_host_config(data)
+            host = data["image_host"]
+            if not isinstance(host, dict):
+                raise PiggyError("图床配置必须为对象。")
+            provider = host.get("provider", "Cloudflare R2")
+            if provider in S3_PROVIDERS:
+                section, region, style, signature = S3_PROVIDERS[provider]
+                fields = S3_FIELDS
+            elif provider in {"自定义 HTTP", "兰空 Lsky Pro V2"}:
+                section = "http" if provider == "自定义 HTTP" else "lsky"
+                fields = HTTP_FIELDS if section == "http" else ("upload_url",)
+            else:
+                raise PiggyError("请选择有效的图床类型。")
+            selected = host.get(section, {})
+            if not isinstance(selected, dict):
+                raise PiggyError(f"图床 {section} 配置必须为对象。")
+            # Never leak credentials or options from an inactive backend.
+            for key in (*S3_FIELDS, *HTTP_FIELDS, "signature_version"):
+                values.pop(key, None)
+            values.update({key: selected[key] for key in fields if key in selected})
+            values["provider"] = "s3" if provider in S3_PROVIDERS else "http"
+            if values["provider"] == "s3":
+                configured_region = selected.get("region", "")
+                values["region"] = (
+                    configured_region.strip() or region
+                    if isinstance(configured_region, str)
+                    else configured_region
+                )
+                configured_style = selected.get("addressing_style", "auto")
+                values["addressing_style"] = (
+                    style if configured_style == "auto" or section == "oss" else configured_style
+                )
+                values["signature_version"] = signature
+            elif section == "lsky":
+                authorization = selected.get("authorization", "")
+                values.update(
+                    upload_headers={"Authorization": authorization} if authorization else {},
+                    success_path="status",
+                    success_value=True,
+                )
         for key in ("endpoint", "bucket", "access_key", "secret_key", "region", "public_base_url"):
             if isinstance(values.get(key), str):
                 values[key] = values[key].strip()

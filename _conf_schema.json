@@ -47,6 +47,705 @@
       "ranking": false
     }
   },
+  "backup_keep": {
+    "description": "本地备份保留份数",
+    "type": "int",
+    "default": 7,
+    "hint": "启动及每 24 小时备份一次；管理员也可执行小猪备份。备份不上传图床。"
+  },
+  "command_prefix": {
+    "description": "快捷指令唤醒词",
+    "type": "string",
+    "default": "",
+    "hint": "可选，默认留空：QQ 自动插入 @机器人，后面直接接命令。填写 /、! 或自定义唤醒词时会原样加在命令前；需要分隔空格时请一并填写。应与 AstrBot 配置一致。旧配置已保存的 / 可手动清空。"
+  },
+  "show_image_host": {
+    "description": "展开图床配置",
+    "type": "bool",
+    "default": false,
+    "hint": "仅控制配置页显示；收起不会停用图床或清空已保存参数。"
+  },
+  "image_host": {
+    "description": "图床配置",
+    "type": "object",
+    "condition": {
+      "show_image_host": true
+    },
+    "hint": "四个消息功能共用所选图床；各家参数独立保存。",
+    "items": {
+      "provider": {
+        "description": "图床类型",
+        "type": "string",
+        "default": "Cloudflare R2",
+        "options": [
+          "Cloudflare R2",
+          "AWS S3",
+          "阿里云 OSS",
+          "腾讯云 COS",
+          "七牛云 Kodo",
+          "MinIO",
+          "Backblaze B2",
+          "DigitalOcean Spaces",
+          "其他 S3 兼容存储",
+          "兰空 Lsky Pro V2",
+          "自定义 HTTP"
+        ],
+        "hint": "仅显示所选图床的参数。各类型独立保存，切换回来无需重填。"
+      },
+      "r2": {
+        "description": "Cloudflare R2 配置",
+        "type": "object",
+        "condition": {
+          "provider": "Cloudflare R2"
+        },
+        "items": {
+          "endpoint": {
+            "description": "S3 上传接口",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS S3 API 端点，不含桶名；不是图片公网域名。例如 https://账户ID.r2.cloudflarestorage.com。"
+          },
+          "bucket": {
+            "description": "S3 桶名",
+            "type": "string",
+            "default": "",
+            "hint": "只填桶名称，不填 URL。"
+          },
+          "access_key": {
+            "description": "S3 Access Key ID",
+            "type": "string",
+            "default": "",
+            "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。"
+          },
+          "secret_key": {
+            "description": "S3 Secret Access Key",
+            "type": "string",
+            "default": "",
+            "hint": "密钥仅用于上传，不会放进 Markdown 或日志。"
+          },
+          "region": {
+            "description": "S3 区域",
+            "type": "string",
+            "default": "auto",
+            "hint": "填写服务商的实际区域。默认 auto。"
+          },
+          "public_base_url": {
+            "description": "图片公网根地址",
+            "type": "string",
+            "default": "",
+            "hint": "填写无需登录即可访问图片的桶域名或 CDN 地址，例如 https://img.example.com。"
+          },
+          "addressing_style": {
+            "description": "S3 地址模式",
+            "type": "string",
+            "default": "auto",
+            "hint": "auto 自动使用 path。通常无需修改。",
+            "options": [
+              "path",
+              "virtual",
+              "auto"
+            ]
+          }
+        }
+      },
+      "aws": {
+        "description": "AWS S3 配置",
+        "type": "object",
+        "condition": {
+          "provider": "AWS S3"
+        },
+        "items": {
+          "endpoint": {
+            "description": "S3 上传接口",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS S3 API 端点，不含桶名；不是图片公网域名。"
+          },
+          "bucket": {
+            "description": "S3 桶名",
+            "type": "string",
+            "default": "",
+            "hint": "只填桶名称，不填 URL。"
+          },
+          "access_key": {
+            "description": "S3 Access Key ID",
+            "type": "string",
+            "default": "",
+            "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。"
+          },
+          "secret_key": {
+            "description": "S3 Secret Access Key",
+            "type": "string",
+            "default": "",
+            "hint": "密钥仅用于上传，不会放进 Markdown 或日志。"
+          },
+          "region": {
+            "description": "S3 区域",
+            "type": "string",
+            "default": "",
+            "hint": "填写服务商的实际区域。此项必填，请从控制台复制。"
+          },
+          "public_base_url": {
+            "description": "图片公网根地址",
+            "type": "string",
+            "default": "",
+            "hint": "填写无需登录即可访问图片的桶域名或 CDN 地址，例如 https://img.example.com。"
+          },
+          "addressing_style": {
+            "description": "S3 地址模式",
+            "type": "string",
+            "default": "auto",
+            "hint": "auto 自动使用 virtual。通常无需修改。",
+            "options": [
+              "path",
+              "virtual",
+              "auto"
+            ]
+          }
+        }
+      },
+      "oss": {
+        "description": "阿里云 OSS 配置",
+        "type": "object",
+        "condition": {
+          "provider": "阿里云 OSS"
+        },
+        "items": {
+          "endpoint": {
+            "description": "S3 上传接口",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS S3 API 端点，不含桶名；不是图片公网域名。"
+          },
+          "bucket": {
+            "description": "S3 桶名",
+            "type": "string",
+            "default": "",
+            "hint": "只填桶名称，不填 URL。"
+          },
+          "access_key": {
+            "description": "S3 Access Key ID",
+            "type": "string",
+            "default": "",
+            "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。"
+          },
+          "secret_key": {
+            "description": "S3 Secret Access Key",
+            "type": "string",
+            "default": "",
+            "hint": "密钥仅用于上传，不会放进 Markdown 或日志。"
+          },
+          "region": {
+            "description": "S3 区域",
+            "type": "string",
+            "default": "us-east-1",
+            "hint": "填写服务商的实际区域。默认 us-east-1。"
+          },
+          "public_base_url": {
+            "description": "图片公网根地址",
+            "type": "string",
+            "default": "",
+            "hint": "填写无需登录即可访问图片的桶域名或 CDN 地址，例如 https://img.example.com。"
+          },
+          "addressing_style": {
+            "description": "S3 地址模式",
+            "type": "string",
+            "default": "auto",
+            "hint": "auto 自动使用 virtual。OSS 固定使用 virtual。",
+            "options": [
+              "path",
+              "virtual",
+              "auto"
+            ]
+          }
+        }
+      },
+      "cos": {
+        "description": "腾讯云 COS 配置",
+        "type": "object",
+        "condition": {
+          "provider": "腾讯云 COS"
+        },
+        "items": {
+          "endpoint": {
+            "description": "S3 上传接口",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS S3 API 端点，不含桶名；不是图片公网域名。"
+          },
+          "bucket": {
+            "description": "S3 桶名",
+            "type": "string",
+            "default": "",
+            "hint": "只填桶名称，不填 URL。"
+          },
+          "access_key": {
+            "description": "S3 Access Key ID",
+            "type": "string",
+            "default": "",
+            "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。"
+          },
+          "secret_key": {
+            "description": "S3 Secret Access Key",
+            "type": "string",
+            "default": "",
+            "hint": "密钥仅用于上传，不会放进 Markdown 或日志。"
+          },
+          "region": {
+            "description": "S3 区域",
+            "type": "string",
+            "default": "",
+            "hint": "填写服务商的实际区域。此项必填，请从控制台复制。"
+          },
+          "public_base_url": {
+            "description": "图片公网根地址",
+            "type": "string",
+            "default": "",
+            "hint": "填写无需登录即可访问图片的桶域名或 CDN 地址，例如 https://img.example.com。"
+          },
+          "addressing_style": {
+            "description": "S3 地址模式",
+            "type": "string",
+            "default": "auto",
+            "hint": "auto 自动使用 virtual。通常无需修改。",
+            "options": [
+              "path",
+              "virtual",
+              "auto"
+            ]
+          }
+        }
+      },
+      "qiniu": {
+        "description": "七牛云 Kodo 配置",
+        "type": "object",
+        "condition": {
+          "provider": "七牛云 Kodo"
+        },
+        "items": {
+          "endpoint": {
+            "description": "S3 上传接口",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS S3 API 端点，不含桶名；不是图片公网域名。"
+          },
+          "bucket": {
+            "description": "S3 桶名",
+            "type": "string",
+            "default": "",
+            "hint": "只填桶名称，不填 URL。"
+          },
+          "access_key": {
+            "description": "S3 Access Key ID",
+            "type": "string",
+            "default": "",
+            "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。"
+          },
+          "secret_key": {
+            "description": "S3 Secret Access Key",
+            "type": "string",
+            "default": "",
+            "hint": "密钥仅用于上传，不会放进 Markdown 或日志。"
+          },
+          "region": {
+            "description": "S3 区域",
+            "type": "string",
+            "default": "",
+            "hint": "填写服务商的实际区域。此项必填，请从控制台复制。"
+          },
+          "public_base_url": {
+            "description": "图片公网根地址",
+            "type": "string",
+            "default": "",
+            "hint": "填写无需登录即可访问图片的桶域名或 CDN 地址，例如 https://img.example.com。"
+          },
+          "addressing_style": {
+            "description": "S3 地址模式",
+            "type": "string",
+            "default": "auto",
+            "hint": "auto 自动使用 virtual。通常无需修改。",
+            "options": [
+              "path",
+              "virtual",
+              "auto"
+            ]
+          }
+        }
+      },
+      "minio": {
+        "description": "MinIO 配置",
+        "type": "object",
+        "condition": {
+          "provider": "MinIO"
+        },
+        "items": {
+          "endpoint": {
+            "description": "S3 上传接口",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS S3 API 端点，不含桶名；不是图片公网域名。"
+          },
+          "bucket": {
+            "description": "S3 桶名",
+            "type": "string",
+            "default": "",
+            "hint": "只填桶名称，不填 URL。"
+          },
+          "access_key": {
+            "description": "S3 Access Key ID",
+            "type": "string",
+            "default": "",
+            "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。"
+          },
+          "secret_key": {
+            "description": "S3 Secret Access Key",
+            "type": "string",
+            "default": "",
+            "hint": "密钥仅用于上传，不会放进 Markdown 或日志。"
+          },
+          "region": {
+            "description": "S3 区域",
+            "type": "string",
+            "default": "us-east-1",
+            "hint": "填写服务商的实际区域。默认 us-east-1。"
+          },
+          "public_base_url": {
+            "description": "图片公网根地址",
+            "type": "string",
+            "default": "",
+            "hint": "填写无需登录即可访问图片的桶域名或 CDN 地址，例如 https://img.example.com。"
+          },
+          "addressing_style": {
+            "description": "S3 地址模式",
+            "type": "string",
+            "default": "auto",
+            "hint": "auto 自动使用 path。通常无需修改。",
+            "options": [
+              "path",
+              "virtual",
+              "auto"
+            ]
+          }
+        }
+      },
+      "b2": {
+        "description": "Backblaze B2 配置",
+        "type": "object",
+        "condition": {
+          "provider": "Backblaze B2"
+        },
+        "items": {
+          "endpoint": {
+            "description": "S3 上传接口",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS S3 API 端点，不含桶名；不是图片公网域名。"
+          },
+          "bucket": {
+            "description": "S3 桶名",
+            "type": "string",
+            "default": "",
+            "hint": "只填桶名称，不填 URL。"
+          },
+          "access_key": {
+            "description": "S3 Access Key ID",
+            "type": "string",
+            "default": "",
+            "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。"
+          },
+          "secret_key": {
+            "description": "S3 Secret Access Key",
+            "type": "string",
+            "default": "",
+            "hint": "密钥仅用于上传，不会放进 Markdown 或日志。"
+          },
+          "region": {
+            "description": "S3 区域",
+            "type": "string",
+            "default": "",
+            "hint": "填写服务商的实际区域。此项必填，请从控制台复制。"
+          },
+          "public_base_url": {
+            "description": "图片公网根地址",
+            "type": "string",
+            "default": "",
+            "hint": "填写无需登录即可访问图片的桶域名或 CDN 地址，例如 https://img.example.com。"
+          },
+          "addressing_style": {
+            "description": "S3 地址模式",
+            "type": "string",
+            "default": "auto",
+            "hint": "auto 自动使用 path。通常无需修改。",
+            "options": [
+              "path",
+              "virtual",
+              "auto"
+            ]
+          }
+        }
+      },
+      "spaces": {
+        "description": "DigitalOcean Spaces 配置",
+        "type": "object",
+        "condition": {
+          "provider": "DigitalOcean Spaces"
+        },
+        "items": {
+          "endpoint": {
+            "description": "S3 上传接口",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS S3 API 端点，不含桶名；不是图片公网域名。"
+          },
+          "bucket": {
+            "description": "S3 桶名",
+            "type": "string",
+            "default": "",
+            "hint": "只填桶名称，不填 URL。"
+          },
+          "access_key": {
+            "description": "S3 Access Key ID",
+            "type": "string",
+            "default": "",
+            "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。"
+          },
+          "secret_key": {
+            "description": "S3 Secret Access Key",
+            "type": "string",
+            "default": "",
+            "hint": "密钥仅用于上传，不会放进 Markdown 或日志。"
+          },
+          "region": {
+            "description": "S3 区域",
+            "type": "string",
+            "default": "",
+            "hint": "填写服务商的实际区域。此项必填，请从控制台复制。"
+          },
+          "public_base_url": {
+            "description": "图片公网根地址",
+            "type": "string",
+            "default": "",
+            "hint": "填写无需登录即可访问图片的桶域名或 CDN 地址，例如 https://img.example.com。"
+          },
+          "addressing_style": {
+            "description": "S3 地址模式",
+            "type": "string",
+            "default": "auto",
+            "hint": "auto 自动使用 virtual。通常无需修改。",
+            "options": [
+              "path",
+              "virtual",
+              "auto"
+            ]
+          }
+        }
+      },
+      "s3": {
+        "description": "其他 S3 兼容存储 配置",
+        "type": "object",
+        "condition": {
+          "provider": "其他 S3 兼容存储"
+        },
+        "items": {
+          "endpoint": {
+            "description": "S3 上传接口",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS S3 API 端点，不含桶名；不是图片公网域名。"
+          },
+          "bucket": {
+            "description": "S3 桶名",
+            "type": "string",
+            "default": "",
+            "hint": "只填桶名称，不填 URL。"
+          },
+          "access_key": {
+            "description": "S3 Access Key ID",
+            "type": "string",
+            "default": "",
+            "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。"
+          },
+          "secret_key": {
+            "description": "S3 Secret Access Key",
+            "type": "string",
+            "default": "",
+            "hint": "密钥仅用于上传，不会放进 Markdown 或日志。"
+          },
+          "region": {
+            "description": "S3 区域",
+            "type": "string",
+            "default": "us-east-1",
+            "hint": "填写服务商的实际区域。默认 us-east-1。"
+          },
+          "public_base_url": {
+            "description": "图片公网根地址",
+            "type": "string",
+            "default": "",
+            "hint": "填写无需登录即可访问图片的桶域名或 CDN 地址，例如 https://img.example.com。"
+          },
+          "addressing_style": {
+            "description": "S3 地址模式",
+            "type": "string",
+            "default": "auto",
+            "hint": "auto 自动使用 path。通常无需修改。",
+            "options": [
+              "path",
+              "virtual",
+              "auto"
+            ]
+          }
+        }
+      },
+      "lsky": {
+        "description": "兰空 Lsky Pro V2 配置",
+        "type": "object",
+        "condition": {
+          "provider": "兰空 Lsky Pro V2"
+        },
+        "items": {
+          "upload_url": {
+            "description": "上传 API 地址",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS 地址，例如 https://你的图床/api/v1/upload。"
+          },
+          "authorization": {
+            "description": "Authorization 鉴权值",
+            "type": "string",
+            "default": "",
+            "hint": "例如 Bearer 你的Token；匿名上传可留空。"
+          }
+        }
+      },
+      "http": {
+        "description": "自定义 HTTP 配置",
+        "type": "object",
+        "condition": {
+          "provider": "自定义 HTTP"
+        },
+        "items": {
+          "upload_url": {
+            "description": "HTTP 图床上传 API",
+            "type": "string",
+            "default": "",
+            "hint": "填写完整 HTTPS 上传接口地址。"
+          },
+          "upload_mode": {
+            "description": "HTTP 上传编码",
+            "type": "string",
+            "default": "multipart",
+            "hint": "multipart 上传文件；json_base64 将图片编码后放进 JSON 字段。",
+            "options": [
+              "multipart",
+              "json_base64"
+            ]
+          },
+          "upload_headers": {
+            "description": "HTTP 请求头 JSON",
+            "type": "text",
+            "default": "{}",
+            "hint": "例如 {\"Authorization\":\"Bearer token\"}。不要手填 multipart 的 Content-Type。"
+          },
+          "upload_fields": {
+            "description": "HTTP 附加字段 JSON",
+            "type": "text",
+            "default": "{}",
+            "hint": "例如 {\"strategy_id\":1} 或 {\"key\":\"API_KEY\",\"format\":\"json\"}。"
+          },
+          "file_field": {
+            "description": "HTTP 图片字段名",
+            "type": "string",
+            "default": "file",
+            "hint": "Lsky 通常为 file，Chevereto 通常为 source。"
+          },
+          "response_url_path": {
+            "description": "HTTP 响应直链路径",
+            "type": "string",
+            "default": "data.links.url",
+            "hint": "以点分隔对象字段/数组索引；例如 data.links.url、image.url、data.0.url。"
+          },
+          "success_path": {
+            "description": "HTTP 成功状态路径",
+            "type": "string",
+            "default": "",
+            "hint": "可选；例如 status 或 status_code。空值表示只验证 HTTP 状态和图片直链。"
+          },
+          "success_value": {
+            "description": "HTTP 成功值 JSON",
+            "type": "text",
+            "default": "true",
+            "hint": "填 true、200 或 \"success\"，必须与返回字段类型一致。"
+          }
+        }
+      }
+    }
+  },
+  "show_network_settings": {
+    "description": "展开重试与缓存设置",
+    "type": "bool",
+    "default": false,
+    "hint": "图床与 QQ 上传共用的高级设置，通常保持默认即可。"
+  },
+  "upload_retry_count": {
+    "description": "图床 / QQ 本地上传失败重试次数",
+    "type": "int",
+    "default": 2,
+    "hint": "不含首次请求；0=只尝试一次。仅重试网络异常、429 和服务端临时失败。",
+    "condition": {
+      "show_network_settings": true
+    }
+  },
+  "image_retry_count": {
+    "description": "QQ 图片转存/临时发送失败重试次数",
+    "type": "int",
+    "default": 3,
+    "hint": "不含首次请求；0=只尝试一次。强制校验 QQ 图片转存，超时保留消息序号，明确拒绝后才更换序号。",
+    "condition": {
+      "show_network_settings": true
+    }
+  },
+  "retry_base_delay": {
+    "description": "重试基础间隔（秒）",
+    "type": "float",
+    "default": 1.0,
+    "hint": "指数退避，单次等待上限 15 秒；本次处理最多等待约 240 秒。",
+    "condition": {
+      "show_network_settings": true
+    }
+  },
+  "request_timeout": {
+    "description": "单次网络请求超时（秒）",
+    "type": "float",
+    "default": 20.0,
+    "hint": "图床上传及 QQ 请求的网络超时。",
+    "condition": {
+      "show_network_settings": true
+    }
+  },
+  "cache_ttl_hours": {
+    "description": "图床直链缓存时间（小时）",
+    "type": "int",
+    "default": 168,
+    "hint": "超过时间重新上传；QQ 明确报告图片转存失败时也会重新上传一次。应小于图床链接有效期。",
+    "condition": {
+      "show_network_settings": true
+    }
+  },
+  "temp_cache_hours": {
+    "description": "临时卡片 URL 缓存（小时）",
+    "type": "int",
+    "default": 12,
+    "hint": "1–24 小时；建议 R2 对 piggy/temp/ 设置 7 天过期。此配置只管 URL 复用，不会设置图床删除规则。",
+    "condition": {
+      "show_network_settings": true
+    }
+  },
+  "image_host_migrated": {
+    "description": "图床配置迁移标记",
+    "type": "bool",
+    "default": false,
+    "invisible": true
+  },
   "provider": {
     "description": "图床类型",
     "type": "string",
@@ -55,43 +754,50 @@
     "options": [
       "s3",
       "http"
-    ]
+    ],
+    "invisible": true
   },
   "endpoint": {
     "description": "S3 上传接口",
     "type": "string",
     "default": "",
-    "hint": "R2：https://<ACCOUNT_ID>.r2.cloudflarestorage.com；不是图片公网域名。"
+    "hint": "R2：https://<ACCOUNT_ID>.r2.cloudflarestorage.com；不是图片公网域名。",
+    "invisible": true
   },
   "bucket": {
     "description": "S3 桶名",
     "type": "string",
     "default": "",
-    "hint": "只填桶名称，不填 URL。"
+    "hint": "只填桶名称，不填 URL。",
+    "invisible": true
   },
   "access_key": {
     "description": "S3 Access Key ID",
     "type": "string",
     "default": "",
-    "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。"
+    "hint": "使用只允许目标桶读写的 API 凭据；不要填写 Cloudflare 全局 API Key。",
+    "invisible": true
   },
   "secret_key": {
     "description": "S3 Secret Access Key",
     "type": "string",
     "default": "",
-    "hint": "密钥仅用于上传，不会放进 Markdown 或日志。"
+    "hint": "密钥仅用于上传，不会放进 Markdown 或日志。",
+    "invisible": true
   },
   "region": {
     "description": "S3 区域",
     "type": "string",
     "default": "auto",
-    "hint": "R2 填 auto，其他存储按供应商要求填写。"
+    "hint": "R2 填 auto，其他存储按供应商要求填写。",
+    "invisible": true
   },
   "public_base_url": {
     "description": "图片公网根地址",
     "type": "string",
     "default": "",
-    "hint": "例如 https://img.example.com；需已绑定 R2 桶且无需登录即可下载。"
+    "hint": "例如 https://img.example.com；需已绑定 R2 桶且无需登录即可下载。",
+    "invisible": true
   },
   "addressing_style": {
     "description": "S3 地址模式",
@@ -102,13 +808,15 @@
       "path",
       "virtual",
       "auto"
-    ]
+    ],
+    "invisible": true
   },
   "upload_url": {
     "description": "HTTP 图床上传 API",
     "type": "string",
     "default": "",
-    "hint": "provider=http 时使用。填写完整 HTTPS 上传地址。"
+    "hint": "provider=http 时使用。填写完整 HTTPS 上传地址。",
+    "invisible": true
   },
   "upload_mode": {
     "description": "HTTP 上传编码",
@@ -118,90 +826,49 @@
     "options": [
       "multipart",
       "json_base64"
-    ]
+    ],
+    "invisible": true
   },
   "upload_headers": {
     "description": "HTTP 请求头 JSON",
     "type": "text",
     "default": "{}",
-    "hint": "例如 {\"Authorization\":\"Bearer token\"}。不要手填 multipart 的 Content-Type。"
+    "hint": "例如 {\"Authorization\":\"Bearer token\"}。不要手填 multipart 的 Content-Type。",
+    "invisible": true
   },
   "upload_fields": {
     "description": "HTTP 附加字段 JSON",
     "type": "text",
     "default": "{}",
-    "hint": "例如 {\"strategy_id\":1} 或 {\"key\":\"API_KEY\",\"format\":\"json\"}。"
+    "hint": "例如 {\"strategy_id\":1} 或 {\"key\":\"API_KEY\",\"format\":\"json\"}。",
+    "invisible": true
   },
   "file_field": {
     "description": "HTTP 图片字段名",
     "type": "string",
     "default": "file",
-    "hint": "Lsky 通常为 file，Chevereto 通常为 source。"
+    "hint": "Lsky 通常为 file，Chevereto 通常为 source。",
+    "invisible": true
   },
   "response_url_path": {
     "description": "HTTP 响应直链路径",
     "type": "string",
     "default": "data.links.url",
-    "hint": "以点分隔对象字段/数组索引；例如 data.links.url、image.url、data.0.url。"
+    "hint": "以点分隔对象字段/数组索引；例如 data.links.url、image.url、data.0.url。",
+    "invisible": true
   },
   "success_path": {
     "description": "HTTP 成功状态路径",
     "type": "string",
     "default": "",
-    "hint": "可选；例如 status 或 status_code。空值表示只验证 HTTP 状态和图片直链。"
+    "hint": "可选；例如 status 或 status_code。空值表示只验证 HTTP 状态和图片直链。",
+    "invisible": true
   },
   "success_value": {
     "description": "HTTP 成功值 JSON",
     "type": "text",
     "default": "true",
-    "hint": "填 true、200 或 \"success\"，必须与返回字段类型一致。"
-  },
-  "upload_retry_count": {
-    "description": "图床 / QQ 本地上传失败重试次数",
-    "type": "int",
-    "default": 2,
-    "hint": "不含首次请求；0=只尝试一次。仅重试网络异常、429 和服务端临时失败。"
-  },
-  "image_retry_count": {
-    "description": "QQ 图片转存/临时发送失败重试次数",
-    "type": "int",
-    "default": 3,
-    "hint": "不含首次请求；0=只尝试一次。强制校验 QQ 图片转存，超时保留消息序号，明确拒绝后才更换序号。"
-  },
-  "retry_base_delay": {
-    "description": "重试基础间隔（秒）",
-    "type": "float",
-    "default": 1.0,
-    "hint": "指数退避，单次等待上限 15 秒；本次处理最多等待约 240 秒。"
-  },
-  "request_timeout": {
-    "description": "单次网络请求超时（秒）",
-    "type": "float",
-    "default": 20.0,
-    "hint": "图床上传及 QQ 请求的网络超时。"
-  },
-  "backup_keep": {
-    "description": "本地备份保留份数",
-    "type": "int",
-    "default": 7,
-    "hint": "启动及每 24 小时备份一次；管理员也可执行小猪备份。备份不上传图床。"
-  },
-  "cache_ttl_hours": {
-    "description": "图床直链缓存时间（小时）",
-    "type": "int",
-    "default": 168,
-    "hint": "超过时间重新上传；QQ 明确报告图片转存失败时也会重新上传一次。应小于图床链接有效期。"
-  },
-  "command_prefix": {
-    "description": "快捷指令唤醒词",
-    "type": "string",
-    "default": "",
-    "hint": "可选，默认留空：QQ 自动插入 @机器人，后面直接接命令。填写 /、! 或自定义唤醒词时会原样加在命令前；需要分隔空格时请一并填写。应与 AstrBot 配置一致。旧配置已保存的 / 可手动清空。"
-  },
-  "temp_cache_hours": {
-    "description": "临时卡片 URL 缓存（小时）",
-    "type": "int",
-    "default": 12,
-    "hint": "1–24 小时；建议 R2 对 piggy/temp/ 设置 7 天过期。此配置只管 URL 复用，不会设置图床删除规则。"
+    "hint": "填 true、200 或 \"success\"，必须与返回字段类型一致。",
+    "invisible": true
   }
 }

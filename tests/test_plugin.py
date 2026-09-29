@@ -8,10 +8,15 @@ import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from botpy.message import C2CMessage, GroupMessage
 from botpy.message import Message as ChannelMessage
+
+
+class FakeConfig(dict):
+    def save_config(self):
+        pass
 
 
 class OfficialEvent:
@@ -189,21 +194,28 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         modules["astrbot.api.star"].StarTools = SimpleNamespace(get_data_dir=lambda name: self.root)
         modules["astrbot.api.star"].register = lambda *args: lambda cls: cls
         modules[names[-1]].QQOfficialMessageEvent = OfficialEvent
+        package = types.ModuleType("astrbot_plugin_piggy")
+        package.__path__ = [str(Path(__file__).resolve().parents[1])]
+        modules["astrbot_plugin_piggy"] = package
         self.patcher = patch.dict(sys.modules, modules)
         self.patcher.start()
         self.parent = str(Path(__file__).resolve().parents[2])
         sys.path.insert(0, self.parent)
         sys.modules.pop("astrbot_plugin_piggy.main", None)
         self.module = importlib.import_module("astrbot_plugin_piggy.main")
-        self.config = {
-            "endpoint": "https://r2.example.com",
-            "bucket": "pigs",
-            "access_key": "key",
-            "secret_key": "secret",
-            "public_base_url": "https://img.example.com",
-            "image_retry_count": 0,
-        }
+        self.config = FakeConfig(
+            {
+                "endpoint": "https://r2.example.com",
+                "bucket": "pigs",
+                "access_key": "key",
+                "secret_key": "secret",
+                "public_base_url": "https://img.example.com",
+                "image_retry_count": 0,
+            }
+        )
+        self.config.save_config = Mock()
         self.plugin = self.module.PiggyPlugin(object(), self.config)
+        self.config.save_config.assert_called_once_with()
         self.plugin.transport.upload_image = AsyncMock(return_value="qq-image-info")
         self.plugin.avatars.get_many = AsyncMock(return_value={})
         self.plugin.transport.request = AsyncMock(return_value={"id": "sent"})

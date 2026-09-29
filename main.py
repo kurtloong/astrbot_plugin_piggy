@@ -14,7 +14,7 @@ from botpy.message import GroupMessage
 
 from .core.avatars import Avatars
 from .core.catalog import initialize_catalog, read_catalog
-from .core.config import PiggyError, Settings
+from .core.config import PiggyError, Settings, migrate_host_config
 from .core.database import Database
 from .core.delivery import Message, QQError, QQTransport, Sender, message_key
 from .core.diagnostics import exception_detail
@@ -26,10 +26,12 @@ MAX_INFLIGHT = 12
 REQUEST_TIMEOUT = 240
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集", "1.1.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集", "1.1.1")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        if migrate_host_config(config):
+            config.save_config()
         self.settings = Settings.from_dict(config)
         self.root = StarTools.get_data_dir("astrbot_plugin_piggy")
         self.db = Database(self.root)

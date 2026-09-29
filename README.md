@@ -92,7 +92,13 @@
 | `command_prefix`（快捷指令唤醒词） | 留空 | 使用自定义唤醒词时，填与 AstrBot 相同的内容 |
 | `backup_keep`（本地备份保留份数） | `7` | 自动和手动备份最多保留的份数 |
 
-**R2 / S3 图床：** 将图床类型 `provider` 设为 `s3`（默认），再填写：
+**图床配置：** 打开「展开图床配置」，在 `image_host.provider` 中选择图床，页面只显示对应参数。收起仅影响显示，不会停用图床。各类型独立保存，切换回来无需重填；四个消息功能共用当前选中的图床。
+
+可选 Cloudflare R2（默认）、AWS S3、阿里云 OSS、腾讯云 COS、七牛云 Kodo、MinIO、Backblaze B2、DigitalOcean Spaces、其他 S3 兼容存储、兰空 Lsky Pro V2 和自定义 HTTP。对象存储通过 S3 兼容接口上传，请使用服务商提供的 S3 端点与凭据。
+
+旧版配置首次加载时自动保存到「其他 S3 兼容存储」和「自定义 HTTP」分组，保留原选中的上传方式；已有新分组配置优先。旧 R2 配置会保留在「其他 S3 兼容存储」中，仍可照常使用。
+
+**对象存储：** 参数位于 `image_host` 下的对应分组（`r2`、`aws`、`oss`、`cos`、`qiniu`、`minio`、`b2`、`spaces`、`s3`）：
 
 | 配置项 | 默认值 | 填写内容 |
 | --- | --- | --- |
@@ -100,9 +106,14 @@
 | `bucket` | 留空 | 存储桶名称 |
 | `access_key` / `secret_key` | 留空 | 存储桶的上传凭据 |
 | `public_base_url` | 留空 | 可公开访问图片的域名，如 `https://img.example.com` |
-| `region` / `addressing_style` | `auto` / `path` | R2 保持默认；其他 S3 服务按供应商要求填写 |
+| `region` | 按类型预设 | R2 为 `auto`；OSS、MinIO、通用 S3 为 `us-east-1`；其他类型填写实际区域 |
+| `addressing_style` | `auto` | 自动按类型选择；OSS 固定为 `virtual`，其他类型可手动指定 |
 
-**HTTP 图床：** 将 `provider` 设为 `http`，并按图床服务的上传 API 填写：
+阿里云 OSS 使用 S3 V2 签名与虚拟主机寻址，遵循其 [S3 兼容接口要求](https://www.alibabacloud.com/help/en/oss/developer-reference/compatibility-with-amazon-s3)。其他对象存储使用 S3 V4 签名。
+
+**兰空 Lsky Pro V2：** 在 `image_host.lsky` 填写完整上传地址（例如 `https://你的图床/api/v1/upload`）和 Authorization 值（例如 `Bearer 你的Token`）。插件自动设置文件字段、响应路径与成功状态检查。
+
+**自定义 HTTP：** 在 `image_host.http` 中按上传 API 填写：
 
 | 配置项 | 默认值 | 填写内容 |
 | --- | --- | --- |
@@ -113,7 +124,7 @@
 | `response_url_path` | `data.links.url` | 上传结果中图片直链的位置，如 `image.url` |
 | `success_path` / `success_value` | 留空 / `true` | 图床返回成功标记时填写；无成功标记可留空 `success_path` |
 
-**重试与缓存：** 一般保持默认即可。
+**重试与缓存：** 打开「展开重试与缓存设置」后显示，一般保持默认即可。上传重试和请求超时也用于 QQ 直传，因此独立于图床选择保存。
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
