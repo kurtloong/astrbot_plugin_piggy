@@ -122,6 +122,75 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(transport.payloads), 3)
         self.assertEqual(len(host.calls), 2)
 
+    async def test_reported_rejection_uses_all_ten_retries_then_succeeds(self):
+        config = settings(image_retry_count=10, upload_retry_count=0)
+        host = FakeHost()
+        transport = FakeTransport([QQError(40034141, 400) for _ in range(10)])
+        sender = Sender(config, self.db, ImagePublisher(config, self.db, host), transport)
+        await sender.send(self.event, "app", self.message)
+        self.assertEqual(len(transport.payloads), 11)
+        self.assertEqual([p["msg_seq"] for p in transport.payloads], list(range(100, 111)))
+        self.assertEqual(len(host.calls), 1)
+        await sender.send(self.event, "app", self.message)
+        self.assertEqual(len(transport.payloads), 11)
+
+    async def test_reported_rejection_stops_after_ten_retries_and_logs_budget(self):
+        config = settings(image_retry_count=10)
+        host = FakeHost()
+        transport = FakeTransport([QQError(40034141, 400) for _ in range(12)])
+        logger = Mock()
+        sender = Sender(
+            config, self.db, ImagePublisher(config, self.db, host), transport, logger=logger
+        )
+        with self.assertRaises(QQError):
+            await sender.send(self.event, "app", self.message)
+        self.assertEqual(len(transport.payloads), 11)
+        self.assertEqual(len(host.calls), 1)
+        logs = [call.args[0] % call.args[1:] for call in logger.warning.call_args_list]
+        self.assertEqual(len(logs), 11)
+        self.assertIn("attempt=1/11 code=40034141 http=400", logs[0])
+        self.assertIn("stop=none retry_delay=0.1", logs[0])
+        self.assertIn("attempt=11/11", logs[-1])
+        self.assertIn("stop=exhausted retry_delay=0", logs[-1])
+
+    async def test_reported_rejection_respects_zero_retries_and_deadline(self):
+        for index, retries in enumerate((0, 10)):
+            with self.subTest(retries=retries):
+                config = settings(image_retry_count=retries, retry_base_delay=10)
+                logger = Mock()
+                transport = FakeTransport([QQError(40034141, 400)])
+                sender = Sender(config, self.db, None, transport, logger=logger)
+                self.event.message_obj.message_id = f"budget-{index}"
+                # Fixed clock keeps the request alive but leaves no time for its next retry.
+                with patch("core.delivery.time", SimpleNamespace(monotonic=lambda: 100)):
+                    with self.assertRaises(QQError):
+                        await sender.send(self.event, "app", Message("text"), deadline=105)
+                self.assertEqual(len(transport.payloads), 1)
+                args = logger.warning.call_args.args
+                self.assertIn(
+                    "stop=exhausted" if retries == 0 else "stop=deadline", args[0] % args[1:]
+                )
+
+    async def test_retry_logs_preserve_diagnostics_and_redact_secrets(self):
+        config = settings(image_retry_count=0)
+        error = QQError(
+            40034141,
+            400,
+            reason="rejected secret https://example.com/file?token=hidden\ninjected",
+            trace_id="trace-123",
+        )
+        logger = Mock()
+        sender = Sender(config, self.db, None, FakeTransport([error]), logger=logger)
+        with self.assertRaises(QQError):
+            await sender.send(self.event, "app", Message("text"))
+        args = logger.warning.call_args.args
+        log = args[0] % args[1:]
+        self.assertIn("reason=rejected [redacted]", log)
+        self.assertIn("trace_id=trace-123", log)
+        self.assertNotIn("hidden", log)
+        self.assertNotIn("\n", log)
+        self.assertNotIn("secret", str(error))
+
     async def test_ambiguous_failure_preserves_sequence_and_dedup_is_success(self):
         config = settings()
         transport = FakeTransport([QQError(0, 0, True), QQError(40054005, 400)])
@@ -472,9 +541,9 @@ class RawQQResponseTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await response_json(SimpleNamespace(content=SimpleNamespace(iter_chunked=large)))
 
-    async def test_preserves_numeric_error_code_ignores_error_message_and_charset(self):
+    async def test_preserves_error_code_and_diagnostics_without_exposing_raw_message(self):
         async def chunks(size):
-            yield b'{"err_code":304010,"message":"arbitrary localized text"}'
+            yield b'{"err_code":304010,"message":"arbitrary localized text","trace_id":"trace-123"}'
 
         response = SimpleNamespace(
             status=400,
@@ -514,6 +583,9 @@ class RawQQResponseTests(unittest.IsolatedAsyncioTestCase):
             await transport.request(event, {"msg_type": 2})
         self.assertEqual(error.exception.code, 304010)
         self.assertFalse(error.exception.uncertain)
+        self.assertEqual(error.exception.reason, "arbitrary localized text")
+        self.assertEqual(error.exception.trace_id, "trace-123")
+        self.assertNotIn("arbitrary localized text", str(error.exception))
         self.assertNotIn("unrelated", captured[0][1]["headers"])
         self.assertFalse(captured[0][1]["allow_redirects"])
 

@@ -26,7 +26,7 @@ MAX_INFLIGHT = 12
 REQUEST_TIMEOUT = 240
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集", "1.1.1")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集", "1.1.2")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -37,7 +37,7 @@ class PiggyPlugin(Star):
         self.db = Database(self.root)
         self.publisher = ImagePublisher(self.settings, self.db)
         self.transport = QQTransport(self.settings.request_timeout)
-        self.sender = Sender(self.settings, self.db, self.publisher, self.transport)
+        self.sender = Sender(self.settings, self.db, self.publisher, self.transport, logger=logger)
         self.avatars = Avatars()
         self.ready = False
         self.init_lock = asyncio.Lock()

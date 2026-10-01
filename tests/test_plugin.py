@@ -6,6 +6,7 @@ import sys
 import tempfile
 import types
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -264,6 +265,24 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(before["total"], 1)
         self.plugin.publisher.host.upload.side_effect = None
         await self.plugin.draw(OfficialEvent("retry"))
+        self.assertEqual((await self.plugin.db.collection(user["id"]))["total"], 1)
+
+    async def test_reported_qq_rejection_retries_and_logs_through_astrbot(self):
+        from astrbot_plugin_piggy.core.delivery import QQError
+
+        config = replace(self.plugin.settings, image_retry_count=10)
+        self.plugin.settings = self.plugin.sender.settings = config
+        self.plugin.transport.request.side_effect = [
+            QQError(40034141, 400, reason="upstream rejection", trace_id="trace-123")
+        ] * 10 + [{"id": "sent"}]
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with self.assertLogs("piggy-tests", level="WARNING") as logs:
+                await self.plugin.draw(OfficialEvent("retry-40034141"))
+        self.assertEqual(self.plugin.transport.request.await_count, 11)
+        self.assertEqual(self.plugin.publisher.host.upload.await_count, 1)
+        self.assertIn("stage=send attempt=1/11 code=40034141 http=400", logs.output[0])
+        self.assertIn("reason=upstream rejection trace_id=trace-123", logs.output[0])
+        user = await self.plugin.db.identify("app", "member", "a", "")
         self.assertEqual((await self.plugin.db.collection(user["id"]))["total"], 1)
 
     async def test_no_host_configuration_does_not_consume_draw(self):

@@ -10,22 +10,27 @@ import aiohttp
 
 from .config import PiggyError, Settings
 from .database import Database
+from .diagnostics import safe_detail
 from .storage import ImagePublisher, response_json
 
 IMAGE_ERRORS = {304010, 40034004}
+# Retry forced-verification rejections without unnecessarily reuploading images.
+RETRYABLE_ERRORS = IMAGE_ERRORS | {40034141}
 EXPIRED_ERRORS = {304103, 40034005, 40034128}
 DEDUPE_ERRORS = {40054005}
 
 
 class QQError(PiggyError):
-    def __init__(self, code: int, status: int, uncertain: bool = False):
+    def __init__(self, code: int, status: int, uncertain: bool = False, *, reason="", trace_id=""):
         self.code = code
         self.status = status
         self.uncertain = uncertain
+        self.reason = reason if isinstance(reason, str) else ""
+        self.trace_id = trace_id if isinstance(trace_id, str) else ""
         if uncertain:
             message = "QQ 发送结果暂时无法确认，请先查看群消息；抽取记录已保存。"
         elif code in IMAGE_ERRORS:
-            message = "QQ 图片转存未成功，已达到配置的重试次数；抽取记录已保存，请稍后重试。"
+            message = "QQ 图片转存未成功；抽取记录已保存，请稍后重试。"
         elif code in EXPIRED_ERRORS:
             message = "本条消息的回复时限已过，请重新发送指令；不会重复计数。"
         else:
@@ -33,6 +38,10 @@ class QQError(PiggyError):
                 f"QQ 拒绝本次消息（错误码 {code}，HTTP {status}），请检查平台权限、格式或频率限制。"
             )
         super().__init__(message)
+
+    @property
+    def retryable(self) -> bool:
+        return self.uncertain or self.status == 429 or self.code in RETRYABLE_ERRORS
 
 
 class QQTransport:
@@ -98,6 +107,8 @@ class QQTransport:
                         code,
                         response.status,
                         uncertain=response.status >= 500 and code not in IMAGE_ERRORS,
+                        reason=data.get("message", ""),
+                        trace_id=data.get("trace_id", ""),
                     )
                 if not isinstance(data.get(expected), str) or not data[expected]:
                     raise QQError(0, response.status, uncertain=True)
@@ -130,13 +141,51 @@ def message_key(event, app_id: str) -> str:
 
 
 class Sender:
-    def __init__(self, settings: Settings, db: Database, publisher: ImagePublisher, transport):
+    def __init__(
+        self, settings: Settings, db: Database, publisher: ImagePublisher, transport, *, logger=None
+    ):
         self.settings, self.db, self.publisher, self.transport = (
             settings,
             db,
             publisher,
             transport,
         )
+        self.logger = logger
+
+    def _retry_delay(
+        self,
+        exc: QQError,
+        attempt: int,
+        retry_count: int,
+        deadline: float,
+        stage: str,
+        retryable: bool,
+    ) -> float | None:
+        delay = self.settings.delay(attempt)
+        if not retryable:
+            stop = "not_retryable"
+        elif attempt >= retry_count:
+            stop = "exhausted"
+        elif time.monotonic() + delay >= deadline:
+            stop = "deadline"
+        else:
+            stop = ""
+        if self.logger is not None:
+            detail = safe_detail(f"reason={exc.reason} trace_id={exc.trace_id}", self.settings)
+            self.logger.warning(
+                "[piggy] QQ failure stage=%s attempt=%s/%s code=%s http=%s "
+                "retryable=%s stop=%s retry_delay=%s | %s",
+                stage,
+                attempt + 1,
+                retry_count + 1,
+                exc.code,
+                exc.status,
+                retryable,
+                stop or "none",
+                0 if stop else delay,
+                detail,
+            )
+        return None if stop else delay
 
     async def send(
         self,
@@ -152,7 +201,7 @@ class Sender:
         if receipt["done"]:
             return
         sequence = receipt["sequence"]
-        deadline = deadline or (time.monotonic() + 240)
+        deadline = deadline if deadline is not None else time.monotonic() + 240
         urls = []
         media = None
         if message.local:
@@ -194,17 +243,17 @@ class Sender:
                     await self.db.delivery_update(key, sequence, True)
                     return
                 image_error = exc.code in IMAGE_ERRORS or (message.local and exc.code == 304080)
-                retryable = image_error or exc.uncertain or exc.status == 429
+                retryable = image_error or exc.retryable
+                delay = self._retry_delay(
+                    exc, attempt, self.settings.image_retry_count, deadline, "send", retryable
+                )
                 if not retryable:
                     raise
                 if not exc.uncertain:
                     # QQ explicitly rejected this message. It is safe to allocate the next sequence.
                     sequence += 1
                     await self.db.delivery_update(key, sequence, False)
-                if attempt == self.settings.image_retry_count:
-                    raise
-                delay = self.settings.delay(attempt)
-                if time.monotonic() + delay >= deadline:
+                if delay is None:
                     raise
                 await asyncio.sleep(delay)
                 if image_error and message.local:
@@ -227,14 +276,18 @@ class Sender:
             try:
                 return await self.transport.upload_image(event, data)
             except QQError as exc:
-                retryable = exc.uncertain or exc.status == 429 or exc.code in IMAGE_ERRORS
-                if not retryable or attempt == self.settings.upload_retry_count:
+                delay = self._retry_delay(
+                    exc,
+                    attempt,
+                    self.settings.upload_retry_count,
+                    deadline,
+                    "upload",
+                    exc.retryable,
+                )
+                if delay is None:
                     raise PiggyError(
                         f"QQ 本地图片上传失败（错误码 {exc.code}，HTTP {exc.status}，"
                         f"尝试 {attempt + 1}/{self.settings.upload_retry_count + 1} 次）。"
                     ) from None
-                delay = self.settings.delay(attempt)
-                if time.monotonic() + delay >= deadline:
-                    raise PiggyError("QQ 本地图片上传超过回复时限，请重新发送指令。") from None
                 await asyncio.sleep(delay)
         raise AssertionError("Unreachable local upload state")

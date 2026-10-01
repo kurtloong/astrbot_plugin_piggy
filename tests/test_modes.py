@@ -4,6 +4,7 @@ import os
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -72,6 +73,26 @@ class ModeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(PiggyError, "123.*401.*1/3"):
             await self.sender.send(self.event, "app", self.message)
         self.assertEqual(self.transport.upload_image.await_count, 1)
+
+    async def test_reported_upload_rejection_obeys_upload_budget(self):
+        self.sender.settings = replace(self.config, upload_retry_count=10, image_retry_count=0)
+        self.transport.upload_image.side_effect = [QQError(40034141, 400)] * 10 + ["file-info"]
+        with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+            await self.sender.send(self.event, "app", self.message)
+        self.assertEqual(self.transport.upload_image.await_count, 11)
+        self.assertEqual(sleep.await_count, 10)
+        self.assertEqual(len(self.transport.payloads), 1)
+
+    async def test_reported_local_send_rejection_reuses_uploaded_media(self):
+        self.sender.settings = replace(self.config, image_retry_count=10)
+        self.transport.failures = [QQError(40034141, 400) for _ in range(11)]
+        with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+            with self.assertRaises(QQError):
+                await self.sender.send(self.event, "app", self.message)
+        self.assertEqual(len(self.transport.payloads), 11)
+        self.assertEqual(sleep.await_count, 10)
+        self.transport.upload_image.assert_awaited_once()
+        self.publisher.publish.assert_not_awaited()
 
     async def test_local_uncertain_delivery_reuses_sequence_without_reupload(self):
         self.transport.failures = [QQError(0, 0, True), QQError(40054005, 400)]
