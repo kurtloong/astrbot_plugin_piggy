@@ -15,7 +15,12 @@ from botpy.message import GroupMessage
 
 from .core.avatars import Avatars
 from .core.battle import level_for
-from .core.catalog import initialize_battle, initialize_catalog, read_catalog
+from .core.catalog import (
+    initialize_battle,
+    initialize_catalog,
+    read_catalog,
+    sync_bundled_catalog,
+)
 from .core.config import PiggyError, Settings, migrate_host_config
 from .core.database import Database
 from .core.delivery import Message, QQError, QQTransport, Sender, message_key
@@ -202,6 +207,11 @@ class PiggyPlugin(Star):
                 await asyncio.to_thread(
                     initialize_catalog, self.root, Path(__file__).parent / "resources"
                 )
+            added = await asyncio.to_thread(
+                sync_bundled_catalog, self.root, Path(__file__).parent / "resources"
+            )
+            if added:
+                logger.info("[piggy] Added %s newly bundled pigs to the catalog.", added)
             try:
                 pigs = await asyncio.to_thread(read_catalog, self.root)
                 await self.db.catalog(pigs)
