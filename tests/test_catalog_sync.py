@@ -1,3 +1,4 @@
+import copy
 import json
 import tempfile
 import unittest
@@ -6,7 +7,7 @@ from pathlib import Path
 from PIL import Image
 
 from core.battle import FALLBACK
-from core.catalog import initialize_catalog, read_catalog, sync_bundled_catalog
+from core.catalog import _digest, initialize_catalog, read_catalog, sync_bundled_catalog
 
 
 class CatalogSyncTests(unittest.TestCase):
@@ -49,7 +50,7 @@ class CatalogSyncTests(unittest.TestCase):
 
     def test_fresh_install_copies_webp_and_needs_no_sync(self):
         initialize_catalog(self.data, self.resources)
-        self.assertEqual(sync_bundled_catalog(self.data, self.resources), 0)
+        self.assertEqual(sync_bundled_catalog(self.data, self.resources)["pigs"], 0)
         self.assertEqual([p["id"] for p in self.catalog()], ["a", "b", "c", "d"])
         self.assertTrue((self.data / "catalog" / "images" / "a.webp").is_file())
         self.assertEqual(len(read_catalog(self.data)), 4)
@@ -65,7 +66,7 @@ class CatalogSyncTests(unittest.TestCase):
             json.dumps({"version": 1, "pigs": {"a": FALLBACK}}), "utf-8"
         )
 
-        self.assertEqual(sync_bundled_catalog(self.data, self.resources), 2)
+        self.assertEqual(sync_bundled_catalog(self.data, self.resources)["pigs"], 2)
         pigs = {p["id"]: p for p in self.catalog()}
         self.assertEqual(set(pigs), {"a", "c", "d"})
         self.assertEqual(pigs["a"]["name"], "管理员改名")
@@ -77,9 +78,9 @@ class CatalogSyncTests(unittest.TestCase):
             json.dumps([p for p in self.catalog() if p["id"] != "c"]), "utf-8"
         )
         self.bundle([("a", 0), ("b", 1), ("c", 100), ("d", 101), ("e", 102)])
-        self.assertEqual(sync_bundled_catalog(self.data, self.resources), 1)
+        self.assertEqual(sync_bundled_catalog(self.data, self.resources)["pigs"], 1)
         self.assertEqual([p["id"] for p in self.catalog()], ["a", "d", "e"])
-        self.assertEqual(sync_bundled_catalog(self.data, self.resources), 0)
+        self.assertEqual(sync_bundled_catalog(self.data, self.resources)["pigs"], 0)
 
     def test_battle_data_shipped_later_is_added_for_existing_pigs(self):
         initialize_catalog(self.data, self.resources)
@@ -88,6 +89,35 @@ class CatalogSyncTests(unittest.TestCase):
         )
         sync_bundled_catalog(self.data, self.resources)
         self.assertEqual(set(self.battle()), {"a", "c", "d"})
+
+    def test_unmodified_battle_entries_follow_rebalances_but_admin_edits_stay(self):
+        old = copy.deepcopy(FALLBACK)
+        edited = copy.deepcopy(FALLBACK)
+        edited["stats"]["hp"] = 200
+        initialize_catalog(self.data, self.resources)
+        (self.data / "catalog" / "battle.json").write_text(
+            json.dumps({"version": 1, "pigs": {"a": old, "b": edited}}), "utf-8"
+        )
+        # The previous release shipped `old` for both pigs; this release rebalances them.
+        history = {pig: [_digest(old)] for pig in ("a", "b")}
+        (self.resources / "battle_history.json").write_text(json.dumps(history), "utf-8")
+        rebalanced = copy.deepcopy(FALLBACK)
+        rebalanced["stats"]["hp"] = 111
+        battle = {"version": 1, "pigs": {p: rebalanced for p in ("a", "b", "c", "d")}}
+        (self.resources / "battle.json").write_text(json.dumps(battle), "utf-8")
+
+        result = sync_bundled_catalog(self.data, self.resources)
+        self.assertEqual(result["battle"], 3)
+        self.assertEqual(self.battle()["a"]["stats"]["hp"], 111)
+        self.assertEqual(self.battle()["b"]["stats"]["hp"], 200)
+
+        # The next release changes them again; "a" still matches what was shipped.
+        rebalanced["stats"]["hp"] = 122
+        battle = {"version": 1, "pigs": {p: rebalanced for p in ("a", "b", "c", "d")}}
+        (self.resources / "battle.json").write_text(json.dumps(battle), "utf-8")
+        sync_bundled_catalog(self.data, self.resources)
+        self.assertEqual(self.battle()["a"]["stats"]["hp"], 122)
+        self.assertEqual(self.battle()["b"]["stats"]["hp"], 200)
 
 
 if __name__ == "__main__":

@@ -171,7 +171,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.3.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.4.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -207,11 +207,15 @@ class PiggyPlugin(Star):
                 await asyncio.to_thread(
                     initialize_catalog, self.root, Path(__file__).parent / "resources"
                 )
-            added = await asyncio.to_thread(
+            synced = await asyncio.to_thread(
                 sync_bundled_catalog, self.root, Path(__file__).parent / "resources"
             )
-            if added:
-                logger.info("[piggy] Added %s newly bundled pigs to the catalog.", added)
+            if synced["pigs"] or synced["battle"]:
+                logger.info(
+                    "[piggy] Catalog sync added %s pigs and refreshed %s battle entries.",
+                    synced["pigs"],
+                    synced["battle"],
+                )
             try:
                 pigs = await asyncio.to_thread(read_catalog, self.root)
                 await self.db.catalog(pigs)

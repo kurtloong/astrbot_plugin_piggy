@@ -49,16 +49,17 @@ def initialize_catalog(data_dir: Path, resources: Path) -> None:
         _write_json(target / "pigs.json", definitions)
 
 
-def sync_bundled_catalog(data_dir: Path, resources: Path) -> int:
+def sync_bundled_catalog(data_dir: Path, resources: Path) -> dict:
     """Add bundled pigs (and their battle data) that this install has never seen.
 
     `.bundled_ids` remembers what was offered before, so admin edits are never
-    overwritten and pigs an admin deleted are not brought back.
+    overwritten and pigs an admin deleted are not brought back. Battle entries
+    still identical to a shipped version are refreshed to the current numbers.
     """
     target = data_dir / "catalog"
     manifest = target / "pigs.json"
     if not manifest.exists():
-        return 0
+        return {"pigs": 0, "battle": 0}
     bundled = json.loads((resources / "pigs.json").read_text("utf-8"))
     bundled_battle = json.loads((resources / "battle.json").read_text("utf-8"))["pigs"]
     marker = target / ".bundled_ids"
@@ -92,17 +93,39 @@ def sync_bundled_catalog(data_dir: Path, resources: Path) -> int:
         for pig_id, entry in bundled_battle.items()
         if pig_id in present and pig_id not in seen_battle and pig_id not in battle["pigs"]
     }
-    if missing_battle:
+    # Rebalanced numbers replace an entry only if it still matches something we shipped.
+    history = _battle_history(resources)
+    shipped = seen.get("battle_digests", {})
+    updated = {
+        pig_id: bundled_battle[pig_id]
+        for pig_id, entry in battle["pigs"].items()
+        if pig_id in bundled_battle
+        and _digest(entry) != _digest(bundled_battle[pig_id])
+        and _digest(entry) in {*history.get(pig_id, ()), shipped.get(pig_id)}
+    }
+    if missing_battle or updated:
         battle["pigs"].update(missing_battle)
+        battle["pigs"].update(updated)
         _write_json(battle_path, battle)
     _write_json(
         marker,
         {
             "pigs": sorted(seen_pigs | {pig["id"] for pig in bundled}),
             "battle": sorted(seen_battle | set(bundled_battle)),
+            "battle_digests": {pig_id: _digest(e) for pig_id, e in bundled_battle.items()},
         },
     )
-    return len(added)
+    return {"pigs": len(added), "battle": len(missing_battle) + len(updated)}
+
+
+def _digest(entry) -> str:
+    text = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def _battle_history(resources: Path) -> dict:
+    path = resources / "battle_history.json"
+    return json.loads(path.read_text("utf-8")) if path.exists() else {}
 
 
 def read_catalog(data_dir: Path) -> list[dict]:
