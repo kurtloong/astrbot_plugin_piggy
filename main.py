@@ -87,7 +87,7 @@ def mentioned_members(event) -> list[tuple[str, str]]:
     return list(unique.items())
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集", "1.1.2")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.2.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
