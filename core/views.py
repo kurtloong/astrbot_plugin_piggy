@@ -50,6 +50,7 @@ def keyboard(
     rows = [
         {"buttons": [button("今日小猪", "今日小猪"), button("小猪图鉴", "小猪图鉴")]},
         {"buttons": [button("小猪排行", "小猪排行"), button("我的猪圈", "我的猪圈")]},
+        {"buttons": [button("⚔️ 斗猪玩法", "小猪玩法"), button("我的请求", "我的请求")]},
     ]
     navigation = []
     if page > 1:
@@ -80,6 +81,8 @@ def today_message(
             if streak >= settings.duplicate_pity
             else f"重复保护 {streak}/{settings.duplicate_pity}"
         )
+    level = level_for(result["count"], settings.battle_level_cap)
+    tip = f"Lv{level} · 已解锁 {min(level, 5)}/5 个技能 · 发送「小猪玩法」和群友斗猪、换猪"
     if not settings.use_host("draw"):
         card = render_today(
             root,
@@ -88,6 +91,7 @@ def today_message(
             progress,
             "今日已领取" if not result["created"] else state,
             protection,
+            level,
         )
         return Message("", (card.data,), local=True)
     description = "\n".join(
@@ -99,11 +103,12 @@ def today_message(
         f"{state}\n\n**{md(pig['name'])}**\n\n"
         f"![小猪 #512px #512px]({{{{image:0}}}})\n\n"
         f"{description}\n\n"
-        f"本猪累计 **{result['count']}** 次 · 总收获 **{progress['total']}** 只\n\n"
+        f"本猪拥有 **{result['count']}** 只 · 总收获 **{progress['total']}** 只\n\n"
         f"已解锁 **{progress['unlocked']}/{progress['active_total']}** · {result['day']}"
     )
     if protection:
         text += f"\n\n{protection}"
+    text += f"\n\n{md(tip)}"
     return Message(text, (root / "assets" / pig["asset"],), keyboard(settings, user["open_id"]))
 
 
@@ -119,7 +124,15 @@ async def collection_message(
     )
     entries, page, pages = paginate(items, page, ATLAS_SHEET_SIZE if atlas else PEN_SHEET_SIZE)
     card = await asyncio.to_thread(
-        render_collection, root, display_name(user), progress, entries, page, pages, atlas
+        render_collection,
+        root,
+        display_name(user),
+        progress,
+        entries,
+        page,
+        pages,
+        atlas,
+        settings.battle_level_cap,
     )
     return card_message(settings, user, card, title, "atlas" if atlas else "pen", page, pages)
 
@@ -177,6 +190,42 @@ def text_message(
             }
         }
     return Message("\n\n".join(parts), keyboard=keyboard, markdown=True)
+
+
+def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Message:
+    example = favorite["name"] if favorite else "猪人"
+    blocks = [
+        "【等级】",
+        [
+            f"同种猪有几只就是几级（上限 Lv{settings.battle_level_cap}），等级越高属性越强",
+            "1–5 级各解锁 1 个专属技能，每只猪最多 5 个技能",
+            f"小猪属性 {example} —— 查看属性和技能",
+        ],
+        "【斗猪】",
+        [
+            f"斗猪 @群友 {example} —— 用你的猪发起挑战",
+            "对方发送「接受斗猪 他的猪」立即开打，或「拒绝斗猪」",
+            "回合制自动对战，赢家把输家出战的那只猪收进猪圈，输家这只猪降 1 级",
+            f"每天最多 {settings.duel_daily_limit} 场",
+        ],
+        "【交换】",
+        [
+            f"小猪交换 @群友 {example} 对方的猪 —— 一换一",
+            "对方发送「接受交换」成交，或「拒绝交换」",
+        ],
+        "【请求】",
+        [
+            f"我的请求 / 取消请求 —— 查看或撤回，{settings.request_ttl_minutes} 分钟内未处理自动作废",
+        ],
+    ]
+    if favorite:
+        blocks.append(f"你的「{example}」有 {favorite['count']} 只，是你现在最强的出战选择。")
+    return text_message(
+        settings,
+        "⚔️ 小猪玩法：斗猪与交换",
+        blocks,
+        buttons=[("小猪属性", "小猪属性 "), ("斗猪", "斗猪 "), ("我的请求", "我的请求")],
+    )
 
 
 def _skill_line(skill: dict, slot: int, level: int) -> str:

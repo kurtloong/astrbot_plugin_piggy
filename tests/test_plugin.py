@@ -280,6 +280,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         def last():
             return sent.await_args.args[1]["content"]
 
+        await self.plugin.guide(OfficialEvent("g1", text="小猪玩法"))
+        self.assertIn("斗猪 @群友 猪 —— 用你的猪发起挑战", last())
+        self.assertIn("你的「猪」有 3 只", last())
         await self.plugin.duel(OfficialEvent("d1", text="斗猪 <@rival> 猪", mentions=("rival",)))
         self.assertIn("@阿波 玩家名字 向你发起斗猪", last())
         await self.plugin.duel_accept(OfficialEvent("d2", user="rival", text="接受斗猪 小黑猪"))

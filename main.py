@@ -27,6 +27,7 @@ from .core.views import (
     cancelled_message,
     collection_message,
     declined_message,
+    guide_message,
     ranking_message,
     request_message,
     requests_message,
@@ -39,6 +40,7 @@ MAX_INFLIGHT = 12
 REQUEST_TIMEOUT = 240
 MENTION_TAG = re.compile(r"<@!?[^>]*>|<qqbot-at-user[^>]*>")
 BATTLE_COMMANDS = {
+    "guide",
     "stats",
     "duel",
     "duel_accept",
@@ -337,6 +339,10 @@ class PiggyPlugin(Star):
 
     async def _battle(self, event, app_id: str, user: dict, command: str, words: tuple):
         settings, group = self.settings, event.get_group_id()
+        if command == "guide":
+            owned = [p for p in (await self.db.collection(user["id"]))["entries"] if p["count"]]
+            favorite = max(owned, key=lambda p: p["count"], default=None)
+            return guide_message(settings, user, favorite)
         if command == "stats":
             if not words:
                 raise PiggyError("用法：小猪属性 小猪名字")
@@ -431,6 +437,11 @@ class PiggyPlugin(Star):
     async def alias(self, event: AstrMessageEvent, name: str):
         """设置 1–24 字的展示称呼。用法：小猪称呼 名字；不会改变收藏归属。"""
         await self._handle(event, "alias", (name,))
+
+    @filter.command("小猪玩法", alias={"小猪帮助", "斗猪帮助"})
+    async def guide(self, event: AstrMessageEvent):
+        """查看等级、斗猪和交换的玩法说明。"""
+        await self._handle(event, "guide")
 
     @filter.command("小猪属性")
     async def stats(self, event: AstrMessageEvent):
