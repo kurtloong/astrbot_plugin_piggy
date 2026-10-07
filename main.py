@@ -15,7 +15,12 @@ from botpy.message import GroupMessage
 
 from .core.avatars import Avatars
 from .core.battle import level_for
-from .core.catalog import initialize_battle, initialize_catalog, read_catalog
+from .core.catalog import (
+    initialize_battle,
+    initialize_catalog,
+    read_catalog,
+    sync_bundled_catalog,
+)
 from .core.config import PiggyError, Settings, migrate_host_config
 from .core.database import Database
 from .core.delivery import Message, QQError, QQTransport, Sender, message_key
@@ -166,7 +171,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.3.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.4.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -201,6 +206,15 @@ class PiggyPlugin(Star):
             if not await self.db.has_catalog():
                 await asyncio.to_thread(
                     initialize_catalog, self.root, Path(__file__).parent / "resources"
+                )
+            synced = await asyncio.to_thread(
+                sync_bundled_catalog, self.root, Path(__file__).parent / "resources"
+            )
+            if synced["pigs"] or synced["battle"]:
+                logger.info(
+                    "[piggy] Catalog sync added %s pigs and refreshed %s battle entries.",
+                    synced["pigs"],
+                    synced["battle"],
                 )
             try:
                 pigs = await asyncio.to_thread(read_catalog, self.root)

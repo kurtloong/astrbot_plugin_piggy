@@ -178,6 +178,8 @@
 
 首次启动会在 `data/plugin_data/astrbot_plugin_piggy/catalog/` 生成猪库。管理员可编辑 `pigs.json` 和 `images/` 中的图片，再发送 `小猪重载` 应用修改。新增小猪时添加新条目和图片；下架时将对应条目的 `enabled` 设为 `false`。请勿把旧 `id` 分配给另一种猪，以免合并原有收藏。历史收藏不会因下架而删除。
 
+插件随包附带约 978 只小猪，图鉴会分多页显示。插件升级时，启动会自动把新随包的小猪（以及它们的战斗数据）补进已有猪库：管理员改过的条目不会被覆盖，删除过的小猪也不会被加回来（记录在 `catalog/.bundled_ids` 中）。战斗数据重新平衡后，管理员没改过的条目会自动换成新数值，改过的保持不变。想停用某只随包小猪，推荐把 `enabled` 设为 `false`。
+
 <a id="backup"></a>
 
 ## 💾 数据备份
@@ -186,7 +188,7 @@
 
 ## 💛 致谢
 
-初始猪库与图片来自 [MegSopern/astrbot_plugin_rollpig](https://github.com/MegSopern/astrbot_plugin_rollpig/tree/42490b1b88367260c137c1147b05a3c052f22d33)，感谢前辈们留下的一群小猪~ <br>项目代码遵循 [MIT 许可证](LICENSE)；随包字体 [Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc) 遵循 `resources/fonts/OFL.txt` 中的 SIL Open Font License。
+初始猪库与图片来自 [MegSopern/astrbot_plugin_rollpig](https://github.com/MegSopern/astrbot_plugin_rollpig/tree/42490b1b88367260c137c1147b05a3c052f22d33)，感谢前辈们留下的一群小猪~ 后续补充的 882 只小猪来自 [1780605301/astrbot_plugin_rollpig](https://github.com/1780605301/astrbot_plugin_rollpig)（MIT，作者 Bear_lele / momola），已去掉与原有小猪重复的 62 条，图片压缩为 WebP，属性和技能为本插件按名字重新设计。 <br>项目代码遵循 [MIT 许可证](LICENSE)；随包字体 [Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc) 遵循 `resources/fonts/OFL.txt` 中的 SIL Open Font License。
 
 ---
 

@@ -174,14 +174,20 @@ def text_message(
     blocks: list,
     mention: dict | None = None,
     buttons: list[tuple[str, str]] = (),
+    plain_hint: str = "",
 ) -> Message:
-    """Blocks are paragraphs (str) or bullet lists (list of str)."""
+    """Blocks are paragraphs (str) or bullet lists (list of str).
+
+    plain_hint stands in for the buttons when the message is sent as plain text.
+    """
     if not settings.battle_markdown:
         parts = [title]
         if mention:
             parts[0] = f"@{display_name(mention)} {title}"
         for block in blocks:
             parts.append("\n".join(block) if isinstance(block, list) else block)
+        if plain_hint:
+            parts.append(plain_hint)
         return Message("\n".join(parts))
     parts = []
     if mention:
@@ -358,9 +364,10 @@ def battle_message(settings: Settings, result: dict) -> Message:
             + "，".join(
                 f"{display_name(user)} {left[uid]} 场" for uid, user in result["users"].items()
             ),
-            "发送「斗猪记录」查看历史战绩，「斗猪排行」看本群胜率榜",
         ],
         mention=result["request"]["from"],
+        buttons=[("斗猪记录", "斗猪记录"), ("斗猪排行", "斗猪排行")],
+        plain_hint="发送「斗猪记录」查看历史战绩，「斗猪排行」看本群胜率榜",
     )
 
 
@@ -449,8 +456,14 @@ def duel_ranking_message(settings: Settings, user: dict, board: dict) -> Message
         elif "rank" in me:
             mine += f"，排第 {me['rank']} 名"
         blocks.append(mine)
-    blocks.append(f"本群玩家 · 跨群累计战绩 · 至少 {need} 场上榜 · 发送「斗猪记录」查看自己的对战")
-    return text_message(settings, "斗猪胜率排行", blocks)
+    blocks.append(f"本群玩家 · 跨群累计战绩 · 至少 {need} 场上榜")
+    return text_message(
+        settings,
+        "斗猪胜率排行",
+        blocks,
+        buttons=[("斗猪记录", "斗猪记录"), ("斗猪玩法", "小猪玩法")],
+        plain_hint="发送「斗猪记录」查看自己的对战",
+    )
 
 
 def duel_history_message(settings: Settings, user: dict, history: dict) -> Message:
@@ -470,14 +483,22 @@ def duel_history_message(settings: Settings, user: dict, history: dict) -> Messa
             f"对方「{record['their_pig']}」Lv{record['their_level']} · "
             f"{change}「{record['prize']}」"
         )
-    blocks = [
-        f"共 {total} 场，胜 {wins} 负 {total - wins}，胜率 {_rate(wins, total)}",
-        lines,
-        "发送「斗猪回放 编号」查看完整战报",
-    ]
+    blocks = [f"共 {total} 场，胜 {wins} 负 {total - wins}，胜率 {_rate(wins, total)}", lines]
+    buttons = [("斗猪回放", "斗猪回放 ")]
+    hint = "发送「斗猪回放 编号」查看完整战报"
     if history["pages"] > 1:
-        blocks.append(f"第 {history['page']}/{history['pages']} 页，发送「斗猪记录 页码」翻页")
-    return text_message(settings, f"{display_name(user)} 的斗猪记录", blocks)
+        blocks.append(f"第 {history['page']}/{history['pages']} 页")
+        hint += "，「斗猪记录 页码」翻页"
+    if history["page"] < history["pages"]:
+        buttons.append(("下一页", f"斗猪记录 {history['page'] + 1}"))
+    buttons.append(("斗猪排行", "斗猪排行"))
+    return text_message(
+        settings,
+        f"{display_name(user)} 的斗猪记录",
+        blocks,
+        buttons=buttons,
+        plain_hint=hint,
+    )
 
 
 def duel_replay_message(settings: Settings, record: dict) -> Message:

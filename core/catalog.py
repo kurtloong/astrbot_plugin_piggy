@@ -9,6 +9,9 @@ from PIL import Image
 from .battle import load_battle
 from .config import PiggyError
 
+# The catalog shipped before bundled pigs were synced into existing installs.
+FIRST_RELEASE_SIZE = 96
+
 
 def initialize_battle(data_dir: Path, resources: Path) -> None:
     """Existing installs receive the bundled battle data once; later edits are kept."""
@@ -21,6 +24,18 @@ def initialize_battle(data_dir: Path, resources: Path) -> None:
     temp.replace(target)
 
 
+def _write_json(path: Path, data) -> None:
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+    temp.replace(path)
+
+
+def _copy_image(resources: Path, pig: dict, images: Path) -> str:
+    source = resources / pig["image"]
+    (images / source.name).write_bytes(source.read_bytes())
+    return f"images/{source.name}"
+
+
 def initialize_catalog(data_dir: Path, resources: Path) -> None:
     target = data_dir / "catalog"
     target.mkdir(parents=True, exist_ok=True)
@@ -30,14 +45,87 @@ def initialize_catalog(data_dir: Path, resources: Path) -> None:
         images.mkdir(exist_ok=True)
         definitions = json.loads((resources / "pigs.json").read_text("utf-8"))
         for pig in definitions:
-            source = resources / pig["image"]
-            name = source.stem + ".png"
-            with Image.open(source) as image:
-                image.save(images / name, "PNG")
-            pig["image"] = f"images/{name}"
-        temp = target / "pigs.json.tmp"
-        temp.write_text(json.dumps(definitions, ensure_ascii=False, indent=2), "utf-8")
-        temp.replace(target / "pigs.json")
+            pig["image"] = _copy_image(resources, pig, images)
+        _write_json(target / "pigs.json", definitions)
+
+
+def sync_bundled_catalog(data_dir: Path, resources: Path) -> dict:
+    """Add bundled pigs (and their battle data) that this install has never seen.
+
+    `.bundled_ids` remembers what was offered before, so admin edits are never
+    overwritten and pigs an admin deleted are not brought back. Battle entries
+    still identical to a shipped version are refreshed to the current numbers.
+    """
+    target = data_dir / "catalog"
+    manifest = target / "pigs.json"
+    if not manifest.exists():
+        return {"pigs": 0, "battle": 0}
+    bundled = json.loads((resources / "pigs.json").read_text("utf-8"))
+    bundled_battle = json.loads((resources / "battle.json").read_text("utf-8"))["pigs"]
+    marker = target / ".bundled_ids"
+    data = json.loads(manifest.read_text("utf-8"))
+    present = {pig["id"] for pig in data}
+    battle_path = target / "battle.json"
+    battle = (
+        json.loads(battle_path.read_text("utf-8"))
+        if battle_path.exists()
+        else {"version": 1, "pigs": {}}
+    )
+    if marker.exists():
+        seen = json.loads(marker.read_text("utf-8"))
+    else:
+        # Installs from before this sync existed had exactly the first release offered.
+        legacy = {pig["id"] for pig in bundled if pig["sort_order"] < FIRST_RELEASE_SIZE}
+        seen = {"pigs": sorted(present | legacy), "battle": sorted(set(battle["pigs"]) | legacy)}
+    seen_pigs, seen_battle = set(seen["pigs"]), set(seen["battle"])
+    added = [pig for pig in bundled if pig["id"] not in seen_pigs | present]
+    if added:
+        images = target / "images"
+        images.mkdir(exist_ok=True)
+        order = max((pig.get("sort_order", 0) for pig in data), default=-1) + 1
+        for pig in added:
+            data.append({**pig, "image": _copy_image(resources, pig, images), "sort_order": order})
+            order += 1
+        _write_json(manifest, data)
+    present |= {pig["id"] for pig in added}
+    missing_battle = {
+        pig_id: entry
+        for pig_id, entry in bundled_battle.items()
+        if pig_id in present and pig_id not in seen_battle and pig_id not in battle["pigs"]
+    }
+    # Rebalanced numbers replace an entry only if it still matches something we shipped.
+    history = _battle_history(resources)
+    shipped = seen.get("battle_digests", {})
+    updated = {
+        pig_id: bundled_battle[pig_id]
+        for pig_id, entry in battle["pigs"].items()
+        if pig_id in bundled_battle
+        and _digest(entry) != _digest(bundled_battle[pig_id])
+        and _digest(entry) in {*history.get(pig_id, ()), shipped.get(pig_id)}
+    }
+    if missing_battle or updated:
+        battle["pigs"].update(missing_battle)
+        battle["pigs"].update(updated)
+        _write_json(battle_path, battle)
+    _write_json(
+        marker,
+        {
+            "pigs": sorted(seen_pigs | {pig["id"] for pig in bundled}),
+            "battle": sorted(seen_battle | set(bundled_battle)),
+            "battle_digests": {pig_id: _digest(e) for pig_id, e in bundled_battle.items()},
+        },
+    )
+    return {"pigs": len(added), "battle": len(missing_battle) + len(updated)}
+
+
+def _digest(entry) -> str:
+    text = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def _battle_history(resources: Path) -> dict:
+    path = resources / "battle_history.json"
+    return json.loads(path.read_text("utf-8")) if path.exists() else {}
 
 
 def read_catalog(data_dir: Path) -> list[dict]:
@@ -61,7 +149,7 @@ def read_catalog(data_dir: Path) -> list[dict]:
         if pig_id in ids:
             raise PiggyError(f"猪库存在重复 ID：{pig_id}")
         ids.add(pig_id)
-        for key, limit in (("name", 40), ("description", 160), ("analysis", 600)):
+        for key, limit in (("name", 64), ("description", 160), ("analysis", 600)):
             if not isinstance(item.get(key), str) or not 1 <= len(item[key].strip()) <= limit:
                 raise PiggyError(f"{pig_id} 的 {key} 必须是 1–{limit} 字的文本。")
         enabled = item.get("enabled", True)
