@@ -59,6 +59,30 @@
     "default": "",
     "hint": "可选，默认留空：QQ 自动插入 @机器人，后面直接接命令。填写 /、! 或自定义唤醒词时会原样加在命令前；需要分隔空格时请一并填写。应与 AstrBot 配置一致。旧配置已保存的 / 可手动清空。"
   },
+  "battle_level_cap": {
+    "description": "小猪等级上限",
+    "type": "int",
+    "default": 20,
+    "hint": "5–100。小猪等级等于拥有的同种猪数量，超过上限按上限计算；1–5 级依次解锁 5 个技能。"
+  },
+  "duel_daily_limit": {
+    "description": "每日斗猪场数上限",
+    "type": "int",
+    "default": 5,
+    "hint": "1–100。发起和应战都计入，按东八区自然日计算。"
+  },
+  "request_ttl_minutes": {
+    "description": "斗猪/交换请求有效期（分钟）",
+    "type": "int",
+    "default": 10,
+    "hint": "1–60。超时未处理的请求自动作废。"
+  },
+  "battle_markdown": {
+    "description": "斗猪/交换使用 Markdown 与按钮",
+    "type": "bool",
+    "default": false,
+    "hint": "开启：@ 对方并附带仅对方可点的接受/拒绝按钮，需要机器人具备 Markdown 消息权限。关闭：发送纯文字。"
+  },
   "show_image_host": {
     "description": "展开图床配置",
     "type": "bool",

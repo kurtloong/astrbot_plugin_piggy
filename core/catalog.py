@@ -6,7 +6,19 @@ from pathlib import Path
 
 from PIL import Image
 
+from .battle import load_battle
 from .config import PiggyError
+
+
+def initialize_battle(data_dir: Path, resources: Path) -> None:
+    """Existing installs receive the bundled battle data once; later edits are kept."""
+    target = data_dir / "catalog" / "battle.json"
+    if target.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_suffix(".json.tmp")
+    temp.write_text((resources / "battle.json").read_text("utf-8"), "utf-8")
+    temp.replace(target)
 
 
 def initialize_catalog(data_dir: Path, resources: Path) -> None:
@@ -105,4 +117,9 @@ def read_catalog(data_dir: Path) -> list[dict]:
         )
     if not any(p["enabled"] for p in validated):
         raise PiggyError("至少保留一只启用的小猪；本次重载未生效。")
+    battle_path = root / "battle.json"
+    battle = load_battle(battle_path, ids) if battle_path.exists() else {}
+    for pig in validated:
+        entry = battle.get(pig["id"])
+        pig["battle"] = json.dumps(entry, ensure_ascii=False) if entry else ""
     return validated

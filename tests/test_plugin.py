@@ -21,14 +21,19 @@ class FakeConfig(dict):
 
 
 class OfficialEvent:
-    def __init__(self, message_id="event", user="member", group="group-a"):
-        self.group, self.user = group, user
+    def __init__(self, message_id="event", user="member", group="group-a", text="", mentions=()):
+        self.group, self.user, self.text = group, user, text
         self.message_obj = SimpleNamespace(
             message_id=message_id,
             raw_message=GroupMessage(
                 None,
                 message_id,
-                {"id": message_id, "group_openid": group, "author": {"member_openid": user}},
+                {
+                    "id": message_id,
+                    "group_openid": group,
+                    "author": {"member_openid": user},
+                    "mentions": [{"member_openid": m} for m in mentions],
+                },
             ),
         )
         self.message_obj.raw_message.author.username = "玩家名字"
@@ -43,6 +48,9 @@ class OfficialEvent:
 
     def get_sender_id(self):
         return self.user
+
+    def get_message_str(self):
+        return self.text
 
     def stop_event(self):
         self.stopped = True
@@ -254,6 +262,42 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(payload["msg_type"], (0, 7))
                 self.assertNotIn("keyboard", payload)
                 self.assertNotIn("markdown", payload)
+
+    async def test_duel_by_mention_and_trade_by_group_name(self):
+        await self.plugin.initialize()
+        db = self.plugin.db
+        alice = await db.identify("app", "member", "group-a", "阿离")
+        bob = await db.identify("app", "rival", "group-a", "阿波")
+        await db.set_alias(bob["id"], "阿波")
+        for user, pig_id in ((alice, "pig"), (bob, "black-pig")):
+            await db.run(
+                lambda c, u=user, p=pig_id: c.execute(
+                    "INSERT INTO collections VALUES(?,?,3,0,0)", (u["id"], p)
+                )
+            )
+        sent = self.plugin.transport.request
+
+        def last():
+            return sent.await_args.args[1]["content"]
+
+        await self.plugin.duel(OfficialEvent("d1", text="斗猪 <@rival> 猪", mentions=("rival",)))
+        self.assertIn("@阿波 玩家名字 向你发起斗猪", last())
+        await self.plugin.duel_accept(OfficialEvent("d2", user="rival", text="接受斗猪 小黑猪"))
+        self.assertIn("获胜", last())
+        self.assertIn("Lv3 → Lv2", last())
+        self.assertEqual(sent.await_args.args[1]["msg_type"], 0)
+        await self.plugin.trade(OfficialEvent("t1", text="小猪交换 阿波 猪 换 小黑猪"))
+        self.assertIn("想和你交换", last())
+        await self.plugin.requests(OfficialEvent("r1", user="rival", text="我的请求"))
+        self.assertIn("收到的请求", last())
+        await self.plugin.trade_accept(OfficialEvent("t2", user="rival", text="接受交换"))
+        self.assertIn("交换成功", last())
+        await self.plugin.stats(OfficialEvent("s1", text="小猪属性 坦克猪"))
+        self.assertIn("履带碾压", last())
+        await self.plugin.duel(OfficialEvent("d3", text="斗猪 <@member> 猪", mentions=("member",)))
+        self.assertIn("不能和自己斗猪", last())
+        await self.plugin.cancel(OfficialEvent("c1", text="取消请求"))
+        self.assertIn("没有待处理", last())
 
     async def test_upload_failure_keeps_draw_and_next_command_displays_same_pig(self):
         from astrbot_plugin_piggy.core.storage import UploadError

@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -13,20 +14,80 @@ from astrbot.core.platform.sources.qqofficial.qqofficial_message_event import (
 from botpy.message import GroupMessage
 
 from .core.avatars import Avatars
-from .core.catalog import initialize_catalog, read_catalog
+from .core.battle import level_for
+from .core.catalog import initialize_battle, initialize_catalog, read_catalog
 from .core.config import PiggyError, Settings, migrate_host_config
 from .core.database import Database
 from .core.delivery import Message, QQError, QQTransport, Sender, message_key
 from .core.diagnostics import exception_detail
 from .core.rendering import clean_cards
 from .core.storage import ImagePublisher, UploadError
-from .core.views import collection_message, ranking_message, today_message
+from .core.views import (
+    battle_message,
+    cancelled_message,
+    collection_message,
+    declined_message,
+    ranking_message,
+    request_message,
+    requests_message,
+    stats_message,
+    today_message,
+    trade_message,
+)
 
 MAX_INFLIGHT = 12
 REQUEST_TIMEOUT = 240
+MENTION_TAG = re.compile(r"<@!?[^>]*>|<qqbot-at-user[^>]*>")
+BATTLE_COMMANDS = {
+    "stats",
+    "duel",
+    "duel_accept",
+    "duel_decline",
+    "trade",
+    "trade_accept",
+    "trade_decline",
+    "cancel",
+    "requests",
+}
+USAGE = {
+    "duel": "用法：斗猪 @对方 你的小猪",
+    "trade": "用法：小猪交换 @对方 你的小猪 对方的小猪",
+}
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集", "1.1.2")
+def command_words(event, names: tuple[str, ...]) -> tuple[str, ...]:
+    """Parse arguments ourselves: QQ mention markup may sit anywhere in the text."""
+    getter = getattr(event, "get_message_str", None)
+    text = getter() if callable(getter) else getattr(event, "message_str", "")
+    words = MENTION_TAG.sub(" ", text or "").split()
+    for index, word in enumerate(words):
+        if any(word.endswith(name) for name in names):
+            return tuple(words[index + 1 :])
+    return tuple(words[1:])
+
+
+def mentioned_members(event) -> list[tuple[str, str]]:
+    raw = event.message_obj.raw_message
+    found = []
+    for item in getattr(raw, "mentions", None) or []:
+        open_id = getattr(item, "member_openid", None) or getattr(item, "id", None)
+        if open_id:
+            found.append((str(open_id), getattr(item, "username", "") or ""))
+    data = getattr(raw, "raw_data", None)
+    for item in (data.get("mentions") if isinstance(data, dict) else None) or []:
+        if not isinstance(item, dict) or item.get("bot") or item.get("is_you"):
+            continue
+        open_id = item.get("member_openid") or item.get("id")
+        if open_id:
+            found.append((str(open_id), item.get("username") or item.get("nickname") or ""))
+    unique = {}
+    for open_id, name in found:
+        if name or open_id not in unique:
+            unique[open_id] = name
+    return list(unique.items())
+
+
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.2.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -55,6 +116,9 @@ class PiggyPlugin(Star):
             if self.ready:
                 return
             await self.db.initialize()
+            await asyncio.to_thread(
+                initialize_battle, self.root, Path(__file__).parent / "resources"
+            )
             if not await self.db.has_catalog():
                 await asyncio.to_thread(
                     initialize_catalog, self.root, Path(__file__).parent / "resources"
@@ -208,13 +272,17 @@ class PiggyPlugin(Star):
                 async with self.maintenance_lock:
                     pigs = await asyncio.to_thread(read_catalog, self.root)
                     await self.db.catalog(pigs)
+                missing = sum(1 for p in pigs if p["enabled"] and not p["battle"])
                 message = Message(
                     f"猪库重载完成，当前启用 {sum(p['enabled'] for p in pigs)} 种小猪。"
+                    + (f"其中 {missing} 种未配置战斗数据，暂用默认属性和技能。" if missing else "")
                 )
             elif command == "backup":
                 async with self.maintenance_lock:
                     await self.db.backup(self.settings.backup_keep)
                 message = Message("备份已保存到插件数据目录 backups，包含数据库、猪库及历史素材。")
+            elif command in BATTLE_COMMANDS:
+                message = await self._battle(event, app_id, user, command, args)
             else:
                 self.settings.check_host()
                 progress = await self.db.collection(user["id"])
@@ -254,6 +322,77 @@ class PiggyPlugin(Star):
             )
             await self._failure(event, "处理暂时失败，请联系管理员查看插件日志。")
 
+    async def _target(self, event, app_id: str, words: tuple, usage: str):
+        mentions = mentioned_members(event)
+        if mentions:
+            open_id, name = mentions[0]
+            target = await self.db.identify(app_id, open_id, event.get_group_id(), name)
+            # Some clients also leave a plain "@昵称" word in the text.
+            if words and words[0][:1] in "@＠":
+                words = words[1:]
+            return target, words
+        if not words:
+            raise PiggyError(usage)
+        return await self.db.find_group_player(app_id, event.get_group_id(), words[0]), words[1:]
+
+    async def _battle(self, event, app_id: str, user: dict, command: str, words: tuple):
+        settings, group = self.settings, event.get_group_id()
+        if command == "stats":
+            if not words:
+                raise PiggyError("用法：小猪属性 小猪名字")
+            pig = await self.db.find_pig(" ".join(words))
+            count = await self.db.pig_count(user["id"], pig["id"])
+            return stats_message(settings, user, pig, count, settings.battle_level_cap)
+        if command in ("duel", "trade"):
+            target, words = await self._target(event, app_id, words, USAGE[command])
+            words = [word for word in words if word != "换"]
+            if len(words) < (1 if command == "duel" else 2):
+                raise PiggyError(USAGE[command])
+            give = await self.db.find_pig(words[0])
+            want = await self.db.find_pig(words[1]) if command == "trade" else None
+            request = await self.db.create_request(
+                app_id,
+                group,
+                command,
+                user["id"],
+                target["id"],
+                give["id"],
+                want["id"] if want else None,
+                ttl_minutes=settings.request_ttl_minutes,
+                daily_limit=settings.duel_daily_limit,
+            )
+            level = level_for(request["give_count"], settings.battle_level_cap)
+            return request_message(settings, request, level)
+        if command == "cancel":
+            return cancelled_message(
+                settings, await self.db.cancel_requests(app_id, group, user["id"])
+            )
+        if command == "requests":
+            return requests_message(
+                settings, await self.db.list_requests(app_id, group, user["id"])
+            )
+        kind, verb = command.split("_")
+        pig_id = None
+        if kind == "duel" and verb == "accept":
+            if not words:
+                raise PiggyError("请写上你要出战的小猪，例如：接受斗猪 猪人")
+            pig_id = (await self.db.find_pig(" ".join(words)))["id"]
+        result = await self.db.respond(
+            app_id,
+            group,
+            user["id"],
+            kind,
+            verb == "accept",
+            pig_id,
+            level_cap=settings.battle_level_cap,
+            daily_limit=settings.duel_daily_limit,
+        )
+        if not result["accepted"]:
+            return declined_message(settings, result)
+        return (
+            battle_message(settings, result) if kind == "duel" else trade_message(settings, result)
+        )
+
     async def _failure(self, event, text: str):
         try:
             await self.transport.request(
@@ -292,6 +431,51 @@ class PiggyPlugin(Star):
     async def alias(self, event: AstrMessageEvent, name: str):
         """设置 1–24 字的展示称呼。用法：小猪称呼 名字；不会改变收藏归属。"""
         await self._handle(event, "alias", (name,))
+
+    @filter.command("小猪属性")
+    async def stats(self, event: AstrMessageEvent):
+        """查看小猪的等级、属性和技能。用法：小猪属性 小猪名字"""
+        await self._handle(event, "stats", command_words(event, ("小猪属性",)))
+
+    @filter.command("斗猪")
+    async def duel(self, event: AstrMessageEvent):
+        """向群友发起斗猪，败者失去出战的小猪。用法：斗猪 @对方 你的小猪"""
+        await self._handle(event, "duel", command_words(event, ("斗猪",)))
+
+    @filter.command("接受斗猪")
+    async def duel_accept(self, event: AstrMessageEvent):
+        """接受斗猪并选择出战小猪。用法：接受斗猪 你的小猪"""
+        await self._handle(event, "duel_accept", command_words(event, ("接受斗猪",)))
+
+    @filter.command("拒绝斗猪")
+    async def duel_decline(self, event: AstrMessageEvent):
+        """拒绝收到的斗猪请求。"""
+        await self._handle(event, "duel_decline")
+
+    @filter.command("小猪交换")
+    async def trade(self, event: AstrMessageEvent):
+        """用自己的小猪换群友的小猪。用法：小猪交换 @对方 你的小猪 对方的小猪"""
+        await self._handle(event, "trade", command_words(event, ("小猪交换",)))
+
+    @filter.command("接受交换")
+    async def trade_accept(self, event: AstrMessageEvent):
+        """接受收到的小猪交换请求。"""
+        await self._handle(event, "trade_accept")
+
+    @filter.command("拒绝交换")
+    async def trade_decline(self, event: AstrMessageEvent):
+        """拒绝收到的小猪交换请求。"""
+        await self._handle(event, "trade_decline")
+
+    @filter.command("取消请求")
+    async def cancel(self, event: AstrMessageEvent):
+        """撤回自己在本群发出的斗猪和交换请求。"""
+        await self._handle(event, "cancel")
+
+    @filter.command("我的请求")
+    async def requests(self, event: AstrMessageEvent):
+        """查看本群待处理的斗猪和交换请求。"""
+        await self._handle(event, "requests")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("小猪重载")
