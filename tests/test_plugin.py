@@ -352,10 +352,23 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         markup = '斗猪 <qqbot-at-user id="tagged" /> 猪芙蕾'
         await self.plugin.duel(OfficialEvent("m3", text=markup))
         self.assertEqual(await target_of(), "tagged")
+        markup = "斗猪 <qqbot-at-user user_openid='quoted' nick='大洋芋' /> 猪芙蕾"
+        await self.plugin.duel(OfficialEvent("m3b", text=markup))
+        self.assertEqual(await target_of(), "quoted")
 
         # No mention and only a pig name: never treat the pig as a player.
-        await self.plugin.duel(OfficialEvent("m4", text="斗猪 猪芙蕾"))
-        self.assertIn("没有识别到你 @ 的群友。可以改用：斗猪 对方称呼 你的小猪", last())
+        with self.assertLogs("piggy-tests", "INFO") as logs:
+            await self.plugin.duel(OfficialEvent("m4", text="斗猪 猪芙蕾"))
+        self.assertIn("可以改用对方的玩家编号：斗猪 #编号 你的小猪", last())
+        self.assertTrue(any("No mention resolved" in line for line in logs.output))
+
+        # A player number works when QQ drops the mention, e.g. for group-card names.
+        card = await db.identify("app", "card-user", "group-a", "原昵称")
+        await self.plugin.duel(OfficialEvent("m4b", text=f"斗猪 #{card['id']} 猪芙蕾"))
+        self.assertEqual(await target_of(), "card-user")
+        await self.plugin.pen(OfficialEvent("m4c", user="card-user", text="我的猪圈"))
+        await self.plugin.guide(OfficialEvent("m4d", text="小猪玩法"))
+        self.assertIn(f"你的编号是 #{challenger['id']}", last())
 
         self.plugin.settings = replace(self.plugin.settings, battle_markdown=True)
         await self.plugin.duel(OfficialEvent("m5", text="斗猪 <@christina> 猪芙蕾"))

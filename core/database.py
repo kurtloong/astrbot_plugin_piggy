@@ -400,7 +400,23 @@ class Database:
         if not name:
             raise PiggyError("请 @ 你要找的玩家。")
 
+        number = name.lstrip("#＃")
+        by_number = name[:1] in "#＃" and number.isdigit()
+
         def read(conn):
+            if by_number:
+                row = conn.execute(
+                    """
+                    SELECT u.* FROM group_players g JOIN users u ON u.id=g.user_id
+                    WHERE g.app_id=? AND g.group_id=? AND u.id=?
+                    """,
+                    (app_id, group_id, int(number)),
+                ).fetchone()
+                if not row:
+                    raise PiggyError(
+                        f"本群没有编号为 #{number} 的玩家，请让对方发送「我的猪圈」核对。"
+                    )
+                return dict(row)
             rows = conn.execute(
                 """
                 SELECT u.* FROM group_players g JOIN users u ON u.id=g.user_id
@@ -409,9 +425,12 @@ class Database:
                 (app_id, group_id, name, name),
             ).fetchall()
             if not rows:
-                raise PiggyError(f"本群没有找到叫「{name}」的玩家，请直接 @ 对方。")
+                raise PiggyError(
+                    f"本群没有找到叫「{name}」的玩家。群名片无法识别，请改用对方的玩家编号，"
+                    "例如：斗猪 #12 你的小猪（对方发送「我的猪圈」即可看到编号）。"
+                )
             if len(rows) > 1:
-                raise PiggyError(f"本群有多位玩家叫「{name}」，请直接 @ 对方。")
+                raise PiggyError(f"本群有多位玩家叫「{name}」，请改用 @ 或对方的玩家编号。")
             return dict(rows[0])
 
         return await self.run(read)

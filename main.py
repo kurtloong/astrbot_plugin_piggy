@@ -42,7 +42,10 @@ from .core.views import (
 MAX_INFLIGHT = 12
 REQUEST_TIMEOUT = 240
 MENTION_TAG = re.compile(r"<@!?[^>]*>|<qqbot-at-user[^>]*>")
-MENTION_ID = re.compile(r"<@!?([^>\s]+)>|<qqbot-at-user[^>]*?\bid=\"([^\"]+)\"[^>]*>")
+MENTION_ID = re.compile(
+    r"<@!?([^>\s]+)>"
+    r"|<qqbot-at-user\b[^>]*?\b(?:member_openid|user_openid|openid|id)=[\"']([^\"']+)[\"'][^>]*>"
+)
 BATTLE_COMMANDS = {
     "guide",
     "stats",
@@ -63,8 +66,8 @@ USAGE = {
     "trade": "用法：小猪交换 @对方 你的小猪 对方的小猪",
 }
 NAME_USAGE = {
-    "duel": "斗猪 对方称呼 你的小猪",
-    "trade": "小猪交换 对方称呼 你的小猪 对方的小猪",
+    "duel": "斗猪 #编号 你的小猪",
+    "trade": "小猪交换 #编号 你的小猪 对方的小猪",
 }
 
 
@@ -82,18 +85,28 @@ def message_text(event) -> str:
     return (getter() if callable(getter) else getattr(event, "message_str", "")) or ""
 
 
-def mention_fields(event) -> list[list[str]]:
+def mention_debug(event) -> dict:
+    """Shape of what QQ delivered, for diagnosing unrecognised mentions; ids are omitted."""
     raw = event.message_obj.raw_message
-    fields = [
-        sorted(k for k, v in vars(item).items() if v is not None)
-        for item in getattr(raw, "mentions", None) or []
-        if hasattr(item, "__dict__")
-    ]
+
+    def shape(value, depth=0):
+        if depth > 3:
+            return "..."
+        if isinstance(value, dict):
+            return {k: shape(v, depth + 1) for k, v in value.items() if v not in (None, "")}
+        if isinstance(value, list):
+            return [shape(v, depth + 1) for v in value[:5]]
+        if hasattr(value, "__dict__"):
+            return shape(vars(value), depth)
+        return type(value).__name__
+
     data = getattr(raw, "raw_data", None)
-    for item in (data.get("mentions") if isinstance(data, dict) else None) or []:
-        if isinstance(item, dict):
-            fields.append(sorted(item))
-    return fields
+    return {
+        "content": getattr(raw, "content", None),
+        "mentions": shape(getattr(raw, "mentions", None) or []),
+        "raw_mentions": shape(data.get("mentions")) if isinstance(data, dict) else None,
+        "msg_elements": shape(getattr(raw, "msg_elements", None) or []),
+    }
 
 
 def mention_targets(event) -> tuple[list[dict], set[str]]:
@@ -149,7 +162,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.2.1")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.2.2")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -406,12 +419,15 @@ class PiggyPlugin(Star):
         # Without a mention the first word must be a name, followed by the pig names.
         if len(words) < (2 if command == "duel" else 3):
             logger.info(
-                "[piggy] No mention resolved command=%s text=%r mention_fields=%s",
+                "[piggy] No mention resolved command=%s text=%r delivered=%s",
                 command,
                 message_text(event),
-                mention_fields(event),
+                mention_debug(event),
             )
-            raise PiggyError(f"没有识别到你 @ 的群友。可以改用：{NAME_USAGE[command]}")
+            raise PiggyError(
+                f"没有识别到你 @ 的群友。可以改用对方的玩家编号：{NAME_USAGE[command]}"
+                "（对方发送「我的猪圈」即可看到编号），也可以把编号换成对方的昵称。"
+            )
         return await self.db.find_group_player(app_id, event.get_group_id(), words[0]), words[1:]
 
     async def _battle(self, event, app_id: str, user: dict, command: str, words: tuple):

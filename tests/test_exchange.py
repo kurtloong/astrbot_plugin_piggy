@@ -211,6 +211,12 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
         await self.db.identify("app", "other", "group", "阿波")
         with self.assertRaises(PiggyError):
             await self.db.find_group_player("app", "group", "阿波")
+        found = await self.db.find_group_player("app", "group", f"#{self.bob['id']}")
+        self.assertEqual(found["id"], self.bob["id"])
+        outsider = await self.db.identify("app", "outsider", "elsewhere", "外人")
+        for query in (f"＃{outsider['id']}", "#9999"):
+            with self.assertRaises(PiggyError):
+                await self.db.find_group_player("app", "group", query)
 
     async def fight(self, challenger, target, seed, group="group"):
         await self.db.create_request(
