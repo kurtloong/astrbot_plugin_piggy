@@ -275,9 +275,7 @@ def render_today(
             (68, y, 68 + max(10, int(944 * min(ratio, 1))), y + 10), radius=5, fill=ACCENT
         )
     hint = "发送「小猪玩法」和群友斗猪、换猪"
-    canvas.text(
-        f"{protection} · {hint}" if protection else hint, 68, y + 34, 19, ACCENT, width=944
-    )
+    canvas.text(f"{protection} · {hint}" if protection else hint, 68, y + 34, 19, ACCENT, width=944)
     return finish(canvas.image)
 
 

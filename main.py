@@ -27,6 +27,9 @@ from .core.views import (
     cancelled_message,
     collection_message,
     declined_message,
+    duel_history_message,
+    duel_ranking_message,
+    duel_replay_message,
     guide_message,
     ranking_message,
     request_message,
@@ -39,6 +42,7 @@ from .core.views import (
 MAX_INFLIGHT = 12
 REQUEST_TIMEOUT = 240
 MENTION_TAG = re.compile(r"<@!?[^>]*>|<qqbot-at-user[^>]*>")
+MENTION_ID = re.compile(r"<@!?([^>\s]+)>|<qqbot-at-user[^>]*?\bid=\"([^\"]+)\"[^>]*>")
 BATTLE_COMMANDS = {
     "guide",
     "stats",
@@ -50,46 +54,102 @@ BATTLE_COMMANDS = {
     "trade_decline",
     "cancel",
     "requests",
+    "duel_ranking",
+    "duel_history",
+    "duel_replay",
 }
 USAGE = {
     "duel": "用法：斗猪 @对方 你的小猪",
     "trade": "用法：小猪交换 @对方 你的小猪 对方的小猪",
 }
+NAME_USAGE = {
+    "duel": "斗猪 对方称呼 你的小猪",
+    "trade": "小猪交换 对方称呼 你的小猪 对方的小猪",
+}
 
 
 def command_words(event, names: tuple[str, ...]) -> tuple[str, ...]:
     """Parse arguments ourselves: QQ mention markup may sit anywhere in the text."""
-    getter = getattr(event, "get_message_str", None)
-    text = getter() if callable(getter) else getattr(event, "message_str", "")
-    words = MENTION_TAG.sub(" ", text or "").split()
+    words = MENTION_TAG.sub(" ", message_text(event)).split()
     for index, word in enumerate(words):
         if any(word.endswith(name) for name in names):
             return tuple(words[index + 1 :])
     return tuple(words[1:])
 
 
-def mentioned_members(event) -> list[tuple[str, str]]:
+def message_text(event) -> str:
+    getter = getattr(event, "get_message_str", None)
+    return (getter() if callable(getter) else getattr(event, "message_str", "")) or ""
+
+
+def mention_fields(event) -> list[list[str]]:
     raw = event.message_obj.raw_message
-    found = []
-    for item in getattr(raw, "mentions", None) or []:
-        open_id = getattr(item, "member_openid", None) or getattr(item, "id", None)
-        if open_id:
-            found.append((str(open_id), getattr(item, "username", "") or ""))
+    fields = [
+        sorted(k for k, v in vars(item).items() if v is not None)
+        for item in getattr(raw, "mentions", None) or []
+        if hasattr(item, "__dict__")
+    ]
     data = getattr(raw, "raw_data", None)
     for item in (data.get("mentions") if isinstance(data, dict) else None) or []:
-        if not isinstance(item, dict) or item.get("bot") or item.get("is_you"):
+        if isinstance(item, dict):
+            fields.append(sorted(item))
+    return fields
+
+
+def mention_targets(event) -> tuple[list[dict], set[str]]:
+    """Return mentioned players in text order, plus every id known to be a bot."""
+    raw = event.message_obj.raw_message
+    entries = []
+
+    def add(get, source):
+        member, plain = get("member_openid"), get("id")
+        ids = {str(i) for i in (member, plain) if i}
+        if ids:
+            entries.append(
+                {
+                    "ids": ids,
+                    "open_id": str(member or plain),
+                    "name": get("username") or get("nickname") or "",
+                    "bot": bool(get("is_you") or get("bot")),
+                    "source": f"{source}.{'member_openid' if member else 'id'}",
+                }
+            )
+
+    for item in getattr(raw, "mentions", None) or []:
+        add(lambda key, item=item: getattr(item, key, None), "mentions")
+    data = getattr(raw, "raw_data", None)
+    for item in (data.get("mentions") if isinstance(data, dict) else None) or []:
+        if isinstance(item, dict):
+            add(item.get, "raw_data")
+    bots = {i for entry in entries if entry["bot"] for i in entry["ids"]}
+    get_self = getattr(event, "get_self_id", None)
+    self_id = str(get_self() or "") if callable(get_self) else ""
+    if self_id and self_id not in {"qq_official", "unknown_selfid"}:
+        bots.add(self_id)
+    ordered = []
+    for match in MENTION_ID.finditer(message_text(event)):
+        tag_id = match.group(1) or match.group(2)
+        known = next((e for e in entries if tag_id in e["ids"]), None)
+        if known:
+            ordered.append({**known, "source": f"text+{known['source']}"})
+        else:
+            ordered.append(
+                {"ids": {tag_id}, "open_id": tag_id, "name": "", "bot": False, "source": "text"}
+            )
+    ordered += entries
+    sender = str(event.get_sender_id())
+    targets, seen = [], set()
+    for entry in ordered:
+        if entry["bot"] or entry["ids"] & bots or sender in entry["ids"]:
             continue
-        open_id = item.get("member_openid") or item.get("id")
-        if open_id:
-            found.append((str(open_id), item.get("username") or item.get("nickname") or ""))
-    unique = {}
-    for open_id, name in found:
-        if name or open_id not in unique:
-            unique[open_id] = name
-    return list(unique.items())
+        if entry["open_id"] in seen:
+            continue
+        seen.add(entry["open_id"])
+        targets.append(entry)
+    return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.2.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.2.1")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -324,17 +384,34 @@ class PiggyPlugin(Star):
             )
             await self._failure(event, "处理暂时失败，请联系管理员查看插件日志。")
 
-    async def _target(self, event, app_id: str, words: tuple, usage: str):
-        mentions = mentioned_members(event)
-        if mentions:
-            open_id, name = mentions[0]
-            target = await self.db.identify(app_id, open_id, event.get_group_id(), name)
+    async def _target(self, event, app_id: str, words: tuple, command: str):
+        targets, bots = mention_targets(event)
+        if bots:
+            await self.db.forget_bot(app_id, bots)
+        if targets:
+            chosen = targets[0]
+            logger.info(
+                "[piggy] Request target resolved command=%s source=%s open_id=%s...",
+                command,
+                chosen["source"],
+                chosen["open_id"][:6],
+            )
+            target = await self.db.identify(
+                app_id, chosen["open_id"], event.get_group_id(), chosen["name"]
+            )
             # Some clients also leave a plain "@昵称" word in the text.
             if words and words[0][:1] in "@＠":
                 words = words[1:]
             return target, words
-        if not words:
-            raise PiggyError(usage)
+        # Without a mention the first word must be a name, followed by the pig names.
+        if len(words) < (2 if command == "duel" else 3):
+            logger.info(
+                "[piggy] No mention resolved command=%s text=%r mention_fields=%s",
+                command,
+                message_text(event),
+                mention_fields(event),
+            )
+            raise PiggyError(f"没有识别到你 @ 的群友。可以改用：{NAME_USAGE[command]}")
         return await self.db.find_group_player(app_id, event.get_group_id(), words[0]), words[1:]
 
     async def _battle(self, event, app_id: str, user: dict, command: str, words: tuple):
@@ -350,7 +427,7 @@ class PiggyPlugin(Star):
             count = await self.db.pig_count(user["id"], pig["id"])
             return stats_message(settings, user, pig, count, settings.battle_level_cap)
         if command in ("duel", "trade"):
-            target, words = await self._target(event, app_id, words, USAGE[command])
+            target, words = await self._target(event, app_id, words, command)
             words = [word for word in words if word != "换"]
             if len(words) < (1 if command == "duel" else 2):
                 raise PiggyError(USAGE[command])
@@ -369,6 +446,19 @@ class PiggyPlugin(Star):
             )
             level = level_for(request["give_count"], settings.battle_level_cap)
             return request_message(settings, request, level)
+        if command == "duel_ranking":
+            board = await self.db.duel_rankings(app_id, group, user["id"])
+            return duel_ranking_message(settings, user, board)
+        if command == "duel_history":
+            if words and not words[0].isdigit():
+                raise PiggyError("用法：斗猪记录 [页码]")
+            history = await self.db.duel_history(user["id"], int(words[0]) if words else 1)
+            return duel_history_message(settings, user, history)
+        if command == "duel_replay":
+            number = words[0].lstrip("#＃") if words else ""
+            if not number.isdigit():
+                raise PiggyError("用法：斗猪回放 编号（编号见「斗猪记录」）")
+            return duel_replay_message(settings, await self.db.duel_record(user["id"], int(number)))
         if command == "cancel":
             return cancelled_message(
                 settings, await self.db.cancel_requests(app_id, group, user["id"])
@@ -442,6 +532,21 @@ class PiggyPlugin(Star):
     async def guide(self, event: AstrMessageEvent):
         """查看等级、斗猪和交换的玩法说明。"""
         await self._handle(event, "guide")
+
+    @filter.command("斗猪排行")
+    async def duel_ranking(self, event: AstrMessageEvent):
+        """查看本群玩家的斗猪胜率排行，至少 3 场上榜。"""
+        await self._handle(event, "duel_ranking")
+
+    @filter.command("斗猪记录")
+    async def duel_history(self, event: AstrMessageEvent):
+        """查看自己的斗猪历史战绩。用法：斗猪记录 [页码]"""
+        await self._handle(event, "duel_history", command_words(event, ("斗猪记录",)))
+
+    @filter.command("斗猪回放")
+    async def duel_replay(self, event: AstrMessageEvent):
+        """查看自己参与的某场斗猪的完整战报。用法：斗猪回放 编号"""
+        await self._handle(event, "duel_replay", command_words(event, ("斗猪回放",)))
 
     @filter.command("小猪属性")
     async def stats(self, event: AstrMessageEvent):

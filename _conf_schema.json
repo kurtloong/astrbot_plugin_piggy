@@ -81,7 +81,7 @@
     "description": "斗猪/交换使用 Markdown 与按钮",
     "type": "bool",
     "default": false,
-    "hint": "开启：@ 对方并附带仅对方可点的接受/拒绝按钮，需要机器人具备 Markdown 消息权限。关闭：发送纯文字。"
+    "hint": "开启：@ 对方并附带接受/拒绝按钮（只有被邀请的本人发出才生效），需要机器人具备 Markdown 消息权限。关闭：发送纯文字。"
   },
   "show_image_host": {
     "description": "展开图床配置",
