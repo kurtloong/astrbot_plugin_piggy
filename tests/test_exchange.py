@@ -28,6 +28,24 @@ from core.views import (
 NOW = datetime(2026, 10, 7, 4, 0, tzinfo=timezone.utc)
 
 
+async def drawn(message_coro):
+    """Await a card message and return it with every string drawn on the card."""
+    labels = []
+    original = ImageDraw.ImageDraw.text
+
+    def record(canvas, xy, text, *args, **kwargs):
+        labels.append(str(text))
+        return original(canvas, xy, text, *args, **kwargs)
+
+    with patch.object(ImageDraw.ImageDraw, "text", record):
+        message = await message_coro
+    return message, "".join(labels).replace(" ", "")
+
+
+def has(text: str, joined: str) -> bool:
+    return text.replace(" ", "") in joined
+
+
 class ExchangeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -110,12 +128,17 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(records[0][0], winner["id"])
         self.assertEqual(records[0][1], 7)
         self.assertEqual(json.loads(records[0][2]), result["result"]["log"])
-        text = battle_message(Settings(), result).text
+        card, text = await drawn(battle_message(Settings(), self.root, result))
+        self.assertTrue(card.local)
         for line in result["result"]["log"]:
-            self.assertIn(line, text)
-        self.assertNotIn("省略", text)
-        self.assertIn("获胜", text)
-        self.assertIn("Lv5 → Lv4", text)
+            self.assertTrue(has(line, text), line)
+        self.assertTrue(has("获胜", text))
+        self.assertTrue(has("Lv5 → Lv4", text))
+        self.assertTrue(has("WIN", text) and has("LOSE", text))
+        summary = await self.db.run(
+            lambda c: c.execute("SELECT summary FROM battle_records").fetchone()[0]
+        )
+        self.assertEqual(json.loads(summary)["hp"], result["result"]["hp"])
 
     async def test_losing_the_last_pig_removes_it_from_the_pen(self):
         await self.own(self.alice, "pig", 1)
@@ -127,7 +150,8 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
         loser_pig = result["loser_change"]["pig"]["id"]
         self.assertNotIn(loser_pig, await self.counts(result["loser"]))
         self.assertEqual(result["loser_change"]["after"], 0)
-        self.assertIn("已失去", battle_message(Settings(), result).text)
+        _, text = await drawn(battle_message(Settings(), self.root, result))
+        self.assertTrue(has("已失去", text))
 
     async def test_decline_cancel_expiry_and_one_pending_request_per_side(self):
         await self.own(self.alice, "pig", 1)
@@ -265,60 +289,65 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
         latest = history["records"][0]
         self.assertEqual(latest["opponent"]["id"], dave["id"])
         self.assertEqual(latest["my_pig"], "cat猪")
-        text = duel_history_message(Settings(), self.alice, history).text
-        self.assertIn(f"#{latest['id']}", text)
-        self.assertIn("vs 阿戴", text)
-        self.assertIn("第 1/2 页", text)
+        _, text = await drawn(duel_history_message(Settings(), self.root, self.alice, history))
+        self.assertTrue(has(f"#{latest['id']}", text))
+        self.assertTrue(has("vs 阿戴", text))
+        self.assertTrue(has("01 / 02", text))
         with self.assertRaises(PiggyError):
             await self.db.duel_history(self.alice["id"], 3, size=5)
 
         record = await self.db.duel_record(self.bob["id"], 1)
         self.assertEqual(record["log"], results[0]["result"]["log"])
-        replay = duel_replay_message(Settings(), record).text
+        self.assertEqual(record["summary"]["rounds"], results[0]["result"]["rounds"])
+        _, replay = await drawn(duel_replay_message(Settings(), self.root, self.bob, record))
         for line in record["log"]:
-            self.assertIn(line, replay)
-        self.assertIn("斗猪回放 #1", replay)
+            self.assertTrue(has(line, replay), line)
+        self.assertTrue(has("斗猪回放 #1", replay))
         with self.assertRaises(PiggyError):
             await self.db.duel_record(carol["id"], 1)
 
-    async def test_duel_messages_use_buttons_in_markdown_and_hints_in_plain_text(self):
+    async def test_duel_cards_carry_buttons_when_hosted(self):
         for user in (self.alice, self.bob):
             await self.own(user, "pig", 50)
             await self.own(user, "cat", 50)
         results = [await self.fight(self.alice, self.bob, seed) for seed in range(12)]
         board = await self.db.duel_rankings("app", "group", self.alice["id"])
         history = await self.db.duel_history(self.alice["id"], 1)
-        markdown, plain = Settings(battle_markdown=True), Settings()
+        last_page = await self.db.duel_history(self.alice["id"], 2)
+        record = await self.db.duel_record(self.alice["id"], 1)
+        hosted, local = Settings(display={"duel": True}), Settings()
 
         def labels(message):
             rows = message.keyboard["content"]["rows"]
             return [b["render_data"]["label"] for row in rows for b in row["buttons"]]
 
-        cases = (
-            (battle_message, results[-1], ["斗猪记录", "斗猪排行"], "「斗猪排行」看本群胜率榜"),
+        cards = (
+            (lambda s: battle_message(s, self.root, results[-1]), ["斗猪记录", "斗猪排行"]),
             (
-                lambda s, b: duel_ranking_message(s, self.alice, b),
-                board,
-                ["斗猪记录", "斗猪玩法"],
-                "发送「斗猪记录」查看自己的对战",
+                lambda s: duel_history_message(s, self.root, self.alice, history),
+                ["斗猪回放", "下一页", "斗猪排行"],
             ),
             (
-                lambda s, h: duel_history_message(s, self.alice, h),
-                history,
-                ["斗猪回放", "下一页", "斗猪排行"],
-                "「斗猪记录 页码」翻页",
+                lambda s: duel_history_message(s, self.root, self.alice, last_page),
+                ["斗猪回放", "斗猪排行"],
+            ),
+            (
+                lambda s: duel_replay_message(s, self.root, self.alice, record),
+                ["斗猪记录", "斗猪排行"],
             ),
         )
-        for render, data, expected, hint in cases:
-            rich = render(markdown, data)
+        for render, expected in cards:
+            rich = await render(hosted)
+            self.assertFalse(rich.local)
             self.assertEqual(labels(rich), expected)
-            self.assertNotIn(hint, rich.text)
-            text = render(plain, data)
-            self.assertIsNone(text.keyboard)
-            self.assertIn(hint, text.text)
-        last_page = await self.db.duel_history(self.alice["id"], 2)
-        self.assertEqual(
-            labels(duel_history_message(markdown, self.alice, last_page)), ["斗猪回放", "斗猪排行"]
+            plain = await render(local)
+            self.assertTrue(plain.local)
+            self.assertIsNone(plain.keyboard)
+        ranking = duel_ranking_message(Settings(battle_markdown=True), self.alice, board)
+        self.assertEqual(labels(ranking), ["斗猪记录", "斗猪玩法"])
+        self.assertIn(
+            "发送「斗猪记录」查看自己的对战",
+            duel_ranking_message(Settings(), self.alice, board).text,
         )
 
     async def test_forget_bot_removes_it_from_group_and_cancels_requests(self):

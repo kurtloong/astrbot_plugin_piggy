@@ -44,6 +44,12 @@
         "type": "bool",
         "default": false,
         "hint": "开启：图床图片 + Markdown + 按钮。关闭：内存渲染后直传 QQ，不带 MD 或按钮。"
+      },
+      "duel": {
+        "description": "斗猪海报与斗猪记录使用图床",
+        "type": "bool",
+        "default": false,
+        "hint": "开启：图床图片 + Markdown + 按钮。关闭：内存渲染后直传 QQ，不带 MD 或按钮。"
       }
     },
     "default": {
@@ -51,7 +57,8 @@
       "atlas": false,
       "pen": false,
       "ranking": false,
-      "shop": false
+      "shop": false,
+      "duel": false
     }
   },
   "backup_keep": {

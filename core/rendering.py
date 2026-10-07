@@ -2,6 +2,7 @@ import hashlib
 import io
 import lzma
 import math
+import re
 import shutil
 import threading
 import time
@@ -347,6 +348,162 @@ def render_shop(root: Path, name: str, shop: dict, level_cap: int) -> Card:
         ACCENT,
         width=966,
     )
+    return finish(canvas.image)
+
+
+def _paste_art(canvas, root: Path, asset: str, box: tuple, faded: bool = False):
+    x, y, w, h = box
+    if not asset or not (root / "assets" / asset).is_file():
+        canvas.text("?", x + w / 2 - 16, y + h / 2 - 40, 64, SUB, True)
+        return
+    with Image.open(root / "assets" / asset) as original:
+        art = ImageOps.exif_transpose(original).convert("RGBA")
+    art.thumbnail((w, h), Image.Resampling.LANCZOS)
+    if faded:
+        art = ImageOps.grayscale(art.convert("RGB")).convert("RGBA")
+        art.putalpha(120)
+    canvas.image.paste(art, (int(x + (w - art.width) / 2), int(y + (h - art.height) / 2)), art)
+    art.close()
+
+
+def render_duel_poster(root: Path, poster: dict) -> Card:
+    """A tall VS poster: both pigs, the winner, every log line and the settlement."""
+    log_size, log_step, width = 22, 34, 940
+    round_tag = re.compile(r"^(R\d+) ")
+    measure = Canvas(root, WIDTH, 1)
+    log = []
+    for entry in poster["log"]:
+        match = round_tag.match(entry)
+        tag = match.group(1) if match else ""
+        body = entry[match.end() :] if match else entry
+        for index, line in enumerate(measure.wrap(body, log_size, width - (58 if tag else 0))):
+            log.append((tag, line, index == 0, entry))
+    settlement = [line for entry in poster["settlement"] for line in measure.wrap(entry, 24, width)]
+    measure.image.close()
+    log_top = 940
+    settle_top = log_top + 70 + len(log) * log_step + 40
+    height = settle_top + 70 + len(settlement) * 38 + 130
+    canvas = Canvas(root, WIDTH, height)
+    canvas.text("PIGGY  /  DUEL", 58, 34, 18, ACCENT, True)
+    canvas.text(poster["title"], 54, 76, 56, bold=True)
+    canvas.text(poster["subtitle"], 58, 158, 24, SUB, width=960)
+    for index, side in enumerate(poster["sides"]):
+        x = 56 + index * 516
+        won = side["won"]
+        canvas.draw.rounded_rectangle((x, 223, x + 452, 783), radius=30, fill=BORDER)
+        canvas.draw.rounded_rectangle(
+            (x, 220, x + 452, 780), radius=30, fill="#ffffff" if won else "#f1ebe4"
+        )
+        canvas.draw.rounded_rectangle((x + 18, 238, x + 434, 548), radius=22, fill="#f9f4ed")
+        _paste_art(canvas, root, side["asset"], (x + 38, 252, 376, 282), faded=not won)
+        ribbon = "WIN" if won else "LOSE"
+        canvas.draw.rounded_rectangle(
+            (x + 300, 252, x + 420, 296), radius=22, fill=ACCENT if won else SUB
+        )
+        face = canvas.font(24, True)
+        canvas.draw.text(
+            (x + 360 - canvas.draw.textlength(ribbon, font=face) / 2, 258),
+            ribbon,
+            font=face,
+            fill="#ffffff",
+        )
+        canvas.text(side["owner"], x + 28, 566, 22, SUB, width=396)
+        names = canvas.wrap(side["pig"], 34, 396)
+        if len(names) > 2:
+            names = [names[0], names[1][:-1] + "…"]
+        for row, line in enumerate(names):
+            canvas.text(line, x + 28, 600 + row * 44, 34, TEXT, True)
+        info = f"Lv{side['level']}" + (f" · {side['style']}" if side.get("style") else "")
+        canvas.text(info, x + 28, 690, 22, ACCENT if won else SUB, True, width=396)
+        if side.get("max_hp"):
+            ratio = max(0, side["hp"]) / side["max_hp"]
+            canvas.draw.rounded_rectangle((x + 28, 736, x + 330, 750), radius=7, fill=TRACK)
+            if ratio:
+                canvas.draw.rounded_rectangle(
+                    (x + 28, 736, x + 28 + max(14, int(302 * ratio)), 750),
+                    radius=7,
+                    fill=ACCENT if won else SUB,
+                )
+            canvas.text(f"{side['hp']}/{side['max_hp']}", x + 344, 728, 20, SUB, width=96)
+    canvas.draw.ellipse((488, 440, 592, 544), fill=TEXT)
+    face = canvas.font(40, True)
+    canvas.draw.text(
+        (540 - canvas.draw.textlength("VS", font=face) / 2, 466), "VS", font=face, fill="#ffffff"
+    )
+    canvas.draw.rounded_rectangle((56, 812, 1024, 892), radius=26, fill=PANEL)
+    canvas.text(poster["headline"], 86, 830, 32, ACCENT, True, width=908)
+    canvas.text("战斗过程", 58, log_top, 28, bold=True)
+    for index, (tag, line, first, entry) in enumerate(log):
+        y = log_top + 60 + index * log_step
+        x = 70 + (58 if tag else 0)
+        if tag and first:
+            canvas.text(tag, 70, y, log_size, ACCENT, True)
+        bold = "倒下了" in entry or "站了起来" in entry
+        canvas.text(line, x, y, log_size, TEXT if tag else SUB, bold)
+    canvas.draw.line((56, settle_top, 1024, settle_top), fill=BORDER, width=2)
+    canvas.text("结算", 58, settle_top + 20, 28, bold=True)
+    for index, line in enumerate(settlement):
+        canvas.text(line, 70, settle_top + 76 + index * 38, 24, TEXT, width=950)
+    footer = height - 78
+    canvas.draw.line((56, footer, 1024, footer), fill=BORDER, width=2)
+    canvas.text(poster["footer"], 58, footer + 22, 20, ACCENT, width=966)
+    return finish(canvas.image)
+
+
+def render_duel_history(root: Path, name: str, history: dict) -> Card:
+    """One row per duel with both pigs' art, the result and what changed hands."""
+    records = history["records"]
+    top, row_h = 268, 150
+    canvas = Canvas(root, WIDTH, top + max(1, len(records)) * row_h + 110)
+    total, wins = history["total"], history["wins"]
+    rate = f"{wins / total:.0%}" if total else "0%"
+    canvas.text("PIGGY  /  DUEL LOG", 58, 34, 18, ACCENT, True)
+    canvas.text("斗猪记录", 54, 76, 56, bold=True)
+    canvas.text(name, 58, 158, 24, SUB, width=960)
+    canvas.draw.rounded_rectangle((56, 204, 1024, 244), radius=20, fill=PANEL)
+    canvas.text(f"共 {total} 场 · 胜 {wins} 负 {total - wins} · 胜率 {rate}", 80, 210, 22)
+    for index, record in enumerate(records):
+        y = top + index * row_h
+        won = record["won"]
+        canvas.draw.rounded_rectangle((56, y, 1024, y + row_h - 16), radius=22, fill="#ffffff")
+        canvas.draw.rounded_rectangle(
+            (74, y + 20, 150, y + 96), radius=18, fill=ACCENT if won else SUB
+        )
+        face = canvas.font(40, True)
+        mark = "胜" if won else "负"
+        canvas.draw.text(
+            (112 - canvas.draw.textlength(mark, font=face) / 2, y + 30),
+            mark,
+            font=face,
+            fill="#ffffff",
+        )
+        canvas.text(f"#{record['id']}", 80, y + 102, 18, SUB)
+        day = time.strftime("%m-%d", time.gmtime(record["fought_at"] + 8 * 3600))
+        canvas.text(f"{day} · vs {display(record['opponent'])}", 176, y + 18, 22, SUB, width=520)
+        for column, (pig, level, asset) in enumerate(
+            (
+                (record["my_pig"], record["my_level"], record.get("my_asset", "")),
+                (record["their_pig"], record["their_level"], record.get("their_asset", "")),
+            )
+        ):
+            x = 176 + column * 330
+            canvas.draw.rounded_rectangle((x, y + 52, x + 70, y + 122), radius=14, fill="#f9f4ed")
+            _paste_art(canvas, root, asset, (x + 5, y + 57, 60, 60))
+            canvas.text(pig, x + 82, y + 58, 22, TEXT, True, width=230)
+            canvas.text(
+                ("我方" if column == 0 else "对方") + f" · Lv{level}", x + 82, y + 90, 18, SUB
+            )
+        canvas.text("VS", 474, y + 74, 22, SUB, True)
+        change = ("得到" if won else "失去") + f"「{record['prize']}」"
+        canvas.text(change, 820, y + 72, 20, ACCENT if won else SUB, True, width=190)
+    if not records:
+        canvas.text("还没有斗过猪，发送「小猪玩法」看看怎么开始。", 80, top + 40, 26, SUB)
+    footer = canvas.image.height - 78
+    canvas.draw.line((56, footer, 1024, footer), fill=BORDER, width=2)
+    canvas.text(
+        "发送「斗猪回放 编号」看完整战报 · 「斗猪记录 页码」翻页", 58, footer + 22, 20, ACCENT
+    )
+    canvas.text(f"{history['page']:02d} / {history['pages']:02d}", 900, footer + 18, 22, bold=True)
     return finish(canvas.image)
 
 

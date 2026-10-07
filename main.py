@@ -171,7 +171,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.4.1")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.5.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -506,12 +506,17 @@ class PiggyPlugin(Star):
             if words and not words[0].isdigit():
                 raise PiggyError("用法：斗猪记录 [页码]")
             history = await self.db.duel_history(user["id"], int(words[0]) if words else 1)
-            return duel_history_message(settings, user, history)
+            if settings.use_host("duel"):
+                settings.check_host()
+            return await duel_history_message(settings, self.root, user, history)
         if command == "duel_replay":
             number = words[0].lstrip("#＃") if words else ""
             if not number.isdigit():
                 raise PiggyError("用法：斗猪回放 编号（编号见「斗猪记录」）")
-            return duel_replay_message(settings, await self.db.duel_record(user["id"], int(number)))
+            record = await self.db.duel_record(user["id"], int(number))
+            if settings.use_host("duel"):
+                settings.check_host()
+            return await duel_replay_message(settings, self.root, user, record)
         if command == "cancel":
             return cancelled_message(
                 settings, await self.db.cancel_requests(app_id, group, user["id"])
@@ -538,9 +543,9 @@ class PiggyPlugin(Star):
         )
         if not result["accepted"]:
             return declined_message(settings, result)
-        return (
-            battle_message(settings, result) if kind == "duel" else trade_message(settings, result)
-        )
+        if kind == "duel":
+            return await battle_message(settings, self.root, result)
+        return trade_message(settings, result)
 
     async def _failure(self, event, text: str):
         try:
