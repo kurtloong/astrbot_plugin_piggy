@@ -100,6 +100,9 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(records[0][1], 7)
         self.assertEqual(json.loads(records[0][2]), result["result"]["log"])
         text = battle_message(Settings(), result).text
+        for line in result["result"]["log"]:
+            self.assertIn(line, text)
+        self.assertNotIn("省略", text)
         self.assertIn("获胜", text)
         self.assertIn("Lv5 → Lv4", text)
 

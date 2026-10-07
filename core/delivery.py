@@ -18,6 +18,9 @@ IMAGE_ERRORS = {304010, 40034004}
 RETRYABLE_ERRORS = IMAGE_ERRORS | {40034141}
 EXPIRED_ERRORS = {304103, 40034005, 40034128}
 DEDUPE_ERRORS = {40054005}
+TEXT_LIMIT = 1500
+# QQ accepts at most five passive replies to one user message.
+MAX_PARTS = 4
 
 
 class QQError(PiggyError):
@@ -129,6 +132,24 @@ class Message:
     local: bool = False
     markdown: bool = False
 
+    def parts(self) -> list[str]:
+        """Split long text by lines; QQ allows a few passive replies per message."""
+        parts, current = [], ""
+        for line in self.text.split("\n"):
+            while len(line) > TEXT_LIMIT:
+                if current:
+                    parts.append(current)
+                    current = ""
+                parts.append(line[:TEXT_LIMIT])
+                line = line[TEXT_LIMIT:]
+            if current and len(current) + 1 + len(line) > TEXT_LIMIT:
+                parts.append(current)
+                current = line
+            else:
+                current = f"{current}\n{line}" if current else line
+        parts.append(current)
+        return parts[:MAX_PARTS]
+
     def content(self, urls: list[str]) -> str:
         result = self.text
         for index, url in enumerate(urls):
@@ -215,60 +236,68 @@ class Sender:
                     await self.publisher.publish(path, force=force_upload, deadline=deadline)
                 )
         refreshed = False
-        for attempt in range(self.settings.image_retry_count + 1):
-            if time.monotonic() >= deadline:
-                raise PiggyError("本次回复等待过久，请重新发送指令；抽取记录已保留。")
-            payload = {
-                "msg_id": event.message_obj.message_id,
-                "msg_seq": sequence,
-            }
-            if message.local:
-                payload.update(msg_type=7, media={"file_info": media})
-            elif message.images or message.markdown:
-                payload.update(
-                    msg_type=2,
-                    markdown={
-                        "content": message.content(urls),
-                        **({"force_verify_image_resource": True} if message.images else {}),
-                    },
-                )
-                if message.keyboard:
-                    payload["keyboard"] = message.keyboard
-            else:
-                payload.update(msg_type=0, content=message.text)
-            try:
-                await self.transport.request(event, payload)
-            except QQError as exc:
-                if exc.code in DEDUPE_ERRORS:
-                    # Same persisted sequence: a previous attempt already reached QQ.
-                    await self.db.delivery_update(key, sequence, True)
-                    return
-                image_error = exc.code in IMAGE_ERRORS or (message.local and exc.code == 304080)
-                retryable = image_error or exc.retryable
-                delay = self._retry_delay(
-                    exc, attempt, self.settings.image_retry_count, deadline, "send", retryable
-                )
-                if not retryable:
-                    raise
-                if not exc.uncertain:
-                    # QQ explicitly rejected this message. It is safe to allocate the next sequence.
-                    sequence += 1
-                    await self.db.delivery_update(key, sequence, False)
-                if delay is None:
-                    raise
-                await asyncio.sleep(delay)
-                if image_error and message.local:
-                    media = await self._upload_local(event, message.images[0], deadline)
-                elif image_error and not refreshed:
-                    # Repair expired/deleted host objects once per message, then let QQ retry transfer.
-                    urls = [
-                        await self.publisher.publish(path, force=True, deadline=deadline)
-                        for path in message.images
-                    ]
-                    refreshed = True
-                continue
-            await self.db.delivery_update(key, sequence, True)
-            return
+        parts = [message.text] if message.images or message.local else message.parts()
+        for index, part in enumerate(parts):
+            final = index == len(parts) - 1
+            for attempt in range(self.settings.image_retry_count + 1):
+                if time.monotonic() >= deadline:
+                    raise PiggyError("本次回复等待过久，请重新发送指令；抽取记录已保留。")
+                payload = {
+                    "msg_id": event.message_obj.message_id,
+                    "msg_seq": sequence,
+                }
+                if message.local:
+                    payload.update(msg_type=7, media={"file_info": media})
+                elif message.images or message.markdown:
+                    payload.update(
+                        msg_type=2,
+                        markdown={
+                            "content": message.content(urls) if message.images else part,
+                            **({"force_verify_image_resource": True} if message.images else {}),
+                        },
+                    )
+                    if message.keyboard and final:
+                        payload["keyboard"] = message.keyboard
+                else:
+                    payload.update(msg_type=0, content=part)
+                try:
+                    await self.transport.request(event, payload)
+                except QQError as exc:
+                    if exc.code in DEDUPE_ERRORS:
+                        # Same persisted sequence: a previous attempt already reached QQ.
+                        break
+                    image_error = exc.code in IMAGE_ERRORS or (message.local and exc.code == 304080)
+                    retryable = image_error or exc.retryable
+                    delay = self._retry_delay(
+                        exc, attempt, self.settings.image_retry_count, deadline, "send", retryable
+                    )
+                    if not retryable:
+                        raise
+                    if not exc.uncertain:
+                        # QQ explicitly rejected this message. It is safe to allocate the next
+                        # sequence.
+                        sequence += 1
+                        await self.db.delivery_update(key, sequence, False)
+                    if delay is None:
+                        raise
+                    await asyncio.sleep(delay)
+                    if image_error and message.local:
+                        media = await self._upload_local(event, message.images[0], deadline)
+                    elif image_error and not refreshed:
+                        # Repair expired/deleted host objects once per message, then let QQ
+                        # retry transfer.
+                        urls = [
+                            await self.publisher.publish(path, force=True, deadline=deadline)
+                            for path in message.images
+                        ]
+                        refreshed = True
+                    continue
+                break
+            if final:
+                await self.db.delivery_update(key, sequence, True)
+                return
+            sequence += 1
+            await self.db.delivery_update(key, sequence, False)
 
     async def _upload_local(self, event, data: bytes, deadline: float) -> str:
         for attempt in range(self.settings.upload_retry_count + 1):

@@ -4,7 +4,7 @@ import re
 import time
 from pathlib import Path
 
-from .battle import STAT_NAMES, STATS, compact_log, describe_skill, entry_for, fighter, level_for
+from .battle import STAT_NAMES, STATS, describe_skill, entry_for, fighter, level_for
 from .config import PiggyError, Settings
 from .delivery import Message
 from .rendering import (
@@ -276,7 +276,7 @@ def battle_message(settings: Settings, result: dict) -> Message:
         settings,
         f"⚔️ 斗猪：{a['label']} Lv{a['level']} VS {b['label']} Lv{b['level']}",
         [
-            compact_log(fight["log"]),
+            fight["log"],
             f"🏆 {display_name(winner)} 获胜！（{fight['rounds']} 回合，剩余生命 {hp}）",
             f"{display_name(loser)} 的「{result['loser_change']['pig']['name']}」归 "
             f"{display_name(winner)} 所有。",

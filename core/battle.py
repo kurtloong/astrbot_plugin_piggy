@@ -708,10 +708,3 @@ class _Battle:
 
 def simulate(a: dict, b: dict, seed: int) -> dict:
     return _Battle(a, b, seed).run()
-
-
-def compact_log(lines: list[str], limit: int = 36) -> list[str]:
-    if len(lines) <= limit:
-        return lines
-    head, tail = limit // 3, limit - limit // 3
-    return [*lines[:head], f"……（省略 {len(lines) - limit} 条战斗记录）……", *lines[-tail:]]

@@ -85,6 +85,20 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.sleep.stop()
         self.temp.cleanup()
 
+    async def test_long_text_is_sent_completely_as_ordered_replies(self):
+        config = settings()
+        transport = FakeTransport()
+        sender = Sender(config, self.db, ImagePublisher(config, self.db, FakeHost()), transport)
+        lines = [f"R{i} 第 {i} 条战斗记录" + "哼" * 60 for i in range(45)]
+        await sender.send(self.event, "app", Message("\n".join(lines)))
+        sent = transport.payloads
+        self.assertEqual([p["msg_seq"] for p in sent], [100, 101, 102])
+        self.assertTrue(all(p["msg_type"] == 0 and len(p["content"]) <= 1500 for p in sent))
+        self.assertEqual("\n".join(p["content"] for p in sent).split("\n"), lines)
+        count = len(transport.payloads)
+        await sender.send(self.event, "app", Message("\n".join(lines)))
+        self.assertEqual(len(transport.payloads), count)
+
     async def test_image_rejection_refreshes_host_and_is_bounded(self):
         config = settings(image_retry_count=2)
         host = FakeHost()
