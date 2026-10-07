@@ -13,6 +13,8 @@ from .rendering import (
     ATLAS_SHEET_SIZE,
     PEN_SHEET_SIZE,
     render_collection,
+    render_duel_history,
+    render_duel_poster,
     render_ranking,
     render_shop,
     render_today,
@@ -343,34 +345,48 @@ def declined_message(settings: Settings, result: dict) -> Message:
     )
 
 
-def battle_message(settings: Settings, result: dict) -> Message:
+async def battle_message(settings: Settings, root: Path, result: dict) -> Message:
     a, b = result["fighters"]
     fight = result["result"]
     winner, loser = result["winner"], result["loser"]
-    hp = " / ".join(
-        f"{unit['label']} {fight['hp'][i]}/{fight['max_hp'][i]}" for i, unit in enumerate((a, b))
-    )
+    users = list(result["users"].values())
     left = result["duels_left"]
-    return text_message(
-        settings,
-        f"斗猪：{a['label']} Lv{a['level']} VS {b['label']} Lv{b['level']}",
-        [
-            fight["log"],
-            f"{display_name(winner)} 获胜！（{fight['rounds']} 回合，剩余生命 {hp}）",
-            f"{display_name(loser)} 的「{result['loser_change']['pig']['name']}」归 "
-            f"{display_name(winner)} 所有。",
-            [
-                f"{display_name(loser)}：{_level_text(result['loser_change'])}",
-                f"{display_name(winner)}：{_level_text(result['winner_change'])}",
-            ],
+    poster = {
+        "title": "斗猪对决",
+        "subtitle": f"{result['day']} · 第 #{result['record_id']} 场 · {fight['rounds']} 回合",
+        "sides": [
+            {
+                "owner": display_name(user),
+                "pig": unit["name"],
+                "asset": unit["asset"],
+                "level": unit["level"],
+                "style": unit["style"],
+                "hp": fight["hp"][index],
+                "max_hp": fight["max_hp"][index],
+                "won": fight["winner"] == index,
+            }
+            for index, (unit, user) in enumerate(zip((a, b), users))
+        ],
+        "headline": f"{display_name(winner)} 获胜！赢走「{result['loser_change']['pig']['name']}」",
+        "log": fight["log"],
+        "settlement": [
+            f"{display_name(loser)}：{_level_text(result['loser_change'])}",
+            f"{display_name(winner)}：{_level_text(result['winner_change'])}",
             "今日剩余斗猪次数："
             + "，".join(
                 f"{display_name(user)} {left[uid]} 场" for uid, user in result["users"].items()
             ),
         ],
-        mention=result["request"]["from"],
+        "footer": "发送「斗猪记录」查看历史战绩 · 「斗猪排行」看本群胜率榜",
+    }
+    card = await asyncio.to_thread(render_duel_poster, root, poster)
+    return card_message(
+        settings,
+        result["request"]["from"],
+        card,
+        "斗猪对决",
+        "duel",
         buttons=[("斗猪记录", "斗猪记录"), ("斗猪排行", "斗猪排行")],
-        plain_hint="发送「斗猪记录」查看历史战绩，「斗猪排行」看本群胜率榜",
     )
 
 
@@ -447,56 +463,55 @@ def duel_ranking_message(settings: Settings, user: dict, board: dict) -> Message
     )
 
 
-def duel_history_message(settings: Settings, user: dict, history: dict) -> Message:
-    total, wins = history["total"], history["wins"]
-    if not total:
-        return text_message(
-            settings, "斗猪记录", ["你还没有斗过猪，发送「小猪玩法」看看怎么开始。"]
-        )
-    lines = []
-    for record in history["records"]:
-        day = datetime.fromtimestamp(record["fought_at"], EAST_ASIA).strftime("%m-%d")
-        result = "胜" if record["won"] else "负"
-        change = "得到" if record["won"] else "失去"
-        lines.append(
-            f"#{record['id']} {day} {result} vs {display_name(record['opponent'])} · "
-            f"我方「{record['my_pig']}」Lv{record['my_level']} vs "
-            f"对方「{record['their_pig']}」Lv{record['their_level']} · "
-            f"{change}「{record['prize']}」"
-        )
-    blocks = [f"共 {total} 场，胜 {wins} 负 {total - wins}，胜率 {_rate(wins, total)}", lines]
+async def duel_history_message(
+    settings: Settings, root: Path, user: dict, history: dict
+) -> Message:
+    card = await asyncio.to_thread(render_duel_history, root, display_name(user), history)
     buttons = [("斗猪回放", "斗猪回放 ")]
-    hint = "发送「斗猪回放 编号」查看完整战报"
-    if history["pages"] > 1:
-        blocks.append(f"第 {history['page']}/{history['pages']} 页")
-        hint += "，「斗猪记录 页码」翻页"
     if history["page"] < history["pages"]:
         buttons.append(("下一页", f"斗猪记录 {history['page'] + 1}"))
     buttons.append(("斗猪排行", "斗猪排行"))
-    return text_message(
-        settings,
-        f"{display_name(user)} 的斗猪记录",
-        blocks,
-        buttons=buttons,
-        plain_hint=hint,
-    )
+    return card_message(settings, user, card, "斗猪记录", "duel", buttons=buttons)
 
 
-def duel_replay_message(settings: Settings, record: dict) -> Message:
+async def duel_replay_message(settings: Settings, root: Path, user: dict, record: dict) -> Message:
     players = record["players"]
-    a, b = players[record["a_user"]], players[record["b_user"]]
-    winner = players[record["winner"]]
+    summary = record["summary"] or {}
     day = datetime.fromtimestamp(record["fought_at"], EAST_ASIA).strftime("%Y-%m-%d %H:%M")
-    return text_message(
+    sides = []
+    for index, side in enumerate("ab"):
+        owner = players[record[f"{side}_user"]]
+        sides.append(
+            {
+                "owner": display_name(owner),
+                "pig": record[f"{side}_pig_name"],
+                "asset": record[f"{side}_asset"],
+                "level": record[f"{side}_level"],
+                "style": (summary.get("styles") or [None, None])[index],
+                "hp": (summary.get("hp") or [None, None])[index],
+                "max_hp": (summary.get("max_hp") or [None, None])[index],
+                "won": record["winner"] == owner["id"],
+            }
+        )
+    rounds = f" · {summary['rounds']} 回合" if summary.get("rounds") else ""
+    winner = players[record["winner"]]
+    poster = {
+        "title": f"斗猪回放 #{record['id']}",
+        "subtitle": f"{day}{rounds}",
+        "sides": sides,
+        "headline": f"{display_name(winner)} 获胜！赢走「{record['prize']}」",
+        "log": record["log"],
+        "settlement": [f"{display_name(winner)} 赢走了「{record['prize']}」"],
+        "footer": "发送「斗猪记录」查看历史战绩 · 「斗猪排行」看本群胜率榜",
+    }
+    card = await asyncio.to_thread(render_duel_poster, root, poster)
+    return card_message(
         settings,
-        f"斗猪回放 #{record['id']}：{display_name(a)}的{record['a_pig_name']} "
-        f"Lv{record['a_level']} VS {display_name(b)}的{record['b_pig_name']} "
-        f"Lv{record['b_level']}",
-        [
-            day,
-            record["log"],
-            f"{display_name(winner)} 获胜，赢走了「{record['prize']}」。",
-        ],
+        user,
+        card,
+        f"斗猪回放 #{record['id']}",
+        "duel",
+        buttons=[("斗猪记录", "斗猪记录"), ("斗猪排行", "斗猪排行")],
     )
 
 
@@ -535,11 +550,18 @@ def cancelled_message(settings: Settings, cancelled: list[dict]) -> Message:
     )
 
 
-def card_message(settings, user, card, title, command, page=1, pages=1):
+def card_message(settings, user, card, title, command, page=1, pages=1, buttons=()):
     hosted = settings.use_host(command)
+    board = None
+    if hosted:
+        board = (
+            {"content": {"rows": [{"buttons": [_button(settings, *b) for b in buttons]}]}}
+            if buttons
+            else keyboard(settings, user["open_id"], title, page, pages)
+        )
     return Message(
         f"![{title} #{card.width}px #{card.height}px]({{{{image:0}}}})" if hosted else "",
         (card.data,),
-        keyboard(settings, user["open_id"], title, page, pages) if hosted else None,
+        board,
         local=not hosted,
     )

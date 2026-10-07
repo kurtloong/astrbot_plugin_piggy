@@ -170,6 +170,12 @@ class Database:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(pigs)")}
             if "battle" not in columns:
                 conn.execute("ALTER TABLE pigs ADD COLUMN battle TEXT NOT NULL DEFAULT ''")
+            records = {row[1] for row in conn.execute("PRAGMA table_info(battle_records)")}
+            if "summary" not in records:
+                # Older records have no summary; posters for them simply omit the HP bars.
+                conn.execute(
+                    "ALTER TABLE battle_records ADD COLUMN summary TEXT NOT NULL DEFAULT ''"
+                )
             conn.execute("PRAGMA user_version=2")
             conn.execute("COMMIT")
 
@@ -696,7 +702,7 @@ class Database:
             conn.execute(
                 """
                 INSERT INTO battle_records(request_id,day,fought_at,a_user,a_pig,a_level,b_user,
-                b_pig,b_level,winner,seed,log) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                b_pig,b_level,winner,seed,log,summary) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     row["id"],
@@ -711,8 +717,18 @@ class Database:
                     winner,
                     fight_seed,
                     json.dumps(result["log"], ensure_ascii=False),
+                    json.dumps(
+                        {
+                            "hp": result["hp"],
+                            "max_hp": result["max_hp"],
+                            "rounds": result["rounds"],
+                            "styles": [unit["style"] for unit in fighters],
+                        },
+                        ensure_ascii=False,
+                    ),
                 ),
             )
+            record_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             close("accepted")
             return {
                 "request": view,
@@ -720,6 +736,8 @@ class Database:
                 "users": users,
                 "fighters": fighters,
                 "result": result,
+                "record_id": record_id,
+                "day": day,
                 "winner": users[winner],
                 "loser": users[loser],
                 "loser_change": _level_change(prize, loser_before, loser_before - 1, level_cap),
@@ -912,12 +930,14 @@ class Database:
     def _battle_view(conn, row, user_id: int) -> dict:
         record = dict(row)
         mine_a = record["a_user"] == user_id
-        names = {
-            pig["id"]: pig["name"]
+        pigs = {
+            pig["id"]: dict(pig)
             for pig in conn.execute(
-                "SELECT id,name FROM pigs WHERE id IN (?,?)", (record["a_pig"], record["b_pig"])
+                "SELECT id,name,asset FROM pigs WHERE id IN (?,?)",
+                (record["a_pig"], record["b_pig"]),
             )
         }
+        names = {pig_id: pig["name"] for pig_id, pig in pigs.items()}
         other = conn.execute(
             "SELECT * FROM users WHERE id=?", (record["b_user"] if mine_a else record["a_user"],)
         ).fetchone()
@@ -934,6 +954,13 @@ class Database:
             "prize": names.get(loser_pig, "?"),
             "a_pig_name": names.get(record["a_pig"], "?"),
             "b_pig_name": names.get(record["b_pig"], "?"),
+            "a_asset": pigs[record["a_pig"]]["asset"] if record["a_pig"] in pigs else "",
+            "b_asset": pigs[record["b_pig"]]["asset"] if record["b_pig"] in pigs else "",
+            "my_asset": (pigs.get(record["a_pig" if mine_a else "b_pig"]) or {}).get("asset", ""),
+            "their_asset": (pigs.get(record["b_pig" if mine_a else "a_pig"]) or {}).get(
+                "asset", ""
+            ),
+            "summary": json.loads(record["summary"]) if record.get("summary") else None,
         }
 
     async def duel_history(self, user_id: int, page: int = 1, size: int = 10) -> dict:

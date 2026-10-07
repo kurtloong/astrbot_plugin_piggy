@@ -286,17 +286,25 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.duel(OfficialEvent("d1", text="斗猪 <@rival> 猪", mentions=("rival",)))
         self.assertIn("@阿波 玩家名字 向你发起斗猪", last())
         await self.plugin.duel_accept(OfficialEvent("d2", user="rival", text="接受斗猪 小黑猪"))
-        self.assertIn("获胜", last())
-        self.assertIn("Lv3 → Lv2", last())
-        self.assertEqual(sent.await_args.args[1]["msg_type"], 0)
+        self.assertEqual(sent.await_args.args[1]["msg_type"], 7)
+        counts = [
+            await db.pig_count(alice["id"], "pig") + await db.pig_count(bob["id"], "pig"),
+            await db.pig_count(alice["id"], "black-pig")
+            + await db.pig_count(bob["id"], "black-pig"),
+        ]
+        self.assertEqual(counts, [3, 3])
+        loser_left = {
+            await db.pig_count(alice["id"], "pig"),
+            await db.pig_count(bob["id"], "black-pig"),
+        }
+        self.assertIn(2, loser_left)
         await self.plugin.duel_ranking(OfficialEvent("k1", text="斗猪排行"))
         self.assertIn("还没有玩家打满 3 场", last())
         self.assertIn("再打 2 场即可上榜", last())
         await self.plugin.duel_history(OfficialEvent("h1", text="斗猪记录"))
-        self.assertIn("共 1 场", last())
-        self.assertIn("#1 ", last())
+        self.assertEqual(sent.await_args.args[1]["msg_type"], 7)
         await self.plugin.duel_replay(OfficialEvent("p1", user="rival", text="斗猪回放 #1"))
-        self.assertIn("斗猪回放 #1", last())
+        self.assertEqual(sent.await_args.args[1]["msg_type"], 7)
         await self.plugin.duel_replay(OfficialEvent("p2", text="斗猪回放 abc"))
         self.assertIn("用法：斗猪回放 编号", last())
         await self.plugin.trade(OfficialEvent("t1", text="小猪交换 阿波 猪 换 小黑猪"))

@@ -278,6 +278,7 @@ def fighter(pig: dict, entry: dict, level: int, label: str = "") -> dict:
     return {
         "pig_id": pig["id"],
         "name": pig["name"],
+        "asset": pig.get("asset", ""),
         "label": label or pig["name"],
         "style": entry["style"],
         "level": level,
