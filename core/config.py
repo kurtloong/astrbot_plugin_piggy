@@ -145,6 +145,10 @@ class Settings:
     backup_keep: int = 7
     cache_ttl_hours: int = 168
     command_prefix: str = ""
+    battle_level_cap: int = 20
+    duel_daily_limit: int = 5
+    request_ttl_minutes: int = 10
+    battle_markdown: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":
@@ -217,6 +221,9 @@ class Settings:
             ("backup_keep", 1, 30),
             ("cache_ttl_hours", 1, 8760),
             ("temp_cache_hours", 1, 24),
+            ("battle_level_cap", 5, 100),
+            ("duel_daily_limit", 1, 100),
+            ("request_ttl_minutes", 1, 60),
         ):
             value = getattr(obj, key)
             if type(value) is not int or not low <= value <= high:
@@ -228,6 +235,8 @@ class Settings:
             value = getattr(obj, key)
             if type(value) not in (int, float) or not low <= value <= high:
                 raise PiggyError(f"配置 {key} 必须在 {low}–{high} 之间。")
+        if type(obj.battle_markdown) is not bool:
+            raise PiggyError("配置 battle_markdown 必须为布尔值。")
         if obj.provider not in {"s3", "http"}:
             raise PiggyError("图床 provider 仅支持 s3 或 http。")
         if obj.upload_mode not in {"multipart", "json_base64"}:

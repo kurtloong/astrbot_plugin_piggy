@@ -89,7 +89,11 @@ FALLBACK = {
     "style": "均衡",
     "stats": {"hp": 105, "atk": 19, "def": 10, "spd": 10, "crit": 5, "dodge": 5},
     "skills": [
-        {"name": "猪突猛进", "text": "低头就是一拱。", "effects": [{"type": "damage", "power": 1.0}]},
+        {
+            "name": "猪突猛进",
+            "text": "低头就是一拱。",
+            "effects": [{"type": "damage", "power": 1.0}],
+        },
         {
             "name": "皮糙肉厚",
             "text": "猪圈里摸爬滚打练出来的厚皮。",
@@ -203,7 +207,7 @@ def validate_entry(pig_id: str, entry) -> dict:
         when = skill.get("when")
         if when is not None and when not in WHEN:
             raise PiggyError(f"战斗数据 {spot} 的触发条件不合法。")
-        if passive and ("cd" in skill or when or "fail" in skill):
+        if passive and (skill.get("cd") or when or "fail" in skill):
             raise PiggyError(f"战斗数据 {spot}：被动技能不能设置冷却、条件或失败。")
         item = {
             "name": skill["name"].strip(),
@@ -223,7 +227,7 @@ def validate_entry(pig_id: str, entry) -> dict:
                 "chance": fail["chance"],
                 "text": fail["text"].strip(),
                 "effects": _effects(fail["effects"], f"{spot} 失败", False)
-                if "effects" in fail
+                if fail.get("effects")
                 else [],
             }
         normalized.append(item)
@@ -575,7 +579,9 @@ class _Battle:
             note = self.effect(unit, enemy, effect, skill)
             if note:
                 notes.append(note)
-        self.say(f"{unit.label}「{skill['name']}」" + ("，".join(notes) if notes else "，但什么也没发生"))
+        self.say(
+            f"{unit.label}「{skill['name']}」" + ("，".join(notes) if notes else "，但什么也没发生")
+        )
         if unit.alive and enemy.alive:
             return
         for target in (enemy, unit):
@@ -600,7 +606,11 @@ class _Battle:
             return f"{'自己' if target is unit else target.label}陷入{label}"
         if kind == "dot":
             enemy.dots.append(
-                {"pct": effect["pct"], "turns": effect["turns"], "label": effect.get("label", "持续伤害")}
+                {
+                    "pct": effect["pct"],
+                    "turns": effect["turns"],
+                    "label": effect.get("label", "持续伤害"),
+                }
             )
             return f"{enemy.label}陷入{effect.get('label', '持续伤害')}"
         if kind == "buff":

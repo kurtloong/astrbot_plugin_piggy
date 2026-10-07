@@ -9,9 +9,57 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .battle import SKILL_SLOTS, entry_for, fighter, level_for, simulate
 from .config import PiggyError
 
 EAST_ASIA = timezone(timedelta(hours=8))
+REQUEST_LABELS = {"duel": "斗猪", "trade": "交换"}
+
+
+def player_name(user) -> str:
+    return user["alias"] or user["nickname"] or f"玩家 {user['id']:04d}"
+
+
+def _owned(conn, user_id: int, pig_id: str) -> int:
+    row = conn.execute(
+        "SELECT count FROM collections WHERE user_id=? AND pig_id=?", (user_id, pig_id)
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def _transfer(conn, source: int, target: int, pig_id: str, now: float):
+    count = _owned(conn, source, pig_id)
+    if count < 1:
+        raise PiggyError("小猪已经不在原主人的猪圈里了。")
+    if count == 1:
+        conn.execute("DELETE FROM collections WHERE user_id=? AND pig_id=?", (source, pig_id))
+    else:
+        conn.execute(
+            "UPDATE collections SET count=count-1 WHERE user_id=? AND pig_id=?", (source, pig_id)
+        )
+    conn.execute(
+        """
+        INSERT INTO collections VALUES(?,?,1,?,?) ON CONFLICT(user_id,pig_id)
+        DO UPDATE SET count=count+1,last_at=excluded.last_at
+        """,
+        (target, pig_id, now, now),
+    )
+
+
+def _level_change(pig: dict, before: int, after: int, cap: int) -> dict:
+    skills = entry_for(pig.get("battle"))["skills"]
+    old = level_for(before, cap) if before else 0
+    new = level_for(after, cap) if after else 0
+    old_slots, new_slots = min(old, SKILL_SLOTS), min(new, SKILL_SLOTS)
+    return {
+        "pig": {k: v for k, v in pig.items() if k != "battle"},
+        "count_before": before,
+        "count_after": after,
+        "before": old,
+        "after": new,
+        "lost": [s["name"] for s in skills[new_slots:old_slots]],
+        "gained": [s["name"] for s in skills[old_slots:new_slots]],
+    }
 
 
 class Database:
@@ -37,7 +85,7 @@ class Database:
             if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise PiggyError("数据库检查失败，已停止写入；请检查备份，数据库不会被自动清空。")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise PiggyError("数据库版本高于当前插件支持版本，请勿降级运行。")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
@@ -78,9 +126,36 @@ class Database:
                     done INTEGER NOT NULL DEFAULT 0, updated_at REAL NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS draws_user_pig ON draw_records(user_id, pig_id);
-                PRAGMA user_version=1;
-                COMMIT;
+                CREATE TABLE IF NOT EXISTS requests (
+                    id INTEGER PRIMARY KEY, app_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                    kind TEXT NOT NULL CHECK(kind IN ('duel','trade')),
+                    from_user INTEGER NOT NULL REFERENCES users(id),
+                    to_user INTEGER NOT NULL REFERENCES users(id),
+                    give_pig TEXT NOT NULL REFERENCES pigs(id), want_pig TEXT REFERENCES pigs(id),
+                    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN
+                        ('pending','accepted','declined','cancelled','expired','failed')),
+                    created_at REAL NOT NULL, expires_at REAL NOT NULL, resolved_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS requests_to ON requests(to_user, kind, status);
+                CREATE INDEX IF NOT EXISTS requests_from ON requests(from_user, kind, status);
+                CREATE TABLE IF NOT EXISTS battle_records (
+                    id INTEGER PRIMARY KEY, request_id INTEGER NOT NULL REFERENCES requests(id),
+                    day TEXT NOT NULL, fought_at REAL NOT NULL,
+                    a_user INTEGER NOT NULL REFERENCES users(id), a_pig TEXT NOT NULL,
+                    a_level INTEGER NOT NULL,
+                    b_user INTEGER NOT NULL REFERENCES users(id), b_pig TEXT NOT NULL,
+                    b_level INTEGER NOT NULL,
+                    winner INTEGER NOT NULL REFERENCES users(id), seed INTEGER NOT NULL,
+                    log TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS battles_a ON battle_records(a_user, day);
+                CREATE INDEX IF NOT EXISTS battles_b ON battle_records(b_user, day);
             """)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(pigs)")}
+            if "battle" not in columns:
+                conn.execute("ALTER TABLE pigs ADD COLUMN battle TEXT NOT NULL DEFAULT ''")
+            conn.execute("PRAGMA user_version=2")
+            conn.execute("COMMIT")
 
         try:
             await self.run(initialize)
@@ -93,12 +168,13 @@ class Database:
             conn.execute("UPDATE pigs SET enabled=0")
             conn.executemany(
                 """
-                INSERT INTO pigs VALUES(:id,:name,:description,:analysis,:asset,:enabled,:sort_order)
+                INSERT INTO pigs(id,name,description,analysis,asset,enabled,sort_order,battle)
+                VALUES(:id,:name,:description,:analysis,:asset,:enabled,:sort_order,:battle)
                 ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description,
                 analysis=excluded.analysis, asset=excluded.asset, enabled=excluded.enabled,
-                sort_order=excluded.sort_order
+                sort_order=excluded.sort_order, battle=excluded.battle
             """,
-                pigs,
+                [{"battle": "", **pig} for pig in pigs],
             )
 
         await self.run(update)
@@ -208,6 +284,7 @@ class Database:
                     threshold = min(len(owned) * 100, duplicate_rate_cap * len(available))
                     pool = owned if secrets.randbelow(100 * len(available)) < threshold else unseen
                 pig = dict(secrets.choice(pool))
+                pig.pop("battle", None)
                 timestamp = now.timestamp()
                 conn.execute(
                     """
@@ -299,6 +376,370 @@ class Database:
 
         return await self.run(read)
 
+    async def find_pig(self, query: str) -> dict:
+        query = " ".join(query.split())
+        if not query:
+            raise PiggyError("请写上小猪的名字。")
+
+        def read(conn):
+            row = conn.execute(
+                "SELECT * FROM pigs WHERE id=? OR name=? ORDER BY enabled DESC,sort_order LIMIT 1",
+                (query.lower(), query),
+            ).fetchone()
+            if not row:
+                raise PiggyError(f"没有找到「{query}」，请输入图鉴里小猪的完整名字。")
+            return dict(row)
+
+        return await self.run(read)
+
+    async def pig_count(self, user_id: int, pig_id: str) -> int:
+        return await self.run(lambda c: _owned(c, user_id, pig_id))
+
+    async def find_group_player(self, app_id: str, group_id: str, name: str) -> dict:
+        name = " ".join(name.lstrip("@＠").split())
+        if not name:
+            raise PiggyError("请 @ 你要找的玩家。")
+
+        def read(conn):
+            rows = conn.execute(
+                """
+                SELECT u.* FROM group_players g JOIN users u ON u.id=g.user_id
+                WHERE g.app_id=? AND g.group_id=? AND (u.alias=? OR u.nickname=?)
+                """,
+                (app_id, group_id, name, name),
+            ).fetchall()
+            if not rows:
+                raise PiggyError(f"本群没有找到叫「{name}」的玩家，请直接 @ 对方。")
+            if len(rows) > 1:
+                raise PiggyError(f"本群有多位玩家叫「{name}」，请直接 @ 对方。")
+            return dict(rows[0])
+
+        return await self.run(read)
+
+    @staticmethod
+    def _expire(conn, now: float):
+        conn.execute(
+            "UPDATE requests SET status='expired',resolved_at=? "
+            "WHERE status='pending' AND expires_at<=?",
+            (now, now),
+        )
+
+    @staticmethod
+    def _duels_today(conn, user_id: int, day: str) -> int:
+        return conn.execute(
+            "SELECT count(*) FROM battle_records WHERE day=? AND (a_user=? OR b_user=?)",
+            (day, user_id, user_id),
+        ).fetchone()[0]
+
+    @staticmethod
+    def _request_view(conn, row) -> dict:
+        def user(user_id):
+            return dict(conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
+
+        def pig(pig_id):
+            if not pig_id:
+                return None
+            found = dict(conn.execute("SELECT * FROM pigs WHERE id=?", (pig_id,)).fetchone())
+            found.pop("battle", None)
+            return found
+
+        return {
+            **dict(row),
+            "from": user(row["from_user"]),
+            "to": user(row["to_user"]),
+            "give": pig(row["give_pig"]),
+            "want": pig(row["want_pig"]),
+        }
+
+    async def create_request(
+        self,
+        app_id: str,
+        group_id: str,
+        kind: str,
+        from_user: int,
+        to_user: int,
+        give_pig: str,
+        want_pig: str | None = None,
+        *,
+        ttl_minutes: int = 10,
+        daily_limit: int = 5,
+        now: datetime | None = None,
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        stamp = now.timestamp()
+        day = now.astimezone(EAST_ASIA).date().isoformat()
+        label = REQUEST_LABELS[kind]
+
+        def create(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._expire(conn, stamp)
+            if from_user == to_user:
+                raise PiggyError(f"不能和自己{label}哦。")
+            give = conn.execute("SELECT name FROM pigs WHERE id=?", (give_pig,)).fetchone()
+            if _owned(conn, from_user, give_pig) < 1:
+                raise PiggyError(f"你的猪圈里没有「{give['name']}」。")
+            if kind == "trade":
+                want = conn.execute("SELECT name FROM pigs WHERE id=?", (want_pig,)).fetchone()
+                if give_pig == want_pig:
+                    raise PiggyError("同一种小猪就不用交换啦。")
+                if _owned(conn, to_user, want_pig) < 1:
+                    raise PiggyError(f"对方的猪圈里没有「{want['name']}」。")
+            elif self._duels_today(conn, from_user, day) >= daily_limit:
+                raise PiggyError(f"你今天已经斗了 {daily_limit} 场猪，明天再来吧。")
+            pending = conn.execute(
+                """
+                SELECT from_user FROM requests WHERE app_id=? AND group_id=? AND kind=?
+                AND status='pending' AND (from_user=? OR to_user=?)
+                """,
+                (app_id, group_id, kind, from_user, to_user),
+            ).fetchall()
+            if any(row["from_user"] == from_user for row in pending):
+                raise PiggyError(f"你在本群已有一个待处理的{label}请求，可以先发送「取消请求」。")
+            if pending:
+                raise PiggyError(f"对方在本群还有一个待处理的{label}请求，请稍后再试。")
+            cursor = conn.execute(
+                """
+                INSERT INTO requests(app_id,group_id,kind,from_user,to_user,give_pig,want_pig,
+                created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    app_id,
+                    group_id,
+                    kind,
+                    from_user,
+                    to_user,
+                    give_pig,
+                    want_pig,
+                    stamp,
+                    stamp + ttl_minutes * 60,
+                ),
+            )
+            row = conn.execute("SELECT * FROM requests WHERE id=?", (cursor.lastrowid,)).fetchone()
+            view = self._request_view(conn, row)
+            view["give_count"] = _owned(conn, from_user, give_pig)
+            return view
+
+        return await self.run(create)
+
+    async def respond(
+        self,
+        app_id: str,
+        group_id: str,
+        user_id: int,
+        kind: str,
+        accept: bool,
+        pig_id: str | None = None,
+        *,
+        level_cap: int = 20,
+        daily_limit: int = 5,
+        now: datetime | None = None,
+        seed: int | None = None,
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        stamp = now.timestamp()
+        day = now.astimezone(EAST_ASIA).date().isoformat()
+        label = REQUEST_LABELS[kind]
+
+        def respond(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._expire(conn, stamp)
+            row = conn.execute(
+                """
+                SELECT * FROM requests WHERE app_id=? AND group_id=? AND to_user=? AND kind=?
+                AND status='pending' ORDER BY id DESC LIMIT 1
+                """,
+                (app_id, group_id, user_id, kind),
+            ).fetchone()
+            if not row:
+                raise PiggyError(f"你在本群没有待处理的{label}请求（可能已过期或被撤回）。")
+            view = self._request_view(conn, row)
+
+            def close(status: str):
+                conn.execute(
+                    "UPDATE requests SET status=?,resolved_at=? WHERE id=?",
+                    (status, stamp, row["id"]),
+                )
+
+            if not accept:
+                close("declined")
+                return {"request": view, "accepted": False}
+            challenger, target = row["from_user"], row["to_user"]
+            give_pig = row["give_pig"]
+            if _owned(conn, challenger, give_pig) < 1:
+                close("failed")
+                return {
+                    "request": view,
+                    "accepted": False,
+                    "error": f"对方的「{view['give']['name']}」已经不在猪圈里了，请求作废。",
+                }
+
+            def pig(pig_id):
+                return dict(conn.execute("SELECT * FROM pigs WHERE id=?", (pig_id,)).fetchone())
+
+            if kind == "trade":
+                want_pig = row["want_pig"]
+                if _owned(conn, target, want_pig) < 1:
+                    raise PiggyError(f"你的猪圈里已经没有「{view['want']['name']}」了。")
+                give, want = pig(give_pig), pig(want_pig)
+                counts = {
+                    (challenger, give_pig): _owned(conn, challenger, give_pig),
+                    (challenger, want_pig): _owned(conn, challenger, want_pig),
+                    (target, give_pig): _owned(conn, target, give_pig),
+                    (target, want_pig): _owned(conn, target, want_pig),
+                }
+                _transfer(conn, challenger, target, give_pig, stamp)
+                _transfer(conn, target, challenger, want_pig, stamp)
+                close("accepted")
+                return {
+                    "request": view,
+                    "accepted": True,
+                    "changes": {
+                        "from_give": _level_change(
+                            give,
+                            counts[(challenger, give_pig)],
+                            counts[(challenger, give_pig)] - 1,
+                            level_cap,
+                        ),
+                        "from_want": _level_change(
+                            want,
+                            counts[(challenger, want_pig)],
+                            counts[(challenger, want_pig)] + 1,
+                            level_cap,
+                        ),
+                        "to_want": _level_change(
+                            want,
+                            counts[(target, want_pig)],
+                            counts[(target, want_pig)] - 1,
+                            level_cap,
+                        ),
+                        "to_give": _level_change(
+                            give,
+                            counts[(target, give_pig)],
+                            counts[(target, give_pig)] + 1,
+                            level_cap,
+                        ),
+                    },
+                }
+
+            if not pig_id:
+                raise PiggyError("请写上你要出战的小猪，例如：接受斗猪 猪人")
+            if _owned(conn, target, pig_id) < 1:
+                raise PiggyError("你的猪圈里没有这只小猪，换一只出战吧。")
+            if self._duels_today(conn, target, day) >= daily_limit:
+                raise PiggyError(f"你今天已经斗了 {daily_limit} 场猪，可以发送「拒绝斗猪」。")
+            if self._duels_today(conn, challenger, day) >= daily_limit:
+                close("failed")
+                return {
+                    "request": view,
+                    "accepted": False,
+                    "error": "对方今天的斗猪次数已经用完，请求作废。",
+                }
+            users = {
+                uid: dict(conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone())
+                for uid in (challenger, target)
+            }
+            pigs = {challenger: pig(give_pig), target: pig(pig_id)}
+            counts = {uid: _owned(conn, uid, pigs[uid]["id"]) for uid in pigs}
+            levels = {uid: level_for(counts[uid], level_cap) for uid in pigs}
+            fighters = [
+                fighter(
+                    pigs[uid],
+                    entry_for(pigs[uid]["battle"]),
+                    levels[uid],
+                    f"{player_name(users[uid])}的{pigs[uid]['name']}",
+                )
+                for uid in (challenger, target)
+            ]
+            fight_seed = secrets.randbits(32) if seed is None else seed
+            result = simulate(fighters[0], fighters[1], fight_seed)
+            winner = (challenger, target)[result["winner"]]
+            loser = target if winner == challenger else challenger
+            prize = pigs[loser]
+            loser_before = counts[loser]
+            winner_before = _owned(conn, winner, prize["id"])
+            _transfer(conn, loser, winner, prize["id"], stamp)
+            conn.execute(
+                """
+                INSERT INTO battle_records(request_id,day,fought_at,a_user,a_pig,a_level,b_user,
+                b_pig,b_level,winner,seed,log) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    row["id"],
+                    day,
+                    stamp,
+                    challenger,
+                    give_pig,
+                    levels[challenger],
+                    target,
+                    pig_id,
+                    levels[target],
+                    winner,
+                    fight_seed,
+                    json.dumps(result["log"], ensure_ascii=False),
+                ),
+            )
+            close("accepted")
+            return {
+                "request": view,
+                "accepted": True,
+                "users": users,
+                "fighters": fighters,
+                "result": result,
+                "winner": users[winner],
+                "loser": users[loser],
+                "loser_change": _level_change(prize, loser_before, loser_before - 1, level_cap),
+                "winner_change": _level_change(prize, winner_before, winner_before + 1, level_cap),
+                "duels_left": {
+                    uid: max(0, daily_limit - self._duels_today(conn, uid, day)) for uid in users
+                },
+            }
+
+        return await self.run(respond)
+
+    async def cancel_requests(
+        self, app_id: str, group_id: str, user_id: int, now: datetime | None = None
+    ) -> list[dict]:
+        stamp = (now or datetime.now(timezone.utc)).timestamp()
+
+        def cancel(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._expire(conn, stamp)
+            rows = conn.execute(
+                "SELECT * FROM requests WHERE app_id=? AND group_id=? AND from_user=? "
+                "AND status='pending'",
+                (app_id, group_id, user_id),
+            ).fetchall()
+            if not rows:
+                raise PiggyError("你在本群没有待处理的请求。")
+            conn.executemany(
+                "UPDATE requests SET status='cancelled',resolved_at=? WHERE id=?",
+                [(stamp, row["id"]) for row in rows],
+            )
+            return [self._request_view(conn, row) for row in rows]
+
+        return await self.run(cancel)
+
+    async def list_requests(
+        self, app_id: str, group_id: str, user_id: int, now: datetime | None = None
+    ) -> dict:
+        stamp = (now or datetime.now(timezone.utc)).timestamp()
+
+        def read(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._expire(conn, stamp)
+            rows = conn.execute(
+                "SELECT * FROM requests WHERE app_id=? AND group_id=? AND status='pending' "
+                "AND (from_user=? OR to_user=?) ORDER BY id",
+                (app_id, group_id, user_id, user_id),
+            ).fetchall()
+            views = [self._request_view(conn, row) for row in rows]
+            return {
+                "incoming": [v for v in views if v["to_user"] == user_id],
+                "outgoing": [v for v in views if v["from_user"] == user_id],
+            }
+
+        return await self.run(read)
+
     async def cache_get(self, namespace: str, digest: str):
         def read(conn):
             row = conn.execute(
@@ -369,13 +810,24 @@ class Database:
                     # Export the accepted catalog from the same DB snapshot. An administrator
                     # may be editing the working JSON while this backup runs.
                     manifest = [
-                        {**p, "enabled": bool(p["enabled"]), "image": f"images/{p['asset']}"}
+                        {
+                            **{k: v for k, v in p.items() if k != "battle"},
+                            "enabled": bool(p["enabled"]),
+                            "image": f"images/{p['asset']}",
+                        }
                         for p in pigs
                     ]
+                    battle = {
+                        "version": 1,
+                        "pigs": {p["id"]: json.loads(p["battle"]) for p in pigs if p.get("battle")},
+                    }
                     with zipfile.ZipFile(temp_zip, "w", zipfile.ZIP_DEFLATED) as archive:
                         archive.write(db_copy, "piggy.sqlite3")
                         archive.writestr(
                             "catalog/pigs.json", json.dumps(manifest, ensure_ascii=False, indent=2)
+                        )
+                        archive.writestr(
+                            "catalog/battle.json", json.dumps(battle, ensure_ascii=False, indent=2)
                         )
                         for name in sorted({p["asset"] for p in pigs}):
                             archive.write(self.root / "assets" / name, f"catalog/images/{name}")

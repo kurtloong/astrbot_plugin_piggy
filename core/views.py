@@ -1,8 +1,10 @@
 import asyncio
 import math
 import re
+import time
 from pathlib import Path
 
+from .battle import STAT_NAMES, STATS, compact_log, describe_skill, entry_for, fighter, level_for
 from .config import PiggyError, Settings
 from .delivery import Message
 from .rendering import (
@@ -127,6 +129,221 @@ def ranking_message(
 ) -> Message:
     return card_message(
         settings, user, render_ranking(root, boards, avatars), "小猪排行榜", "ranking"
+    )
+
+
+def _button(settings: Settings, label: str, data: str, owners: tuple[str, ...] = ()) -> dict:
+    permission = {"type": 0, "specify_user_ids": list(owners)} if owners else {"type": 2}
+    return {
+        "id": data,
+        "render_data": {"label": label, "visited_label": label, "style": 1},
+        "action": {"type": 2, "permission": permission, "data": settings.command_prefix + data},
+    }
+
+
+def text_message(
+    settings: Settings,
+    title: str,
+    blocks: list,
+    mention: dict | None = None,
+    buttons: list[tuple[str, str]] = (),
+    button_owner: dict | None = None,
+) -> Message:
+    """Blocks are paragraphs (str) or bullet lists (list of str)."""
+    if not settings.battle_markdown:
+        parts = [title]
+        if mention:
+            parts[0] = f"@{display_name(mention)} {title}"
+        for block in blocks:
+            parts.append("\n".join(block) if isinstance(block, list) else block)
+        return Message("\n".join(parts))
+    parts = []
+    if mention:
+        parts.append(f'<qqbot-at-user id="{mention["open_id"]}" />')
+    parts.append(f"### {md(title)}")
+    for block in blocks:
+        if isinstance(block, list):
+            parts.append("\n".join(f"- {md(line)}" for line in block))
+        else:
+            parts.append(md(block))
+    keyboard = None
+    if buttons:
+        owners = (button_owner["open_id"],) if button_owner else ()
+        keyboard = {
+            "content": {
+                "rows": [
+                    {"buttons": [_button(settings, label, data, owners) for label, data in buttons]}
+                ]
+            }
+        }
+    return Message("\n\n".join(parts), keyboard=keyboard, markdown=True)
+
+
+def _skill_line(skill: dict, slot: int, level: int) -> str:
+    state = "已解锁" if slot <= level else f"Lv{slot} 解锁"
+    return f"【{state}】{skill['name']}：{skill['text']}（{describe_skill(skill)}）"
+
+
+def stats_message(settings: Settings, user: dict, pig: dict, count: int, cap: int) -> Message:
+    entry = entry_for(pig.get("battle"))
+    level = level_for(count, cap)
+    unit = fighter(pig, entry, level)
+    stats = unit["stats"]
+    if count:
+        owned = f"{display_name(user)} 拥有 {count} 只 · Lv{level}（上限 Lv{cap}）"
+    else:
+        owned = f"{display_name(user)} 还没有这只小猪，以下为 Lv1 数据"
+    numbers = " · ".join(
+        f"{STAT_NAMES[key]} {stats[key]}{'%' if key in ('crit', 'dodge') else ''}" for key in STATS
+    )
+    skills = [
+        _skill_line(skill, slot, level if count else 0)
+        for slot, skill in enumerate(entry["skills"], 1)
+    ]
+    return text_message(
+        settings, f"🐷 {pig['name']}（{entry['style']}）", [owned, numbers, "技能", skills]
+    )
+
+
+def _level_text(change: dict) -> str:
+    name = change["pig"]["name"]
+    if not change["after"]:
+        text = f"「{name}」全部输光，Lv{change['before']} → 已失去"
+    elif not change["before"]:
+        text = f"新获得「{name}」Lv{change['after']}"
+    elif change["before"] == change["after"]:
+        text = f"「{name}」Lv{change['after']}（已达等级上限）"
+    else:
+        text = f"「{name}」Lv{change['before']} → Lv{change['after']}"
+    if change["lost"]:
+        text += f"，失去技能：{'、'.join(change['lost'])}"
+    if change["gained"]:
+        text += f"，解锁技能：{'、'.join(change['gained'])}"
+    return text
+
+
+def request_message(settings: Settings, request: dict, level: int) -> Message:
+    sender, target = display_name(request["from"]), request["to"]
+    minutes = max(1, round((request["expires_at"] - request["created_at"]) / 60))
+    if request["kind"] == "duel":
+        return text_message(
+            settings,
+            f"{sender} 向你发起斗猪！",
+            [
+                f"对方出战：「{request['give']['name']}」Lv{level}",
+                "发送「接受斗猪 你的小猪」应战，或发送「拒绝斗猪」。",
+                f"败者会失去出战的那只小猪，等级随之下降。请求 {minutes} 分钟内有效。",
+            ],
+            mention=target,
+            buttons=[("接受斗猪", "接受斗猪 "), ("拒绝斗猪", "拒绝斗猪")],
+            button_owner=target,
+        )
+    return text_message(
+        settings,
+        f"{sender} 想和你交换小猪！",
+        [
+            f"对方给出「{request['give']['name']}」，想换你的「{request['want']['name']}」。",
+            f"发送「接受交换」或「拒绝交换」，请求 {minutes} 分钟内有效。",
+        ],
+        mention=target,
+        buttons=[("接受交换", "接受交换"), ("拒绝交换", "拒绝交换")],
+        button_owner=target,
+    )
+
+
+def declined_message(settings: Settings, result: dict) -> Message:
+    request = result["request"]
+    label = "斗猪" if request["kind"] == "duel" else "交换"
+    if result.get("error"):
+        return text_message(settings, f"{label}请求已作废", [result["error"]], request["from"])
+    return text_message(
+        settings,
+        f"{display_name(request['to'])} 拒绝了你的{label}请求",
+        ["下次再约吧。"],
+        mention=request["from"],
+    )
+
+
+def battle_message(settings: Settings, result: dict) -> Message:
+    a, b = result["fighters"]
+    fight = result["result"]
+    winner, loser = result["winner"], result["loser"]
+    hp = " / ".join(
+        f"{unit['label']} {fight['hp'][i]}/{fight['max_hp'][i]}" for i, unit in enumerate((a, b))
+    )
+    left = result["duels_left"]
+    return text_message(
+        settings,
+        f"⚔️ 斗猪：{a['label']} Lv{a['level']} VS {b['label']} Lv{b['level']}",
+        [
+            compact_log(fight["log"]),
+            f"🏆 {display_name(winner)} 获胜！（{fight['rounds']} 回合，剩余生命 {hp}）",
+            f"{display_name(loser)} 的「{result['loser_change']['pig']['name']}」归 "
+            f"{display_name(winner)} 所有。",
+            [
+                f"{display_name(loser)}：{_level_text(result['loser_change'])}",
+                f"{display_name(winner)}：{_level_text(result['winner_change'])}",
+            ],
+            "今日剩余斗猪次数："
+            + "，".join(
+                f"{display_name(user)} {left[uid]} 场" for uid, user in result["users"].items()
+            ),
+        ],
+        mention=result["request"]["from"],
+    )
+
+
+def trade_message(settings: Settings, result: dict) -> Message:
+    request, changes = result["request"], result["changes"]
+    sender, target = display_name(request["from"]), display_name(request["to"])
+    return text_message(
+        settings,
+        "🤝 交换成功！",
+        [
+            f"{sender} 的「{request['give']['name']}」⇄ {target} 的「{request['want']['name']}」",
+            [
+                f"{sender}：{_level_text(changes['from_give'])}",
+                f"{sender}：{_level_text(changes['from_want'])}",
+                f"{target}：{_level_text(changes['to_want'])}",
+                f"{target}：{_level_text(changes['to_give'])}",
+            ],
+        ],
+        mention=request["from"],
+    )
+
+
+def _request_line(request: dict, incoming: bool) -> str:
+    other = display_name(request["from"] if incoming else request["to"])
+    minutes = max(1, math.ceil((request["expires_at"] - time.time()) / 60))
+    if request["kind"] == "duel":
+        text = (
+            f"斗猪：{other} 出战「{request['give']['name']}」"
+            if incoming
+            else (f"斗猪：你用「{request['give']['name']}」挑战 {other}")
+        )
+    elif incoming:
+        text = f"交换：{other} 用「{request['give']['name']}」换你的「{request['want']['name']}」"
+    else:
+        text = f"交换：你用「{request['give']['name']}」换 {other} 的「{request['want']['name']}」"
+    return f"{text}（约 {minutes} 分钟后过期）"
+
+
+def requests_message(settings: Settings, requests: dict) -> Message:
+    blocks = []
+    if requests["incoming"]:
+        blocks += ["收到的请求", [_request_line(r, True) for r in requests["incoming"]]]
+    if requests["outgoing"]:
+        blocks += ["发出的请求", [_request_line(r, False) for r in requests["outgoing"]]]
+    if not blocks:
+        blocks = ["你在本群没有待处理的请求。"]
+    return text_message(settings, "📮 我的请求", blocks)
+
+
+def cancelled_message(settings: Settings, cancelled: list[dict]) -> Message:
+    return text_message(
+        settings,
+        f"已撤回 {len(cancelled)} 个请求",
+        [[_request_line(r, False).rsplit("（", 1)[0] for r in cancelled]],
     )
 
 

@@ -127,6 +127,7 @@ class Message:
     images: tuple[Path | bytes, ...] = ()
     keyboard: dict | None = None
     local: bool = False
+    markdown: bool = False
 
     def content(self, urls: list[str]) -> str:
         result = self.text
@@ -223,7 +224,7 @@ class Sender:
             }
             if message.local:
                 payload.update(msg_type=7, media={"file_info": media})
-            elif message.images:
+            elif message.images or message.markdown:
                 payload.update(
                     msg_type=2,
                     markdown={
