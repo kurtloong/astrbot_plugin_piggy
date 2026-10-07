@@ -385,8 +385,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             return sent.await_args.args[1]["content"]
 
         await self.plugin.shop(OfficialEvent("s1", text="小猪商店"))
-        self.assertIn("今日小猪商店", last())
-        self.assertIn("剩余 5/5 件", last())
+        self.assertEqual(sent.await_args.args[1]["msg_type"], 7)
         shop = await db.shop("app", "group-a", user["id"])
         stocked = {item["pig_id"] for item in shop["items"]}
         pay = await db.find_pig(

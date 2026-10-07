@@ -118,6 +118,7 @@ class Settings:
             "atlas": False,
             "pen": False,
             "ranking": False,
+            "shop": False,
         }
     )
     temp_cache_hours: int = 12
@@ -206,10 +207,10 @@ class Settings:
                     raise PiggyError(f"配置 {key} 必须是合法 JSON。") from None
         obj = cls(**values)
         if not isinstance(obj.display, dict) or any(
-            key not in {"draw", "atlas", "pen", "ranking"} or type(value) is not bool
+            key not in {"draw", "atlas", "pen", "ranking", "shop"} or type(value) is not bool
             for key, value in obj.display.items()
         ):
-            raise PiggyError("消息展示配置必须是四个功能的布尔开关。")
+            raise PiggyError("消息展示配置必须是各功能的布尔开关。")
         for name, definition in cls.__dataclass_fields__.items():
             if definition.type is str and not isinstance(getattr(obj, name), str):
                 raise PiggyError(f"配置 {name} 必须为字符串。")

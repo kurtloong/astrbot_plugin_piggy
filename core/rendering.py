@@ -279,6 +279,81 @@ def render_today(
     return finish(canvas.image)
 
 
+def render_shop(root: Path, name: str, shop: dict, level_cap: int) -> Card:
+    """Today's shelf: five tiles with art, name and what the viewer gains."""
+    items = shop["items"]
+    columns, tile_w, tile_h, gap = 3, 304, 408, 28
+    top = 262
+    rows = max(1, math.ceil(len(items) / columns))
+    canvas = Canvas(root, WIDTH, top + rows * (tile_h + gap) + 104)
+    left = sum(1 for item in items if not item["buyer"])
+    canvas.text("PIGGY  /  SHOP", 58, 34, 18, ACCENT, True)
+    canvas.text("今日小猪商店", 54, 76, 56, bold=True)
+    canvas.text(f"{name} · {shop['day']}", 58, 158, 25, SUB, width=700)
+    canvas.draw.rounded_rectangle((56, 206, 1024, 240), radius=17, fill=PANEL)
+    canvas.text(f"剩余 {left}/{len(items)} 件 · 每件限量 1 只，先到先得", 80, 210, 20, TEXT)
+    for index, item in enumerate(items):
+        x = 56 + (index % columns) * (tile_w + gap)
+        y = top + (index // columns) * (tile_h + gap)
+        sold = bool(item["buyer"])
+        canvas.draw.rounded_rectangle(
+            (x, y + 3, x + tile_w, y + tile_h + 3), radius=24, fill=BORDER
+        )
+        canvas.draw.rounded_rectangle(
+            (x, y, x + tile_w, y + tile_h), radius=24, fill="#efe9e2" if sold else "#ffffff"
+        )
+        canvas.draw.rounded_rectangle(
+            (x + 14, y + 14, x + tile_w - 14, y + 250), radius=18, fill="#f9f4ed"
+        )
+        with Image.open(root / "assets" / item["pig"]["asset"]) as original:
+            art = ImageOps.exif_transpose(original).convert("RGBA")
+        art.thumbnail((tile_w - 52, 214), Image.Resampling.LANCZOS)
+        if sold:
+            art = ImageOps.grayscale(art.convert("RGB")).convert("RGBA")
+            art.putalpha(110)
+        canvas.image.paste(
+            art, (x + (tile_w - art.width) // 2, y + 32 + (214 - art.height) // 2), art
+        )
+        art.close()
+        canvas.draw.ellipse((x + 22, y + 22, x + 66, y + 66), fill=SUB if sold else ACCENT)
+        badge = str(item["slot"])
+        face = canvas.font(24, True)
+        canvas.draw.text(
+            (x + 44 - canvas.draw.textlength(badge, font=face) / 2, y + 28),
+            badge,
+            font=face,
+            fill="#ffffff",
+        )
+        lines = canvas.wrap(item["pig"]["name"], 26, tile_w - 40)
+        if len(lines) > 2:
+            lines = [lines[0], lines[1][:-1] + "…"]
+        for row, line in enumerate(lines):
+            canvas.text(line, x + 20, y + 264 + row * 36, 26, SUB if sold else TEXT, True)
+        if sold:
+            status, color = f"已被 {display(item['buyer'])} 换走", SUB
+        elif item["owned"]:
+            level = min(item["owned"] + 1, level_cap)
+            status, color = f"已有 {item['owned']} 只 · 换后 Lv{level}", TEXT
+        else:
+            status, color = "新图鉴！换到即解锁", ACCENT
+        canvas.text(status, x + 20, y + tile_h - 50, 20, color, width=tile_w - 40)
+    footer = canvas.image.height - 78
+    canvas.draw.line((56, footer, 1024, footer), fill=BORDER, width=2)
+    canvas.text(
+        "发送「商店交换 编号 你的小猪」用 1 只自己的小猪换走它 · 每天 0 点刷新",
+        58,
+        footer + 22,
+        20,
+        ACCENT,
+        width=966,
+    )
+    return finish(canvas.image)
+
+
+def display(user: dict) -> str:
+    return user.get("alias") or user.get("nickname") or f"玩家 {user['id']:04d}"
+
+
 def render_ranking(root: Path, boards: dict, avatars: dict[str, bytes]) -> Card:
     """Both top tens in one sheet; nickname and avatar share a pill."""
     rows = max(1, *(len(boards[k][:10]) for k in ("species", "total")))
