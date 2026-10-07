@@ -1,0 +1,1061 @@
+{
+  "version": 1,
+  "pigs": {
+    "human": {
+      "style": "卧底",
+      "stats": {"hp": 103, "atk": 20, "def": 10, "spd": 11, "crit": 6, "dodge": 8},
+      "skills": [
+        {"name": "人类之拳", "text": "猪圈里唯一会握拳的家伙。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "系统默认头像", "text": "猪脸识别怎么扫都扫不出猪味。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 9}]},
+        {"name": "卧底潜伏", "text": "混进猪群，悄悄蓄力。", "cd": 3, "effects": [{"type": "damage", "power": 0.35}, {"type": "evade", "count": 1}, {"type": "buff", "stat": "atk", "pct": 8, "turns": 2}]},
+        {"name": "大大的问号", "text": "顶着问号脸凑近，对手当场宕机。", "cd": 3, "effects": [{"type": "damage", "power": 0.8}, {"type": "stun", "turns": 1, "label": "困惑", "chance": 40}]},
+        {"name": "我好像真的是个人", "text": "破绽暴露的瞬间，人类的力量全面觉醒。", "cd": 4, "effects": [{"type": "damage", "power": 2.3, "pierce": 50}]}
+      ]
+    },
+    "pig": {
+      "style": "均衡",
+      "stats": {"hp": 110, "atk": 19, "def": 11, "spd": 10, "crit": 5, "dodge": 5},
+      "skills": [
+        {"name": "标准一拱", "text": "出厂默认的攻击方式。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "四脚齐全", "text": "没有多余设定，也没有短板。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 8}, {"type": "buff", "stat": "def", "pct": 8}]},
+        {"name": "卷尾巴甩击", "text": "尾巴打个卷，啪啪两下。", "cd": 2, "effects": [{"type": "damage", "power": 0.6, "hits": 2}]},
+        {"name": "粉嫩打滚", "text": "在泥里滚一圈，满血复活了一点。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 17}, {"type": "shield", "pct": 9}]},
+        {"name": "审美标准", "text": "整个猪圈都照着你画的，对手自惭形秽。", "cd": 4, "effects": [{"type": "damage", "power": 2.15}, {"type": "buff", "stat": "atk", "pct": -25, "turns": 2, "target": "enemy"}]}
+      ]
+    },
+    "black-pig": {
+      "style": "坦克",
+      "stats": {"hp": 115, "atk": 19, "def": 14, "spd": 8, "crit": 5, "dodge": 3},
+      "skills": [
+        {"name": "卤味冲撞", "text": "带着一身酱香撞过去。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "卤汁浸透", "text": "泼对手一身老卤，味道久久不散。", "cd": 2, "effects": [{"type": "damage", "power": 0.5}, {"type": "dot", "pct": 4, "turns": 3, "label": "卤汁"}]},
+        {"name": "高级的黑", "text": "这一身黑，猪圈里没几只压得住。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 50}]},
+        {"name": "蒜泥警报", "text": "察觉要被端上桌，求生欲拉满。", "cd": 4, "when": "low_hp", "effects": [{"type": "heal", "pct": 25}, {"type": "buff", "stat": "spd", "pct": 50, "turns": 2}]},
+        {"name": "三小时老卤", "text": "多泡的那三个钟头，全化作了力量。", "cd": 4, "effects": [{"type": "damage", "power": 2.3, "pierce": 30}]}
+      ]
+    },
+    "wild-boar": {
+      "style": "猛攻",
+      "stats": {"hp": 88, "atk": 23, "def": 9, "spd": 12, "crit": 10, "dodge": 3},
+      "skills": [
+        {"name": "獠牙顶撞", "text": "先问问獠牙同不同意。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "鬃毛炸开", "text": "鬃毛一炸，杀气腾腾。", "cd": 3, "effects": [{"type": "damage", "power": 0.45}, {"type": "buff", "stat": "atk", "pct": 45, "turns": 3}]},
+        {"name": "山里横着走", "text": "横冲直撞，谁挡谁倒。", "cd": 3, "effects": [{"type": "damage", "power": 1}, {"type": "stun", "turns": 1, "label": "撞晕", "chance": 20}]},
+        {"name": "野性难驯", "text": "不是养尊处优的软脚猪。", "passive": true, "effects": [{"type": "buff", "stat": "crit", "pct": 10}]},
+        {"name": "獠牙不同意", "text": "獠牙投了反对票，直刺要害。", "cd": 4, "effects": [{"type": "damage", "power": 2.3, "pierce": 40}]}
+      ]
+    },
+    "zhuge-liang": {
+      "style": "谋士",
+      "stats": {"hp": 96, "atk": 21, "def": 9, "spd": 12, "crit": 8, "dodge": 6},
+      "skills": [
+        {"name": "羽扇轻挥", "text": "羽扇一挥，风起云涌。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "运筹帷幄", "text": "一张猪脸盘出了谋士气场。", "passive": true, "effects": [{"type": "buff", "stat": "spd", "pct": 50}, {"type": "buff", "stat": "crit", "pct": 5}]},
+        {"name": "草船借箭", "text": "对手打过来的，全都原样奉还。", "cd": 4, "effects": [{"type": "thorns", "pct": 39, "turns": 3}, {"type": "shield", "pct": 10}]},
+        {"name": "空城计", "text": "城门大开，对手却不敢进。", "cd": 4, "effects": [{"type": "damage", "power": 0.55}, {"type": "evade", "count": 1}, {"type": "buff", "stat": "atk", "pct": -30, "turns": 2, "target": "enemy"}]},
+        {"name": "锦囊妙计", "text": "十次有八次是先睡一觉，剩下两次是真的准。", "cd": 3, "fail": {"chance": 65, "text": "锦囊里写着「先睡一觉再说」", "effects": [{"type": "heal", "pct": 15}]}, "effects": [{"type": "damage", "power": 2.2, "true": true}, {"type": "stun", "turns": 1, "label": "中计"}]}
+      ]
+    },
+    "pig-stamp": {
+      "style": "控制",
+      "stats": {"hp": 109, "atk": 20, "def": 13, "spd": 9, "crit": 5, "dodge": 3},
+      "skills": [
+        {"name": "盖个戳", "text": "啪，印章落下。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "白纸黑字", "text": "写清楚了，赖不掉。", "cd": 3, "effects": [{"type": "damage", "power": 1.3}, {"type": "buff", "stat": "def", "pct": -35, "turns": 3, "target": "enemy"}]},
+        {"name": "正版认证", "text": "官方盖章的正版好猪，自带防伪层。", "passive": true, "effects": [{"type": "shield", "pct": 7}]},
+        {"name": "按章办事", "text": "不合规定的增益，一律作废。", "cd": 3, "effects": [{"type": "damage", "power": 1.15}, {"type": "dispel"}]},
+        {"name": "猪圈公章", "text": "你按过章的，猪圈里没有不认的。", "cd": 4, "effects": [{"type": "damage", "power": 1.95}, {"type": "stun", "turns": 1, "label": "被盖章", "chance": 60}]}
+      ]
+    },
+    "zombie-pig": {
+      "style": "吸血",
+      "stats": {"hp": 115, "atk": 18, "def": 8, "spd": 7, "crit": 5, "dodge": 2},
+      "skills": [
+        {"name": "一瘸一拐扑咬", "text": "走路掉渣，咬人很准。", "effects": [{"type": "damage", "power": 1, "drain": 20}]},
+        {"name": "缝缝补补", "text": "身上的补丁又多了一块。", "passive": true, "effects": [{"type": "regen", "pct": 2}]},
+        {"name": "腐绿吐息", "text": "一口带着尸毒的绿气。", "cd": 3, "effects": [{"type": "damage", "power": 0.35}, {"type": "dot", "pct": 5, "turns": 3, "label": "尸毒"}]},
+        {"name": "啃口新鲜猪脑", "text": "自己那颗早就不够用了。", "cd": 3, "effects": [{"type": "damage", "power": 1.3, "drain": 50}]},
+        {"name": "尸变", "text": "濒死时反而更凶了。", "cd": 5, "when": "low_hp", "effects": [{"type": "cleanse"}, {"type": "buff", "stat": "atk", "pct": 60, "turns": 3}, {"type": "heal", "pct": 27}]}
+      ]
+    },
+    "skeleton-pig": {
+      "style": "不死",
+      "stats": {"hp": 92, "atk": 22, "def": 8, "spd": 11, "crit": 6, "dodge": 10},
+      "skills": [
+        {"name": "骨刺", "text": "只剩骨头，戳人很疼。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "瘦成这样", "text": "连膘都没剩，打都打不着。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 10}]},
+        {"name": "红烧爆炒清蒸", "text": "全套流程走一遍，还给对手。", "cd": 3, "effects": [{"type": "damage", "power": 0.4, "hits": 3}]},
+        {"name": "白骨重组", "text": "咔咔几声，骨头又拼回去了。", "cd": 5, "when": "low_hp", "effects": [{"type": "heal", "pct": 40}]},
+        {"name": "资深不死族", "text": "全套流程走完依旧屹立不倒。", "passive": true, "effects": [{"type": "revive", "pct": 22}]}
+      ]
+    },
+    "pig-human": {
+      "style": "均衡",
+      "stats": {"hp": 106, "atk": 20, "def": 11, "spd": 10, "crit": 6, "dodge": 5},
+      "skills": [
+        {"name": "打工人一拳", "text": "人类的肩膀，猪的力气。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "正经开会", "text": "会议期间严肃防守。", "cd": 3, "effects": [{"type": "buff", "stat": "def", "pct": 60, "turns": 3}, {"type": "shield", "pct": 17}]},
+        {"name": "人模人样", "text": "西装革履，气势先赢一半。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 10}, {"type": "buff", "stat": "def", "pct": 10}]},
+        {"name": "饭点露馅", "text": "一到饭点，猪的本性藏不住了。", "cd": 3, "effects": [{"type": "damage", "power": 1.05, "drain": 35}]},
+        {"name": "听猪还是听人", "text": "身体到底听谁的？打出去才知道。", "cd": 4, "effects": [{"type": "damage", "power": 1.15, "power_max": 4.1}]}
+      ]
+    },
+    "demon-pig": {
+      "style": "诅咒",
+      "stats": {"hp": 95, "atk": 21, "def": 8, "spd": 12, "crit": 8, "dodge": 6},
+      "skills": [
+        {"name": "恶魔犄角", "text": "小犄角顶人也挺疼。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "满肚子坏点子", "text": "背地里使坏，让对手浑身无力。", "cd": 3, "effects": [{"type": "damage", "power": 0.7}, {"type": "buff", "stat": "atk", "pct": -25, "turns": 3, "target": "enemy"}, {"type": "buff", "stat": "def", "pct": -15, "turns": 3, "target": "enemy"}]},
+        {"name": "蝙蝠翅膀", "text": "扑棱扑棱，又快又滑。", "passive": true, "effects": [{"type": "buff", "stat": "spd", "pct": 60}, {"type": "buff", "stat": "dodge", "pct": 5}]},
+        {"name": "得逞的坏笑", "text": "笑得讨喜，诅咒却很毒。", "cd": 3, "effects": [{"type": "damage", "power": 0.6}, {"type": "dot", "pct": 6, "turns": 3, "label": "诅咒"}]},
+        {"name": "人畜无害地哼哼", "text": "哼哼两声，坏心眼全数爆发。", "cd": 4, "effects": [{"type": "damage", "power": 1.75, "drain": 40}]}
+      ]
+    },
+    "heaven-pig": {
+      "style": "治疗",
+      "stats": {"hp": 113, "atk": 18, "def": 10, "spd": 11, "crit": 5, "dodge": 8},
+      "skills": [
+        {"name": "天使之羽", "text": "羽毛轻轻一扫。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "金圈祝福", "text": "头顶金圈闪了一下，伤痛全消。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 24}, {"type": "cleanse"}]},
+        {"name": "飘得挺自在", "text": "飞升之后，脚不沾地。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 10}]},
+        {"name": "似了喵", "text": "一句似了喵，对手当场心碎。", "cd": 4, "effects": [{"type": "damage", "power": 1, "true": true}, {"type": "stun", "turns": 1, "label": "心碎", "chance": 30}]},
+        {"name": "刚领完盒饭", "text": "已经似过一次了，不差这一次。", "passive": true, "effects": [{"type": "revive", "pct": 19}]}
+      ]
+    },
+    "explosive-pig": {
+      "style": "爆发",
+      "stats": {"hp": 82, "atk": 25, "def": 6, "spd": 11, "crit": 10, "dodge": 2},
+      "skills": [
+        {"name": "火星四溅", "text": "引线滋滋冒火星。", "effects": [{"type": "damage", "power": 1}, {"type": "dot", "pct": 3, "turns": 2, "label": "灼烧", "chance": 30}]},
+        {"name": "怒气值拉满", "text": "眉头拧成一团。", "cd": 3, "effects": [{"type": "damage", "power": 0.6}, {"type": "buff", "stat": "atk", "pct": 60, "turns": 2}]},
+        {"name": "引线短", "text": "脾气爆，出手快。", "passive": true, "effects": [{"type": "buff", "stat": "spd", "pct": 25}]},
+        {"name": "我跟你爆了", "text": "抱着炸药冲上去。", "cd": 3, "effects": [{"type": "damage", "power": 1.7}, {"type": "recoil", "pct": 12}]},
+        {"name": "轰", "text": "惹到你的下场只有一个字。", "cd": 6, "effects": [{"type": "damage", "power": 3.2, "pierce": 50}, {"type": "recoil", "pct": 25}]}
+      ]
+    },
+    "black-white-pig": {
+      "style": "均衡",
+      "stats": {"hp": 109, "atk": 19, "def": 12, "spd": 10, "crit": 5, "dodge": 6},
+      "skills": [
+        {"name": "黑白撞", "text": "半边黑半边白，撞起来都一样疼。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "熊猫拳", "text": "有猪说你是熊猫混的，看这拳法确实像。", "cd": 2, "effects": [{"type": "damage", "power": 1.25}]},
+        {"name": "奶牛顶", "text": "奶牛亲戚的祖传绝技。", "cd": 3, "effects": [{"type": "damage", "power": 1}, {"type": "stun", "turns": 1, "label": "顶飞", "chance": 40}]},
+        {"name": "血统成谜", "text": "懒得解释，对手也摸不透。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 45}, {"type": "buff", "stat": "dodge", "pct": 5}]},
+        {"name": "拼装出厂", "text": "黑的那半和白的那半同时出手。", "cd": 4, "effects": [{"type": "damage", "power": 0.85, "hits": 2}, {"type": "shield", "pct": 11}]}
+      ]
+    },
+    "pork-skewer": {
+      "style": "穿透",
+      "stats": {"hp": 94, "atk": 21, "def": 9, "spd": 11, "crit": 8, "dodge": 4},
+      "skills": [
+        {"name": "竹签穿刺", "text": "真正的串子，一扎一个准。", "effects": [{"type": "damage", "power": 1, "pierce": 30}]},
+        {"name": "青椒点缀", "text": "夹块青椒，补充维生素。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 24}]},
+        {"name": "一穿到底", "text": "从头到脚，一签到底。", "cd": 3, "effects": [{"type": "damage", "power": 1.25, "pierce": 70}]},
+        {"name": "真正的串子", "text": "不是玩梗，是真串。", "passive": true, "effects": [{"type": "buff", "stat": "crit", "pct": 15}]},
+        {"name": "炭火连串", "text": "一串接一串，香气扑鼻。", "cd": 4, "effects": [{"type": "damage", "power": 0.55, "hits": 4, "pierce": 40}]}
+      ]
+    },
+    "magic-pig": {
+      "style": "法术",
+      "stats": {"hp": 94, "atk": 23, "def": 7, "spd": 11, "crit": 6, "dodge": 6},
+      "skills": [
+        {"name": "星星魔杖", "text": "魔杖一点，星光四溅。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "马猪烧酒变身", "text": "口号喊响，变身动作做足。", "cd": 4, "effects": [{"type": "damage", "power": 0.45}, {"type": "buff", "stat": "atk", "pct": 40, "turns": 3}, {"type": "buff", "stat": "def", "pct": 20, "turns": 3}]},
+        {"name": "粉红蝴蝶结", "text": "可爱就够了，可爱就是防御。", "passive": true, "effects": [{"type": "shield", "pct": 7}]},
+        {"name": "饲料变多术", "text": "唯一稳定成功的法术：把饲料变多一点。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 32}]},
+        {"name": "终极魔法", "text": "十次有九次失败，但成功一次就够了。", "cd": 3, "fail": {"chance": 55, "text": "又把饲料变多了一点", "effects": [{"type": "heal", "pct": 10}]}, "effects": [{"type": "damage", "power": 2.85, "true": true}]}
+      ]
+    },
+    "mechanical-pig": {
+      "style": "机甲",
+      "stats": {"hp": 114, "atk": 19, "def": 15, "spd": 8, "crit": 6, "dodge": 2},
+      "skills": [
+        {"name": "机械腿踢", "text": "嗡嗡作响的一脚。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "光学瞄准", "text": "红色光学眼锁定目标，运算精准。", "cd": 2, "effects": [{"type": "damage", "power": 1.15, "sure": true}]},
+        {"name": "金属外壳", "text": "如假包换的真机器。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 60}]},
+        {"name": "从不摸鱼", "text": "全速运转，连续输出。", "cd": 3, "effects": [{"type": "damage", "power": 0.5, "hits": 3}]},
+        {"name": "人机模式", "text": "切换战斗协议。唯一的 bug 是忘了自己是猪。", "cd": 4, "fail": {"chance": 15, "text": "忘了自己其实是只猪，愣在原地"}, "effects": [{"type": "shield", "pct": 22}, {"type": "buff", "stat": "atk", "pct": 40, "turns": 3}]}
+      ]
+    },
+    "pig-ball": {
+      "style": "敏捷",
+      "stats": {"hp": 106, "atk": 18, "def": 11, "spd": 14, "crit": 5, "dodge": 10},
+      "skills": [
+        {"name": "滚", "text": "世界里只有一个动词。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "快乐翻滚", "text": "省事，还挺快乐。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 27}, {"type": "buff", "stat": "spd", "pct": 40, "turns": 3}]},
+        {"name": "浑圆无死角", "text": "四肢全无，打哪都滑开。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 6}]},
+        {"name": "一推老远", "text": "被推一下就滚出老远，顺便躲开攻击。", "cd": 3, "effects": [{"type": "evade", "count": 1}, {"type": "damage", "power": 0.35}]},
+        {"name": "滚滚滚滚", "text": "越滚越快，越快越疼。", "cd": 4, "effects": [{"type": "damage", "power": 0.7, "scale": "spd", "hits": 2}]}
+      ]
+    },
+    "doll-pig": {
+      "style": "守护",
+      "stats": {"hp": 119, "atk": 18, "def": 11, "spd": 9, "crit": 4, "dodge": 7},
+      "skills": [
+        {"name": "软乎拍拍", "text": "布面软乎乎的一拍。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "fufu治愈", "text": "抱起来安心，伤口都不疼了。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 23}]},
+        {"name": "一针一线", "text": "手作针脚，越打越结实。", "passive": true, "effects": [{"type": "regen", "pct": 1.5}]},
+        {"name": "Hand Made", "text": "亮出小标，对手不忍心下手。", "cd": 3, "effects": [{"type": "shield", "pct": 20}, {"type": "buff", "stat": "atk", "pct": -20, "turns": 2, "target": "enemy"}]},
+        {"name": "千万别沾水", "text": "被逼急了，抡起整只玩偶砸过去。", "cd": 4, "effects": [{"type": "damage", "power": 1.8, "scale": "hp"}]}
+      ]
+    },
+    "soul-pig": {
+      "style": "幽灵",
+      "stats": {"hp": 84, "atk": 21, "def": 6, "spd": 12, "crit": 6, "dodge": 16},
+      "skills": [
+        {"name": "幽绿穿透", "text": "半透明的身体直接穿过去。", "effects": [{"type": "damage", "power": 1, "pierce": 40}]},
+        {"name": "飘忽鬼影", "text": "下半身化成一缕鬼影，难以捉摸。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 8}]},
+        {"name": "冥界寒气", "text": "从冥界带回来的阴冷。", "cd": 3, "effects": [{"type": "damage", "power": 1.15, "true": true}, {"type": "buff", "stat": "spd", "pct": -40, "turns": 2, "target": "enemy"}]},
+        {"name": "没吃完的饲料", "text": "那顿饲料的执念，让你不肯离去。", "cd": 4, "when": "low_hp", "effects": [{"type": "heal", "pct": 33}]},
+        {"name": "灵魂出窍", "text": "直接攻击对手的灵魂，无视一切防御。", "cd": 4, "effects": [{"type": "damage", "power": 1.4, "true": true}, {"type": "stun", "turns": 1, "label": "失魂", "chance": 30}]}
+      ]
+    },
+    "crystal-pig": {
+      "style": "玻璃炮",
+      "stats": {"hp": 76, "atk": 26, "def": 5, "spd": 12, "crit": 15, "dodge": 6},
+      "skills": [
+        {"name": "棱面折射", "text": "彩虹光刺进对手眼睛。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "展柜收藏品", "text": "珍贵到对手都舍不得下重手。", "passive": true, "effects": [{"type": "shield", "pct": 19}]},
+        {"name": "彩虹光束", "text": "七色光汇成一道。", "cd": 3, "effects": [{"type": "damage", "power": 0.9, "pierce": 50}]},
+        {"name": "切割面", "text": "锋利的切面，碰哪划哪。", "cd": 3, "effects": [{"type": "thorns", "pct": 37, "turns": 3}, {"type": "damage", "power": 0.85}]},
+        {"name": "一拍就碎", "text": "碎了也要溅对手一身玻璃渣。", "cd": 5, "effects": [{"type": "damage", "power": 0.65, "hits": 4}, {"type": "recoil", "pct": 8}]}
+      ]
+    },
+    "snow-pig": {
+      "style": "隐匿",
+      "stats": {"hp": 99, "atk": 19, "def": 10, "spd": 11, "crit": 5, "dodge": 14},
+      "skills": [
+        {"name": "初雪一扑", "text": "从雪里扑出来。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "保护色拉满", "text": "往雪地里一趴就找不着了。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 8}]},
+        {"name": "雪球连发", "text": "一团接一团。", "cd": 2, "effects": [{"type": "damage", "power": 0.45, "hits": 3}]},
+        {"name": "纤尘不染", "text": "抖落一身雪，什么都沾不上。", "cd": 4, "effects": [{"type": "cleanse"}, {"type": "evade", "count": 1}, {"type": "heal", "pct": 9}]},
+        {"name": "雪崩", "text": "存在感清零的猪，带来了整座山的雪。", "cd": 4, "effects": [{"type": "damage", "power": 1.7}, {"type": "stun", "turns": 1, "label": "被埋", "chance": 45}]}
+      ]
+    },
+    "pig-cat": {
+      "style": "敏捷",
+      "stats": {"hp": 91, "atk": 21, "def": 8, "spd": 14, "crit": 10, "dodge": 9},
+      "skills": [
+        {"name": "猫猫拳", "text": "喵一声，带着哼唧。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "橘猫条纹", "text": "猫的身手，猪的鼻子。", "passive": true, "effects": [{"type": "buff", "stat": "spd", "pct": 10}, {"type": "buff", "stat": "dodge", "pct": 5}]},
+        {"name": "连环猫爪", "text": "唰唰唰三下。", "cd": 2, "effects": [{"type": "damage", "power": 0.45, "hits": 3}]},
+        {"name": "蹭饭", "text": "哼唧一声，蹭到了饭。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 28}]},
+        {"name": "傲娇一击", "text": "猫的傲娇和猪的贪吃，一样没落下。", "cd": 4, "effects": [{"type": "damage", "power": 2.05}, {"type": "buff", "stat": "crit", "pct": 25, "turns": 2}]}
+      ]
+    },
+    "landmine-pig": {
+      "style": "反击",
+      "stats": {"hp": 108, "atk": 21, "def": 9, "spd": 9, "crit": 6, "dodge": 5},
+      "skills": [
+        {"name": "滴泪", "text": "一滴眼泪落下。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "情绪细腻", "text": "碰一下就会炸。", "passive": true, "effects": [{"type": "thorns", "pct": 7}]},
+        {"name": "喝完这箱", "text": "喝完这箱就没事了。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 22}, {"type": "buff", "stat": "atk", "pct": 20, "turns": 2}]},
+        {"name": "沉重的爱", "text": "感情专一，却压得对手喘不过气。", "cd": 3, "effects": [{"type": "damage", "power": 1.15}, {"type": "buff", "stat": "spd", "pct": -50, "turns": 2, "target": "enemy"}]},
+        {"name": "小地雷引爆", "text": "可爱又危险，靠近就爆。", "cd": 4, "effects": [{"type": "damage", "power": 1.8}, {"type": "thorns", "pct": 26, "turns": 2}]}
+      ]
+    },
+    "rainbow-pig": {
+      "style": "魅惑",
+      "stats": {"hp": 98, "atk": 21, "def": 9, "spd": 11, "crit": 8, "dodge": 6},
+      "skills": [
+        {"name": "彩虹拳", "text": "七种颜色一起砸过来。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "热情直球", "text": "太热情了，对手招架不住。", "cd": 2, "effects": [{"type": "damage", "power": 1.2, "sure": true}]},
+        {"name": "行走的彩虹", "text": "存在感强烈，气势逼人。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 12}]},
+        {"name": "真诚魅力", "text": "坦率的眼神，让对手忘了出手。", "cd": 4, "effects": [{"type": "stun", "turns": 1, "label": "被迷住", "chance": 80}, {"type": "heal", "pct": 11}]},
+        {"name": "斯图亚特光波", "text": "彩虹光芒铺满整个猪圈。", "cd": 4, "effects": [{"type": "damage", "power": 0.7, "hits": 3, "pierce": 30}]}
+      ]
+    },
+    "big-lazy-pig": {
+      "style": "坦克",
+      "stats": {"hp": 142, "atk": 16, "def": 13, "spd": 5, "crit": 4, "dodge": 2},
+      "skills": [
+        {"name": "翻身压", "text": "懒得动，翻个身压过去。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "能躺着绝不坐着", "text": "躺着的时候恢复最快。", "passive": true, "effects": [{"type": "regen", "pct": 2}]},
+        {"name": "找个舒服位置", "text": "迅速找到最舒服的位置躺平。", "cd": 3, "effects": [{"type": "buff", "stat": "def", "pct": 45, "turns": 3}, {"type": "regen", "pct": 4.5, "turns": 3}]},
+        {"name": "睡个回笼觉", "text": "压力？不存在的。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 28}, {"type": "cleanse"}]},
+        {"name": "泰山压顶", "text": "整只猪的重量砸下来。", "cd": 4, "effects": [{"type": "damage", "power": 1.25, "scale": "hp"}]}
+      ]
+    },
+    "pig-turtle": {
+      "style": "坚守",
+      "stats": {"hp": 123, "atk": 17, "def": 19, "spd": 5, "crit": 3, "dodge": 3},
+      "skills": [
+        {"name": "龟壳撞", "text": "背着壳慢慢撞过去。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "沉重外壳", "text": "习惯了就好。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 55}]},
+        {"name": "缩进壳里", "text": "把委屈忍在壳里。", "cd": 3, "effects": [{"type": "shield", "pct": 16}]},
+        {"name": "压抑的委屈", "text": "忍着忍着，就攒成了反击。", "cd": 3, "effects": [{"type": "thorns", "pct": 59, "turns": 3}]},
+        {"name": "忍无可忍", "text": "壳里攒下的全部委屈一次爆发。", "cd": 5, "when": "hurt", "effects": [{"type": "damage", "power": 1, "scale": "def"}]}
+      ]
+    },
+    "roasted-pig": {
+      "style": "坚韧",
+      "stats": {"hp": 120, "atk": 19, "def": 11, "spd": 8, "crit": 6, "dodge": 3},
+      "skills": [
+        {"name": "炭烤一击", "text": "带着烧烤的温度。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "烧烤模式", "text": "承受着来自各方的压力。", "passive": true, "effects": [{"type": "thorns", "pct": 7}, {"type": "buff", "stat": "def", "pct": 9}]},
+        {"name": "火候正好", "text": "把对手也拉上烤架。", "cd": 3, "effects": [{"type": "damage", "power": 0.35}, {"type": "dot", "pct": 5, "turns": 3, "label": "灼烧"}]},
+        {"name": "备受煎熬", "text": "越烤越坚韧。", "cd": 4, "when": "hurt", "effects": [{"type": "buff", "stat": "def", "pct": 60, "turns": 3}, {"type": "heal", "pct": 20}]},
+        {"name": "生活对我下手了", "text": "那我也对你下手。", "cd": 4, "effects": [{"type": "damage", "power": 1.9}, {"type": "dot", "pct": 4, "turns": 2, "label": "余温"}]}
+      ]
+    },
+    "bacon": {
+      "style": "成长",
+      "stats": {"hp": 107, "atk": 20, "def": 10, "spd": 10, "crit": 8, "dodge": 4},
+      "skills": [
+        {"name": "滋啦一声", "text": "热油溅起来了。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "煎熬出精华", "text": "越受煎熬越香。", "cd": 3, "effects": [{"type": "damage", "power": 0.5}, {"type": "buff", "stat": "atk", "pct": 50, "turns": 4}, {"type": "recoil", "pct": 5}]},
+        {"name": "层层油脂", "text": "肥瘦相间，能抗能打。", "passive": true, "effects": [{"type": "shield", "pct": 7}]},
+        {"name": "热油飞溅", "text": "溅到哪烫到哪。", "cd": 3, "effects": [{"type": "damage", "power": 0.35, "hits": 3}, {"type": "dot", "pct": 3, "turns": 2, "label": "烫伤"}]},
+        {"name": "真香", "text": "成熟魅力与真香实力，不可抗拒。", "cd": 4, "effects": [{"type": "damage", "power": 2.1, "drain": 30}]}
+      ]
+    },
+    "apple-pig": {
+      "style": "精致",
+      "stats": {"hp": 95, "atk": 22, "def": 10, "spd": 10, "crit": 9, "dodge": 5},
+      "skills": [
+        {"name": "精致一击", "text": "连攻击都讲究设计感。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "贵就是好", "text": "顶配就是顶配。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 10}, {"type": "buff", "stat": "crit", "pct": 5}]},
+        {"name": "生态闭环", "text": "外来的效果统统拦在外面。", "cd": 3, "effects": [{"type": "cleanse"}, {"type": "shield", "pct": 19}]},
+        {"name": "羡慕的目光", "text": "对手看呆了，忘了防守。", "cd": 3, "effects": [{"type": "damage", "power": 1.55}, {"type": "buff", "stat": "def", "pct": -35, "turns": 2, "target": "enemy"}]},
+        {"name": "发布会", "text": "One more thing……", "cd": 4, "fail": {"chance": 20, "text": "发布会冷场，陷入了一丝空虚与焦虑"}, "effects": [{"type": "damage", "power": 2.55, "pierce": 30}]}
+      ]
+    },
+    "android-pig": {
+      "style": "自由",
+      "stats": {"hp": 106, "atk": 20, "def": 11, "spd": 10, "crit": 6, "dodge": 5},
+      "skills": [
+        {"name": "开源一击", "text": "实用至上。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "自由开放", "text": "包容随和，什么效果都能接纳和化解。", "passive": true, "effects": [{"type": "regen", "pct": 1.5}, {"type": "buff", "stat": "def", "pct": 6}]},
+        {"name": "侧载", "text": "装个不知道哪来的插件。", "cd": 3, "effects": [{"type": "damage", "power": 0.75, "power_max": 2}]},
+        {"name": "清理后台", "text": "一键加速，状态焕然一新。", "cd": 4, "effects": [{"type": "cleanse"}, {"type": "buff", "stat": "spd", "pct": 60, "turns": 3}, {"type": "heal", "pct": 24}]},
+        {"name": "不被定义", "text": "活得真实自在，出手也毫无套路。", "cd": 4, "effects": [{"type": "damage", "power": 1.15, "hits": 2, "pierce": 20}]}
+      ]
+    },
+    "pig-bun": {
+      "style": "治疗",
+      "stats": {"hp": 131, "atk": 17, "def": 11, "spd": 9, "crit": 5, "dodge": 4},
+      "skills": [
+        {"name": "软萌一撞", "text": "外表软萌，撞上来却很实在。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "热气腾腾", "text": "暖乎乎的，越打越精神。", "passive": true, "effects": [{"type": "regen", "pct": 2}]},
+        {"name": "真材实料", "text": "馅料满满，扎实防御。", "cd": 3, "effects": [{"type": "shield", "pct": 15}, {"type": "buff", "stat": "def", "pct": 20, "turns": 2}]},
+        {"name": "治愈的温暖", "text": "让人忍不住想靠近。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 31}]},
+        {"name": "爆汁", "text": "一口咬下，滚烫的馅料喷涌而出。", "cd": 4, "effects": [{"type": "damage", "power": 1.3}, {"type": "dot", "pct": 5, "turns": 3, "label": "烫嘴"}]}
+      ]
+    },
+    "taxi-pig": {
+      "style": "速度",
+      "stats": {"hp": 103, "atk": 19, "def": 10, "spd": 15, "crit": 6, "dodge": 5},
+      "skills": [
+        {"name": "按喇叭", "text": "嘀嘀——让一让。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "油门踩到底", "text": "生活所迫，速度拉满。", "cd": 3, "effects": [{"type": "buff", "stat": "spd", "pct": 55, "turns": 3}, {"type": "damage", "power": 1.45}]},
+        {"name": "熟悉每条路", "text": "城市里奔波练出的走位。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 6}, {"type": "buff", "stat": "spd", "pct": 11}]},
+        {"name": "使命必达", "text": "说送到就送到，伤害必达。", "cd": 3, "effects": [{"type": "damage", "power": 1.5, "sure": true}]},
+        {"name": "猪车撞击", "text": "一脚油门，连车带猪撞过去。", "cd": 4, "effects": [{"type": "damage", "power": 1.25, "scale": "spd"}, {"type": "stun", "turns": 1, "label": "被撞懵", "chance": 25}]}
+      ]
+    },
+    "pig-die": {
+      "style": "运气",
+      "stats": {"hp": 101, "atk": 20, "def": 11, "spd": 10, "crit": 12, "dodge": 5},
+      "skills": [
+        {"name": "掷骰子", "text": "点数随缘。", "effects": [{"type": "damage", "power": 0.5, "power_max": 1.5}]},
+        {"name": "方方正正", "text": "外表方正，扎扎实实。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 55}]},
+        {"name": "智商随机摇", "text": "这次摇到的是好运。", "cd": 3, "effects": [{"type": "damage", "power": 0.5, "power_max": 1.45}, {"type": "buff", "stat": "crit", "pct": 30, "turns": 3}]},
+        {"name": "豹子", "text": "三个六！", "cd": 3, "effects": [{"type": "damage", "power": 0.35, "power_max": 0.75, "hits": 3}]},
+        {"name": "孤注一掷", "text": "比起思考更信运气。", "cd": 4, "effects": [{"type": "damage", "power": 0.7, "power_max": 4.05}]}
+      ]
+    },
+    "watermelon-pig": {
+      "style": "平衡",
+      "stats": {"hp": 109, "atk": 19, "def": 11, "spd": 10, "crit": 6, "dodge": 6},
+      "skills": [
+        {"name": "瓜皮飞踢", "text": "踩着西瓜一个飞踢。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "稳稳站住", "text": "凭乐观心态维持平衡。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 10}, {"type": "regen", "pct": 2}]},
+        {"name": "西瓜子连射", "text": "噗噗噗。", "cd": 2, "effects": [{"type": "damage", "power": 0.35, "hits": 4}]},
+        {"name": "吃瓜群众", "text": "搬个板凳看戏，顺便回血。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 12}, {"type": "regen", "pct": 3, "turns": 3}]},
+        {"name": "甜蜜巅峰", "text": "站在西瓜顶端，俯冲而下。", "cd": 4, "effects": [{"type": "damage", "power": 2}, {"type": "heal", "pct": 10}]}
+      ]
+    },
+    "pig-souffle": {
+      "style": "脆皮",
+      "stats": {"hp": 85, "atk": 23, "def": 6, "spd": 12, "crit": 8, "dodge": 10},
+      "skills": [
+        {"name": "轻柔一戳", "text": "软软的一下。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "轻拿轻放", "text": "对手不由得放轻了动作。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": -10, "target": "enemy"}]},
+        {"name": "甜美气息", "text": "治愈的甜味弥漫开来。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 27}]},
+        {"name": "糖霜", "text": "撒对手一脸糖霜，黏住了。", "cd": 3, "effects": [{"type": "damage", "power": 1.35}, {"type": "buff", "stat": "spd", "pct": -50, "turns": 2, "target": "enemy"}]},
+        {"name": "塌陷", "text": "稍不注意就塌了，连对手一起压扁。", "cd": 5, "when": "low_hp", "effects": [{"type": "damage", "power": 2.4, "true": true}]}
+      ]
+    },
+    "goblin-pig": {
+      "style": "邋遢",
+      "stats": {"hp": 108, "atk": 19, "def": 9, "spd": 11, "crit": 7, "dodge": 7},
+      "skills": [
+        {"name": "角落偷袭", "text": "从角落里窜出来。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "不在乎眼光", "text": "随便你怎么看。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 50}]},
+        {"name": "邋遢光环", "text": "一股说不清的味道。", "cd": 3, "effects": [{"type": "dot", "pct": 6, "turns": 3, "label": "熏到"}, {"type": "buff", "stat": "atk", "pct": -15, "turns": 3, "target": "enemy"}]},
+        {"name": "摆烂", "text": "躺在角落，什么都不管。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 36}, {"type": "stun", "turns": 1, "label": "摆烂", "target": "self", "chance": 50}]},
+        {"name": "猪布林模式", "text": "开启另类自在的终极形态。", "cd": 4, "effects": [{"type": "damage", "power": 0.7, "hits": 3}, {"type": "buff", "stat": "spd", "pct": 25, "turns": 2}]}
+      ]
+    },
+    "chained_crown_pig": {
+      "style": "王者",
+      "stats": {"hp": 107, "atk": 21, "def": 12, "spd": 7, "crit": 7, "dodge": 2},
+      "skills": [
+        {"name": "锁链挥击", "text": "束缚你的锁链，也是你的武器。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "必承其重", "text": "王冠很重，你扛得住。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 40}, {"type": "buff", "stat": "spd", "pct": -20}]},
+        {"name": "王者威压", "text": "高贵的灵魂震慑对手。", "cd": 3, "effects": [{"type": "buff", "stat": "atk", "pct": -25, "turns": 2, "target": "enemy"}, {"type": "damage", "power": 1.15}]},
+        {"name": "挣扎", "text": "从未放弃对自由的渴望。", "cd": 4, "when": "hurt", "effects": [{"type": "damage", "power": 0.45}, {"type": "cleanse"}, {"type": "buff", "stat": "atk", "pct": 45, "turns": 3}]},
+        {"name": "挣断锁链", "text": "锁链崩断的瞬间，王者归来。", "cd": 5, "effects": [{"type": "damage", "power": 2.2, "pierce": 40}, {"type": "buff", "stat": "spd", "pct": 40, "turns": 3}]}
+      ]
+    },
+    "vangogh_pig": {
+      "style": "艺术",
+      "stats": {"hp": 100, "atk": 21, "def": 9, "spd": 10, "crit": 9, "dodge": 6},
+      "skills": [
+        {"name": "厚涂笔触", "text": "一笔下去，颜料堆得很厚。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "金色印象", "text": "热烈的情感化作力量。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 10}]},
+        {"name": "星空漩涡", "text": "对手被卷进复杂的漩涡里。", "cd": 3, "effects": [{"type": "damage", "power": 0.95}, {"type": "stun", "turns": 1, "label": "晕眩", "chance": 40}]},
+        {"name": "向日葵", "text": "金黄的花朵带来生命力。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 16}, {"type": "regen", "pct": 4, "turns": 3}]},
+        {"name": "燃烧的星夜", "text": "火焰般的星夜铺满画布。", "cd": 4, "effects": [{"type": "damage", "power": 1.05}, {"type": "dot", "pct": 7, "turns": 3, "label": "燃烧"}]}
+      ]
+    },
+    "tangyuan_pig": {
+      "style": "治疗",
+      "stats": {"hp": 124, "atk": 18, "def": 10, "spd": 9, "crit": 5, "dodge": 5},
+      "skills": [
+        {"name": "软糯一撞", "text": "糯叽叽地撞过去。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "暖汤浸泡", "text": "泡在甜蜜的暖汤里。", "passive": true, "effects": [{"type": "regen", "pct": 2}]},
+        {"name": "黏住", "text": "糯米黏住了对手的脚。", "cd": 3, "effects": [{"type": "damage", "power": 0.95}, {"type": "buff", "stat": "spd", "pct": -45, "turns": 2, "target": "enemy"}]},
+        {"name": "小太阳", "text": "给大家带来温暖，也给自己。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 18}, {"type": "shield", "pct": 8}]},
+        {"name": "黑芝麻爆浆", "text": "咬开的一瞬间，滚烫的芝麻馅喷涌而出。", "cd": 4, "effects": [{"type": "damage", "power": 1.35}, {"type": "dot", "pct": 6, "turns": 2, "label": "烫伤"}]}
+      ]
+    },
+    "mc_porkchop": {
+      "style": "生存",
+      "stats": {"hp": 110, "atk": 20, "def": 11, "spd": 9, "crit": 6, "dodge": 4},
+      "skills": [
+        {"name": "方块一拍", "text": "像素风的一击。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "恢复饥饿值", "text": "实实在在的那几格饥饿值。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 22}]},
+        {"name": "建议烤熟食用", "text": "放到熔炉上烤一烤。", "cd": 3, "effects": [{"type": "damage", "power": 0.4}, {"type": "dot", "pct": 5, "turns": 3, "label": "熔炉"}]},
+        {"name": "充满危机", "text": "危机四伏的世界里练出的谨慎。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 7}, {"type": "regen", "pct": 2}]},
+        {"name": "钻石剑", "text": "不知道从哪摸出来一把钻石剑。", "cd": 4, "effects": [{"type": "damage", "power": 2.55, "pierce": 30}]}
+      ]
+    },
+    "pig_god": {
+      "style": "神明",
+      "stats": {"hp": 102, "atk": 20, "def": 10, "spd": 11, "crit": 8, "dodge": 6},
+      "skills": [
+        {"name": "神之一点", "text": "轻轻一点，智慧降临。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "好运加持", "text": "象征着幸运和成功。", "passive": true, "effects": [{"type": "buff", "stat": "crit", "pct": 8}, {"type": "buff", "stat": "dodge", "pct": 4}]},
+        {"name": "关键时刻的指引", "text": "看穿对手的破绽。", "cd": 3, "effects": [{"type": "damage", "power": 1.35, "sure": true}, {"type": "buff", "stat": "def", "pct": -20, "turns": 2, "target": "enemy"}]},
+        {"name": "守护神", "text": "猪的守护神，护佑自己。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 13}, {"type": "shield", "pct": 9}, {"type": "cleanse"}]},
+        {"name": "神谕", "text": "智慧化作光芒，直击灵魂。", "cd": 4, "effects": [{"type": "damage", "power": 1.7, "true": true}]}
+      ]
+    },
+    "tank_pig": {
+      "style": "重装",
+      "stats": {"hp": 127, "atk": 17, "def": 18, "spd": 5, "crit": 5, "dodge": 0},
+      "skills": [
+        {"name": "履带碾压", "text": "轰隆隆碾过去。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "钢铁之心", "text": "坚不可摧的堡垒。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 60}]},
+        {"name": "按F启动", "text": "找对启动方式，引擎轰鸣。", "cd": 4, "effects": [{"type": "damage", "power": 0.45}, {"type": "buff", "stat": "atk", "pct": 30, "turns": 3}, {"type": "buff", "stat": "spd", "pct": 45, "turns": 3}]},
+        {"name": "装甲加固", "text": "钢板再加厚一层。", "cd": 3, "effects": [{"type": "shield", "pct": 22}]},
+        {"name": "主炮齐射", "text": "主炮对准目标，开火。", "cd": 4, "effects": [{"type": "damage", "power": 2, "pierce": 50}, {"type": "stun", "turns": 1, "label": "被炮震晕", "chance": 20}]}
+      ]
+    },
+    "lao_zhu_li": {
+      "style": "老练",
+      "stats": {"hp": 108, "atk": 20, "def": 12, "spd": 9, "crit": 7, "dodge": 5},
+      "skills": [
+        {"name": "撕一页日历", "text": "又过了一天，经验又多了一点。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "资深前辈", "text": "遇事沉稳，不慌不忙。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 20}, {"type": "buff", "stat": "crit", "pct": 5}]},
+        {"name": "宜出手", "text": "翻黄历一看，今日宜出手。", "cd": 3, "effects": [{"type": "buff", "stat": "atk", "pct": 25, "turns": 3}, {"type": "damage", "power": 0.7}]},
+        {"name": "忌受伤", "text": "今日忌受伤，于是不受伤。", "cd": 4, "effects": [{"type": "evade", "count": 1}, {"type": "heal", "pct": 8}]},
+        {"name": "积累的智慧", "text": "几十年的经验，招招致命。", "cd": 4, "effects": [{"type": "damage", "power": 2.3, "execute": 40}]}
+      ]
+    },
+    "invisible_pig": {
+      "style": "隐匿",
+      "stats": {"hp": 78, "atk": 21, "def": 7, "spd": 13, "crit": 12, "dodge": 22},
+      "skills": [
+        {"name": "无形一击", "text": "看不见，但很疼。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "低调气场", "text": "在人群中毫不显眼。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 8}]},
+        {"name": "默默观察", "text": "看穿对手的弱点。", "cd": 3, "effects": [{"type": "damage", "power": 0.6}, {"type": "buff", "stat": "crit", "pct": 40, "turns": 3}, {"type": "buff", "stat": "def", "pct": -60, "turns": 3, "target": "enemy"}]},
+        {"name": "隐身", "text": "彻底消失在空气里。", "cd": 4, "effects": [{"type": "damage", "power": 0.6}, {"type": "evade", "count": 1}]},
+        {"name": "背后偷袭", "text": "对手连你在哪都不知道。", "cd": 4, "effects": [{"type": "damage", "power": 1.7, "pierce": 60, "sure": true}]}
+      ]
+    },
+    "buddha-pig": {
+      "style": "禅定",
+      "stats": {"hp": 120, "atk": 18, "def": 13, "spd": 8, "crit": 4, "dodge": 6},
+      "skills": [
+        {"name": "随缘掌", "text": "打中打不中，一切随缘。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "拒绝内耗", "text": "负面状态与我无关。", "passive": true, "effects": [{"type": "regen", "pct": 2}, {"type": "buff", "stat": "def", "pct": 8}]},
+        {"name": "阿弥陀佛", "text": "施猪，放下屠刀。", "cd": 3, "effects": [{"type": "damage", "power": 0.4}, {"type": "buff", "stat": "atk", "pct": -40, "turns": 2, "target": "enemy"}, {"type": "cleanse"}]},
+        {"name": "看破红尘", "text": "伤害？不过是镜花水月。", "cd": 4, "effects": [{"type": "shield", "pct": 18}, {"type": "thorns", "pct": 21, "turns": 2}]},
+        {"name": "佛光普照", "text": "金光一闪，众生平等。", "cd": 4, "effects": [{"type": "damage", "power": 1.1, "true": true}, {"type": "heal", "pct": 11}]}
+      ]
+    },
+    "leek-pig": {
+      "style": "再生",
+      "stats": {"hp": 112, "atk": 20, "def": 9, "spd": 10, "crit": 5, "dodge": 4},
+      "skills": [
+        {"name": "韭菜叶鞭", "text": "绿油油的一鞭。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "春风吹又生", "text": "被割也不怕。", "passive": true, "effects": [{"type": "regen", "pct": 1.5}]},
+        {"name": "重整旗鼓", "text": "被收割后满怀希望地再次出发。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 20}, {"type": "buff", "stat": "atk", "pct": 20, "turns": 2}]},
+        {"name": "一茬接一茬", "text": "割了一茬又长一茬。", "cd": 3, "effects": [{"type": "damage", "power": 0.4, "hits": 3}]},
+        {"name": "割不完的韭菜", "text": "倒下了也能再长出来。", "passive": true, "effects": [{"type": "revive", "pct": 26}]}
+      ]
+    },
+    "lemon-pig": {
+      "style": "酸蚀",
+      "stats": {"hp": 98, "atk": 21, "def": 9, "spd": 11, "crit": 7, "dodge": 6},
+      "skills": [
+        {"name": "酸溜溜", "text": "一股酸味扑面而来。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "柠檬精", "text": "见人晒幸福就泛酸。", "cd": 3, "effects": [{"type": "dispel"}, {"type": "damage", "power": 1.2}]},
+        {"name": "我承认我酸了", "text": "酸味腐蚀对手的防御。", "cd": 3, "effects": [{"type": "dot", "pct": 7, "turns": 3, "label": "酸蚀"}, {"type": "buff", "stat": "def", "pct": -40, "turns": 3, "target": "enemy"}]},
+        {"name": "化酸为动力", "text": "把这份酸味化为动力。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 12}]},
+        {"name": "柠檬汁喷射", "text": "挤爆一整颗柠檬，正中对手眼睛。", "cd": 4, "effects": [{"type": "damage", "power": 1.85}, {"type": "stun", "turns": 1, "label": "睁不开眼", "chance": 40}]}
+      ]
+    },
+    "frozen-pig": {
+      "style": "冰霜",
+      "stats": {"hp": 120, "atk": 18, "def": 14, "spd": 8, "crit": 5, "dodge": 4},
+      "skills": [
+        {"name": "冰冷一撞", "text": "生人勿近。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "心如止水", "text": "物理冷静，不为所动。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 60}]},
+        {"name": "寒气", "text": "周围的空气都凝固了。", "cd": 3, "effects": [{"type": "damage", "power": 1}, {"type": "buff", "stat": "spd", "pct": -40, "turns": 3, "target": "enemy"}]},
+        {"name": "冰块外壳", "text": "像冰块一样坚守自我。", "cd": 3, "effects": [{"type": "shield", "pct": 19}, {"type": "thorns", "pct": 19, "turns": 2}]},
+        {"name": "急速冷冻", "text": "把对手也冻成冰块。", "cd": 4, "effects": [{"type": "damage", "power": 1.45}, {"type": "stun", "turns": 1, "label": "冰冻", "chance": 65}]}
+      ]
+    },
+    "taffy-pig": {
+      "style": "偶像",
+      "stats": {"hp": 94, "atk": 21, "def": 8, "spd": 13, "crit": 8, "dodge": 8},
+      "skills": [
+        {"name": "抽象攻击", "text": "看不懂，但被打中了。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "赛博天使光环", "text": "顶流偶像自带光环。", "passive": true, "effects": [{"type": "shield", "pct": 10}, {"type": "buff", "stat": "spd", "pct": 10}]},
+        {"name": "关注谢谢喵", "text": "对手不知不觉点了关注。", "cd": 3, "effects": [{"type": "stun", "turns": 1, "label": "点关注", "chance": 55}, {"type": "damage", "power": 0.75}]},
+        {"name": "精力旺盛", "text": "直播八小时也不累。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 20}, {"type": "buff", "stat": "atk", "pct": 25, "turns": 2}]},
+        {"name": "顶流出道", "text": "抽象魅力全面爆发。", "cd": 4, "effects": [{"type": "damage", "power": 0.75, "hits": 3, "pierce": 30}]}
+      ]
+    },
+    "dirty-pig": {
+      "style": "泥战",
+      "stats": {"hp": 116, "atk": 19, "def": 10, "spd": 9, "crit": 5, "dodge": 5},
+      "skills": [
+        {"name": "泥巴甩脸", "text": "啪，一脸泥。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "满身泥泞", "text": "泥巴糊了一层，就是盔甲。", "passive": true, "effects": [{"type": "shield", "pct": 11}, {"type": "buff", "stat": "def", "pct": 8}]},
+        {"name": "泥坑打滚", "text": "滚一圈，快乐又回来了。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 22}, {"type": "cleanse"}]},
+        {"name": "糊一脸", "text": "对手被泥糊住了眼睛。", "cd": 3, "effects": [{"type": "damage", "power": 1}, {"type": "buff", "stat": "crit", "pct": -15, "turns": 3, "target": "enemy"}, {"type": "stun", "turns": 1, "label": "糊眼", "chance": 30}]},
+        {"name": "洗洗还能要", "text": "这一撞，泥点子溅满全场。", "cd": 4, "effects": [{"type": "damage", "power": 1.75}, {"type": "dot", "pct": 4, "turns": 3, "label": "脏兮兮"}]}
+      ]
+    },
+    "cyberpunk-pig": {
+      "style": "科技",
+      "stats": {"hp": 96, "atk": 21, "def": 10, "spd": 12, "crit": 9, "dodge": 6},
+      "skills": [
+        {"name": "霓虹光刃", "text": "夜色中最亮眼的一刀。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "义体改造", "text": "追求自我升级与进化。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 8}, {"type": "buff", "stat": "spd", "pct": 8}]},
+        {"name": "黑客入侵", "text": "删掉对手的所有增益。", "cd": 3, "effects": [{"type": "dispel"}, {"type": "damage", "power": 1}]},
+        {"name": "超频", "text": "处理器超频运行。", "cd": 4, "effects": [{"type": "damage", "power": 0.55}, {"type": "buff", "stat": "atk", "pct": 55, "turns": 3}, {"type": "recoil", "pct": 6}]},
+        {"name": "2077", "text": "来自未来的一击。", "cd": 4, "effects": [{"type": "damage", "power": 0.9, "hits": 2, "pierce": 40}]}
+      ]
+    },
+    "teammate-pig": {
+      "style": "坑队友",
+      "stats": {"hp": 89, "atk": 24, "def": 9, "spd": 10, "crit": 10, "dodge": 4},
+      "skills": [
+        {"name": "清澈愚蠢", "text": "理直气壮地冲上去。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "开心果", "text": "让人不忍心责怪。", "passive": true, "effects": [{"type": "regen", "pct": 2}]},
+        {"name": "关键时刻掉链子", "text": "这次……应该不会掉链子吧？", "cd": 2, "fail": {"chance": 35, "text": "关键时刻掉链子，打到了自己", "effects": [{"type": "recoil", "pct": 8}]}, "effects": [{"type": "damage", "power": 1.95}]},
+        {"name": "迷之操作", "text": "谁也看不懂，包括对手。", "cd": 3, "effects": [{"type": "damage", "power": 0.35, "power_max": 1.8}, {"type": "stun", "turns": 1, "label": "看懵", "chance": 20}]},
+        {"name": "团灭发动机", "text": "要灭一起灭！", "cd": 5, "fail": {"chance": 20, "text": "把自己团灭了", "effects": [{"type": "recoil", "pct": 15}]}, "effects": [{"type": "damage", "power": 3.2, "pierce": 40}, {"type": "recoil", "pct": 10}]}
+      ]
+    },
+    "pearl-pig": {
+      "style": "坚守",
+      "stats": {"hp": 117, "atk": 18, "def": 15, "spd": 8, "crit": 5, "dodge": 5},
+      "skills": [
+        {"name": "珍珠弹", "text": "圆润的一颗，打人却很疼。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "沙砾的刺痛", "text": "把苦难包裹起来，再还给对手。", "passive": true, "effects": [{"type": "thorns", "pct": 13}]},
+        {"name": "温润如玉", "text": "光泽流转，伤痛渐消。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 11}, {"type": "shield", "pct": 6}]},
+        {"name": "蚌壳闭合", "text": "缩进壳里，谁也打不开。", "cd": 3, "effects": [{"type": "shield", "pct": 23}, {"type": "buff", "stat": "def", "pct": 30, "turns": 2}]},
+        {"name": "时间的沉淀", "text": "岁月打磨出的珍贵力量。", "cd": 4, "effects": [{"type": "damage", "power": 1.5, "scale": "def"}]}
+      ]
+    },
+    "apple-of-eye-pig": {
+      "style": "团宠",
+      "stats": {"hp": 106, "atk": 19, "def": 10, "spd": 11, "crit": 6, "dodge": 9},
+      "skills": [
+        {"name": "撒娇一拱", "text": "拱一下，求抱抱。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "团宠光环", "text": "大家都护着你。", "passive": true, "effects": [{"type": "shield", "pct": 9}]},
+        {"name": "快把我捧在手心", "text": "被捧在手心，伤都好了。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 25}]},
+        {"name": "甜甜的笑容", "text": "对手的拳头软了下来。", "cd": 3, "effects": [{"type": "buff", "stat": "atk", "pct": -35, "turns": 2, "target": "enemy"}, {"type": "damage", "power": 0.95}]},
+        {"name": "偏爱", "text": "被偏爱的，都有恃无恐。", "cd": 4, "effects": [{"type": "damage", "power": 1.5, "sure": true}, {"type": "shield", "pct": 9}]}
+      ]
+    },
+    "spider-pig": {
+      "style": "陷阱",
+      "stats": {"hp": 91, "atk": 22, "def": 8, "spd": 13, "crit": 8, "dodge": 9},
+      "skills": [
+        {"name": "蛛丝弹射", "text": "嗖的一声。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "织网", "text": "错综复杂的网，对手寸步难行。", "cd": 3, "effects": [{"type": "damage", "power": 1.1}, {"type": "buff", "stat": "spd", "pct": -60, "turns": 3, "target": "enemy"}, {"type": "buff", "stat": "dodge", "pct": -15, "turns": 3, "target": "enemy"}]},
+        {"name": "八条腿", "text": "名字里带猪，但腿比猪多一倍。", "passive": true, "effects": [{"type": "buff", "stat": "spd", "pct": 11}, {"type": "buff", "stat": "dodge", "pct": 5}]},
+        {"name": "毒牙", "text": "注入一点毒液。", "cd": 3, "effects": [{"type": "damage", "power": 0.6}, {"type": "dot", "pct": 6, "turns": 3, "label": "蛛毒"}]},
+        {"name": "Bug 制造机", "text": "像系统里的 Bug 一样猝不及防。", "cd": 4, "effects": [{"type": "damage", "power": 1.35, "true": true}, {"type": "stun", "turns": 1, "label": "卡死", "chance": 35}]}
+      ]
+    },
+    "chocolate-pig": {
+      "style": "治疗",
+      "stats": {"hp": 112, "atk": 19, "def": 10, "spd": 10, "crit": 6, "dodge": 5},
+      "skills": [
+        {"name": "可可粉", "text": "扑了对手一脸。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "微苦保护色", "text": "外表带点苦，不好惹。", "passive": true, "effects": [{"type": "thorns", "pct": 11}, {"type": "buff", "stat": "def", "pct": 8}]},
+        {"name": "丝滑浓郁", "text": "甜到心里，伤口都化开了。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 20}]},
+        {"name": "融化", "text": "巧克力融化，黏住对手。", "cd": 3, "effects": [{"type": "damage", "power": 1.45}, {"type": "buff", "stat": "spd", "pct": -60, "turns": 2, "target": "enemy"}]},
+        {"name": "甜蜜能量", "text": "缓解压力的最佳良药，也是最强的一击。", "cd": 4, "effects": [{"type": "damage", "power": 2, "drain": 30}]}
+      ]
+    },
+    "protagonist-pig": {
+      "style": "主角",
+      "stats": {"hp": 97, "atk": 21, "def": 10, "spd": 11, "crit": 9, "dodge": 5},
+      "skills": [
+        {"name": "主角登场", "text": "聚光灯打下来。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "自带聚光灯", "text": "走到哪都是 C 位。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 9}, {"type": "buff", "stat": "crit", "pct": 5}]},
+        {"name": "剧情需要", "text": "关键时刻总能逢凶化吉。", "cd": 4, "when": "low_hp", "effects": [{"type": "heal", "pct": 26}, {"type": "cleanse"}]},
+        {"name": "C 位出击", "text": "全场目光聚焦于此。", "cd": 3, "effects": [{"type": "damage", "power": 1.3, "sure": true}]},
+        {"name": "主角光环", "text": "剧本里你永远不会输。", "passive": true, "effects": [{"type": "revive", "pct": 19}]}
+      ]
+    },
+    "jewelry-pig": {
+      "style": "珍宝",
+      "stats": {"hp": 102, "atk": 20, "def": 14, "spd": 9, "crit": 8, "dodge": 5},
+      "skills": [
+        {"name": "闪光", "text": "闪闪发光，晃得对手眼花。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "精心雕琢", "text": "无价之宝，坚硬无比。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 40}]},
+        {"name": "炫目光芒", "text": "光芒刺得对手睁不开眼。", "cd": 3, "effects": [{"type": "stun", "turns": 1, "label": "晃眼", "chance": 50}, {"type": "damage", "power": 0.95}]},
+        {"name": "被珍视", "text": "值得被捧在手心里珍视。", "cd": 3, "effects": [{"type": "shield", "pct": 21}]},
+        {"name": "稀世珍品", "text": "价值连城的一击。", "cd": 4, "effects": [{"type": "damage", "power": 2.35, "pierce": 40}]}
+      ]
+    },
+    "juliet-pig": {
+      "style": "浪漫",
+      "stats": {"hp": 98, "atk": 21, "def": 9, "spd": 11, "crit": 8, "dodge": 7},
+      "skills": [
+        {"name": "玫瑰花刺", "text": "浪漫也带刺。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "罗密欧在哪里", "text": "四处张望，躲开了攻击。", "cd": 3, "effects": [{"type": "evade", "count": 1}, {"type": "heal", "pct": 8}]},
+        {"name": "爱情理想主义", "text": "对美好的追求让你充满力量。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 4}, {"type": "regen", "pct": 1.5}]},
+        {"name": "阳台告白", "text": "深情一瞥，对手愣住了。", "cd": 3, "effects": [{"type": "stun", "turns": 1, "label": "心动", "chance": 45}, {"type": "damage", "power": 0.6}]},
+        {"name": "轰轰烈烈", "text": "一场轰轰烈烈的相遇。", "cd": 4, "effects": [{"type": "damage", "power": 2.55}, {"type": "recoil", "pct": 5}]}
+      ]
+    },
+    "streamer-pig": {
+      "style": "表演",
+      "stats": {"hp": 96, "atk": 21, "def": 9, "spd": 12, "crit": 9, "dodge": 6},
+      "skills": [
+        {"name": "整活", "text": "节目效果拉满。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "感谢榜一大哥", "text": "大白菜从天而降，回满元气。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 23}]},
+        {"name": "网感十足", "text": "无穷的活力。", "passive": true, "effects": [{"type": "buff", "stat": "spd", "pct": 45}, {"type": "buff", "stat": "atk", "pct": 6}]},
+        {"name": "夸张发疯", "text": "为了节目效果，豁出去了。", "cd": 3, "effects": [{"type": "damage", "power": 0.35, "power_max": 0.55, "hits": 3}]},
+        {"name": "全场打 call", "text": "观众齐声呐喊，力量倍增。", "cd": 4, "effects": [{"type": "buff", "stat": "atk", "pct": 30, "turns": 2}, {"type": "damage", "power": 1.45}]}
+      ]
+    },
+    "char-siu": {
+      "style": "坚韧",
+      "stats": {"hp": 111, "atk": 20, "def": 11, "spd": 9, "crit": 6, "dodge": 4},
+      "skills": [
+        {"name": "蜜汁一抹", "text": "甜而不腻。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "反复炙烤", "text": "火候的刁难，早就不计较了。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 9}, {"type": "thorns", "pct": 7}]},
+        {"name": "红润外壳", "text": "艰辛凝结成的外壳。", "cd": 3, "effects": [{"type": "shield", "pct": 20}]},
+        {"name": "灵魂慰藉", "text": "温柔地回馈世界，也回馈自己。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 29}, {"type": "cleanse"}]},
+        {"name": "黯然销魂", "text": "一口下去，对手黯然神伤。", "cd": 4, "effects": [{"type": "damage", "power": 1.8}, {"type": "buff", "stat": "atk", "pct": -25, "turns": 2, "target": "enemy"}]}
+      ]
+    },
+    "pork-floss": {
+      "style": "柔韧",
+      "stats": {"hp": 114, "atk": 18, "def": 9, "spd": 10, "crit": 5, "dodge": 12},
+      "skills": [
+        {"name": "肉松一撒", "text": "蓬松的一撒，糊对手一脸。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "蓬松细腻", "text": "打上来像打在棉花上。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 6}, {"type": "shield", "pct": 9}]},
+        {"name": "包容一切", "text": "无论什么伤害都能包容。", "cd": 3, "effects": [{"type": "shield", "pct": 18}, {"type": "cleanse"}]},
+        {"name": "满满治愈", "text": "搭配什么都治愈。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 39}]},
+        {"name": "千锤百炼", "text": "被揉碎过的力量，绵密而持久。", "cd": 4, "effects": [{"type": "damage", "power": 0.4, "hits": 5}]}
+      ]
+    },
+    "piggy-bank": {
+      "style": "积蓄",
+      "stats": {"hp": 113, "atk": 19, "def": 14, "spd": 8, "crit": 5, "dodge": 3},
+      "skills": [
+        {"name": "硬币弹", "text": "叮的一枚硬币。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "存钱", "text": "一点一点攒下希望。", "cd": 2, "effects": [{"type": "buff", "stat": "atk", "pct": 25, "turns": 4}, {"type": "shield", "pct": 11}]},
+        {"name": "陶瓷罐身", "text": "坚硬的罐子，装满梦想。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 15}]},
+        {"name": "坚持不懈", "text": "被压得喘不过气，也要撑下去。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 28}, {"type": "buff", "stat": "def", "pct": 35, "turns": 2}]},
+        {"name": "砸罐", "text": "梦想实现的时刻，攒下的一切倾泻而出。", "cd": 5, "effects": [{"type": "damage", "power": 0.5, "hits": 5}]}
+      ]
+    },
+    "suckling-pig": {
+      "style": "爆发",
+      "stats": {"hp": 86, "atk": 23, "def": 8, "spd": 12, "crit": 10, "dodge": 5},
+      "skills": [
+        {"name": "脆皮撞", "text": "皮脆，撞人也脆。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "超龄成熟", "text": "社会的毒打让你迅速成长。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 10}, {"type": "buff", "stat": "def", "pct": 10}]},
+        {"name": "诱人光环", "text": "对手被香味吸引，分了神。", "cd": 3, "effects": [{"type": "damage", "power": 1.05}, {"type": "buff", "stat": "dodge", "pct": -11, "turns": 3, "target": "enemy"}, {"type": "buff", "stat": "def", "pct": -25, "turns": 3, "target": "enemy"}]},
+        {"name": "镇住台面", "text": "重要场合的硬菜，气场全开。", "cd": 3, "effects": [{"type": "damage", "power": 1}, {"type": "stun", "turns": 1, "label": "被镇住", "chance": 25}]},
+        {"name": "年纪轻轻就熟透了", "text": "熟透的力量，一击定胜负。", "cd": 4, "effects": [{"type": "damage", "power": 2.55, "execute": 35}]}
+      ]
+    },
+    "early-class-pig": {
+      "style": "意志",
+      "stats": {"hp": 120, "atk": 19, "def": 10, "spd": 7, "crit": 5, "dodge": 4},
+      "skills": [
+        {"name": "迷糊一拳", "text": "灵魂没醒，拳头先到了。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "身先到了", "text": "表面看似准时。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 45}]},
+        {"name": "再睡五分钟", "text": "趴在桌上补个觉。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 33}, {"type": "stun", "turns": 1, "label": "补觉", "target": "self", "chance": 60}]},
+        {"name": "冰美式", "text": "一杯下去，精神了。", "cd": 3, "effects": [{"type": "damage", "power": 0.5}, {"type": "buff", "stat": "spd", "pct": 50, "turns": 3}, {"type": "buff", "stat": "atk", "pct": 45, "turns": 3}]},
+        {"name": "挺到下课", "text": "意志力惊人，越到最后越强。", "cd": 4, "effects": [{"type": "damage", "power": 2.25}]}
+      ]
+    },
+    "repeater-pig": {
+      "style": "模仿",
+      "stats": {"hp": 102, "atk": 21, "def": 10, "spd": 10, "crit": 6, "dodge": 5},
+      "skills": [
+        {"name": "+1", "text": "跟着打一下。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "高频存在感", "text": "以最节省脑力的方式维持存在感。", "passive": true, "effects": [{"type": "buff", "stat": "spd", "pct": 9}, {"type": "regen", "pct": 2}]},
+        {"name": "复读", "text": "对手用了什么，你就用什么。", "cd": 2, "effects": [{"type": "copy"}]},
+        {"name": "附和", "text": "嗯嗯对对，顺便躲开。", "cd": 3, "effects": [{"type": "evade", "count": 1}, {"type": "damage", "power": 0.35}]},
+        {"name": "+1+1+1", "text": "复读三连，一个比一个响。", "cd": 4, "effects": [{"type": "damage", "power": 0.6, "hits": 3}]}
+      ]
+    },
+    "everest-pig": {
+      "style": "巅峰",
+      "stats": {"hp": 113, "atk": 19, "def": 16, "spd": 6, "crit": 6, "dodge": 2},
+      "skills": [
+        {"name": "雪峰压顶", "text": "高山压下来。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "高处不胜寒", "text": "冷峻的气场让人不敢靠近。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": -10, "target": "enemy"}]},
+        {"name": "稀薄空气", "text": "对手喘不上气，越来越慢。", "cd": 3, "effects": [{"type": "buff", "stat": "spd", "pct": -60, "turns": 3, "target": "enemy"}, {"type": "dot", "pct": 6, "turns": 3, "label": "缺氧"}]},
+        {"name": "不可逾越", "text": "绝对巅峰，难以撼动。", "cd": 3, "effects": [{"type": "shield", "pct": 23}]},
+        {"name": "仰望并臣服", "text": "极致的震撼让对手跪下。", "cd": 5, "effects": [{"type": "damage", "power": 1.7}, {"type": "stun", "turns": 2, "label": "臣服", "chance": 35}]}
+      ]
+    },
+    "burger-pig": {
+      "style": "坦克",
+      "stats": {"hp": 118, "atk": 19, "def": 12, "spd": 7, "crit": 5, "dodge": 3},
+      "skills": [
+        {"name": "面包夹击", "text": "上下两片一起拍过来。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "扎实分量", "text": "顶级的安全感。", "passive": true, "effects": [{"type": "shield", "pct": 11}]},
+        {"name": "加片芝士", "text": "生活给我施压，我给自己加片芝士。", "cd": 3, "effects": [{"type": "heal", "pct": 25}, {"type": "buff", "stat": "def", "pct": 40, "turns": 3}]},
+        {"name": "层层伪装", "text": "生菜、番茄、酸黄瓜，一层层挡住伤害。", "cd": 4, "effects": [{"type": "shield", "pct": 27}]},
+        {"name": "双层巨无霸", "text": "全部分量压上去。", "cd": 4, "effects": [{"type": "damage", "power": 1.85, "scale": "hp"}]}
+      ]
+    },
+    "chef-pig": {
+      "style": "厨艺",
+      "stats": {"hp": 98, "atk": 21, "def": 10, "spd": 10, "crit": 10, "dodge": 4},
+      "skills": [
+        {"name": "精湛刀工", "text": "唰唰唰，切得整整齐齐。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "调味一绝", "text": "撒一把胡椒，对手直打喷嚏。", "cd": 3, "effects": [{"type": "damage", "power": 0.9}, {"type": "stun", "turns": 1, "label": "打喷嚏", "chance": 50}]},
+        {"name": "试吃", "text": "掌勺的福利。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 22}]},
+        {"name": "好吃就完了", "text": "至高信条，化解一切灵魂拷问。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 10}, {"type": "buff", "stat": "crit", "pct": 5}]},
+        {"name": "食材有点眼熟", "text": "看对手的眼神，像在看食材。", "cd": 4, "effects": [{"type": "damage", "power": 0.6, "hits": 4}, {"type": "buff", "stat": "def", "pct": -20, "turns": 2, "target": "enemy"}]}
+      ]
+    },
+    "coder-pig": {
+      "style": "技术",
+      "stats": {"hp": 95, "atk": 22, "def": 9, "spd": 11, "crit": 8, "dodge": 5},
+      "skills": [
+        {"name": "敲键盘", "text": "比嚼饲料还利索。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "全栈工程师", "text": "一猪撑起整个猪联网。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 8}, {"type": "buff", "stat": "spd", "pct": 8}]},
+        {"name": "又崩了", "text": "线上事故，对手也受到了波及。", "cd": 3, "effects": [{"type": "damage", "power": 0.8}, {"type": "stun", "turns": 1, "label": "宕机", "chance": 50}, {"type": "recoil", "pct": 5}]},
+        {"name": "热修复", "text": "紧急上线补丁。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 30}, {"type": "cleanse"}]},
+        {"name": "成功部署", "text": "拿头顶换来的最高勋章。", "cd": 4, "effects": [{"type": "damage", "power": 2, "sure": true}]}
+      ]
+    },
+    "error-404-pig": {
+      "style": "虚无",
+      "stats": {"hp": 90, "atk": 21, "def": 8, "spd": 12, "crit": 6, "dodge": 14},
+      "skills": [
+        {"name": "返回错误页", "text": "礼貌地报个错。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "薛定谔的猪", "text": "未被观测时，没猪确定你存在。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 8}]},
+        {"name": "页面不存在", "text": "对手这一击，打到了一个不存在的页面。", "cd": 3, "effects": [{"type": "evade", "count": 1}, {"type": "damage", "power": 0.45}]},
+        {"name": "疯狂刷新", "text": "对手忍不住疯狂刷新，原地打转。", "cd": 3, "effects": [{"type": "stun", "turns": 1, "label": "刷新中", "chance": 45}, {"type": "damage", "power": 0.75}]},
+        {"name": "不可达", "text": "高冷的不可达性，伤害也无从防御。", "cd": 4, "effects": [{"type": "damage", "power": 1.65, "true": true}]}
+      ]
+    },
+    "prison-break-pig": {
+      "style": "越狱",
+      "stats": {"hp": 94, "atk": 20, "def": 9, "spd": 13, "crit": 7, "dodge": 8},
+      "skills": [
+        {"name": "撬锁", "text": "熟练地撬开防御。", "effects": [{"type": "damage", "power": 1, "pierce": 20}]},
+        {"name": "循规蹈矩", "text": "表面老实，暗中积蓄力量。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 10}, {"type": "buff", "stat": "spd", "pct": 8}]},
+        {"name": "挖地道", "text": "钻进地道，躲开攻击。", "cd": 3, "effects": [{"type": "evade", "count": 1}, {"type": "damage", "power": 0.6}, {"type": "buff", "stat": "spd", "pct": 20, "turns": 2}]},
+        {"name": "华丽猪逃", "text": "策划已久的计划。", "cd": 4, "when": "hurt", "effects": [{"type": "cleanse"}, {"type": "heal", "pct": 23}]},
+        {"name": "不猪了", "text": "自由的泥坑再小，也比租来的猪圈香。", "cd": 4, "effects": [{"type": "damage", "power": 2.1, "pierce": 40}]}
+      ]
+    },
+    "little-red-pig": {
+      "style": "种草",
+      "stats": {"hp": 100, "atk": 20, "def": 9, "spd": 12, "crit": 8, "dodge": 7},
+      "skills": [
+        {"name": "精修九宫格", "text": "九张图砸过来。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "已种草", "text": "对手被种草，心思全飞了。", "cd": 3, "effects": [{"type": "damage", "power": 0.75}, {"type": "buff", "stat": "atk", "pct": -25, "turns": 2, "target": "enemy"}, {"type": "buff", "stat": "spd", "pct": -25, "turns": 2, "target": "enemy"}]},
+        {"name": "米其林滤镜", "text": "把自己也修得更强。", "passive": true, "effects": [{"type": "buff", "stat": "crit", "pct": 8}, {"type": "buff", "stat": "dodge", "pct": 4}]},
+        {"name": "冲动消费", "text": "对手钱包被掏空，失去了护盾和增益。", "cd": 3, "effects": [{"type": "dispel"}, {"type": "damage", "power": 1.15}]},
+        {"name": "带货顶猪", "text": "安利力惊人，一波带走。", "cd": 4, "effects": [{"type": "damage", "power": 0.6, "hits": 4, "sure": true}]}
+      ]
+    },
+    "pig-skin-milk": {
+      "style": "奇袭",
+      "stats": {"hp": 100, "atk": 21, "def": 9, "spd": 10, "crit": 8, "dodge": 8},
+      "skills": [
+        {"name": "嫩到发抖", "text": "抖着抖着就打过去了。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "人畜无害", "text": "看起来软软嫩嫩。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 6}, {"type": "shield", "pct": 4}]},
+        {"name": "猜不透的配方", "text": "对手完全摸不着头脑。", "cd": 3, "effects": [{"type": "damage", "power": 0.45, "power_max": 1.75}, {"type": "stun", "turns": 1, "label": "懵圈", "chance": 30}]},
+        {"name": "越品越上头", "text": "对手不知不觉放松了警惕。", "cd": 3, "effects": [{"type": "buff", "stat": "def", "pct": -60, "turns": 3, "target": "enemy"}, {"type": "heal", "pct": 27}]},
+        {"name": "丝滑征服", "text": "意想不到的丝滑口感，彻底征服。", "cd": 4, "effects": [{"type": "damage", "power": 1.8, "drain": 25}]}
+      ]
+    },
+    "homebody-pig": {
+      "style": "宅守",
+      "stats": {"hp": 123, "atk": 18, "def": 13, "spd": 6, "crit": 4, "dodge": 4},
+      "skills": [
+        {"name": "遥控器砸", "text": "懒得起身，扔个遥控器。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "和沙发融为一体", "text": "最舒适的防御姿势。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 15}, {"type": "regen", "pct": 2}]},
+        {"name": "精神性关机", "text": "外面打仗，里面打盹。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 24}, {"type": "stun", "turns": 1, "label": "关机", "target": "self", "chance": 55}]},
+        {"name": "舒适区", "text": "守住猪生最后的舒适区。", "cd": 3, "effects": [{"type": "shield", "pct": 18}, {"type": "thorns", "pct": 25, "turns": 2}]},
+        {"name": "四脚朝天", "text": "翻身那一下，整个沙发砸了过去。", "cd": 4, "effects": [{"type": "damage", "power": 1.65, "scale": "hp"}]}
+      ]
+    },
+    "lard-pig": {
+      "style": "飘逸",
+      "stats": {"hp": 100, "atk": 20, "def": 8, "spd": 11, "crit": 6, "dodge": 12},
+      "skills": [
+        {"name": "油光一闪", "text": "透亮的一击。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "滑不溜秋", "text": "浑身是油，抓都抓不住。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 8}]},
+        {"name": "热油泼洒", "text": "烫得对手跳脚。", "cd": 3, "effects": [{"type": "damage", "power": 0.4}, {"type": "dot", "pct": 6, "turns": 3, "label": "烫伤"}]},
+        {"name": "看开了", "text": "比起苦苦执着，不如无忧无虑。", "cd": 4, "effects": [{"type": "cleanse"}, {"type": "heal", "pct": 29}]},
+        {"name": "已升天", "text": "肉身炼化，灵魂飘然而去，又飘了回来。", "passive": true, "effects": [{"type": "revive", "pct": 38}]}
+      ]
+    },
+    "bandage-pig": {
+      "style": "硬撑",
+      "stats": {"hp": 100, "atk": 22, "def": 10, "spd": 9, "crit": 6, "dodge": 4},
+      "skills": [
+        {"name": "绷带抽打", "text": "解下一段绷带抽过去。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "我还行", "text": "极力维持着体面。", "passive": true, "effects": [{"type": "regen", "pct": 2.5}]},
+        {"name": "再缠一圈", "text": "又多缠了一圈绷带。", "cd": 3, "effects": [{"type": "shield", "pct": 11}, {"type": "heal", "pct": 9}]},
+        {"name": "快散架了", "text": "越是快散架，越是拼命。", "cd": 4, "when": "low_hp", "effects": [{"type": "damage", "power": 1.15}, {"type": "buff", "stat": "atk", "pct": 60, "turns": 3}]},
+        {"name": "绷不住了", "text": "情绪彻底崩溃，招招见血。", "cd": 4, "effects": [{"type": "damage", "power": 2.35, "execute": 40}]}
+      ]
+    },
+    "mini-pig": {
+      "style": "迷你",
+      "stats": {"hp": 85, "atk": 19, "def": 8, "spd": 15, "crit": 10, "dodge": 22},
+      "skills": [
+        {"name": "迷你冲撞", "text": "小小的身体，小小的一撞。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "特小号", "text": "小到几乎看不见。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 8}]},
+        {"name": "钻空子", "text": "从缝隙里钻过去偷袭。", "cd": 3, "effects": [{"type": "damage", "power": 1.1, "pierce": 60}]},
+        {"name": "排面得有", "text": "体积虽小，排面不能少。", "cd": 3, "effects": [{"type": "buff", "stat": "atk", "pct": 30, "turns": 3}, {"type": "shield", "pct": 13}]},
+        {"name": "猪圈以我命名", "text": "整个猪圈都以你命名，主场优势拉满。", "cd": 4, "effects": [{"type": "damage", "power": 0.6, "hits": 4}, {"type": "heal", "pct": 10}]}
+      ]
+    },
+    "oreo-pig": {
+      "style": "复制",
+      "stats": {"hp": 105, "atk": 20, "def": 11, "spd": 10, "crit": 6, "dodge": 5},
+      "skills": [
+        {"name": "饼干拍", "text": "黑色饼干拍过去。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "扭一扭", "text": "扭一扭，躲开了。", "cd": 3, "effects": [{"type": "evade", "count": 1}, {"type": "damage", "power": 0.35}, {"type": "buff", "stat": "spd", "pct": 15, "turns": 2}]},
+        {"name": "联名限定", "text": "包装精美，外壳坚硬。", "passive": true, "effects": [{"type": "shield", "pct": 8}]},
+        {"name": "舔一舔", "text": "猪味奶油，回点血。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 27}]},
+        {"name": "再来一块", "text": "批量生产，一块接一块。", "cd": 4, "effects": [{"type": "damage", "power": 0.45, "hits": 5}]}
+      ]
+    },
+    "world-ruler-pig": {
+      "style": "统治",
+      "stats": {"hp": 97, "atk": 22, "def": 9, "spd": 10, "crit": 7, "dodge": 6},
+      "skills": [
+        {"name": "奶瓶敲头", "text": "用奶瓶敲一下。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "都听我的", "text": "发号施令，对手不由自主地服从。", "cd": 3, "effects": [{"type": "damage", "power": 0.45}, {"type": "stun", "turns": 1, "label": "服从", "chance": 60}, {"type": "buff", "stat": "atk", "pct": 20, "turns": 2}]},
+        {"name": "坐在地球上", "text": "世界确实在你屁股底下。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 10}, {"type": "buff", "stat": "atk", "pct": 7}]},
+        {"name": "喝口奶", "text": "可爱的独裁者也要补充能量。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 29}]},
+        {"name": "世界围着我转", "text": "整个地球滚了过来。", "cd": 5, "effects": [{"type": "damage", "power": 2.1, "pierce": 30}, {"type": "buff", "stat": "spd", "pct": -20, "turns": 2, "target": "enemy"}]}
+      ]
+    },
+    "salmon-sushi-pig": {
+      "style": "跨界",
+      "stats": {"hp": 102, "atk": 20, "def": 10, "spd": 11, "crit": 7, "dodge": 7},
+      "skills": [
+        {"name": "鱼尾拍", "text": "猪身鱼纹，甩尾就拍。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "新鲜现切", "text": "刀光一闪。", "cd": 2, "effects": [{"type": "damage", "power": 1.2, "pierce": 30}]},
+        {"name": "醋饭底座", "text": "稳稳趴在醋饭上。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 7}, {"type": "regen", "pct": 2}]},
+        {"name": "芥末", "text": "一口芥末直冲天灵盖。", "cd": 3, "effects": [{"type": "stun", "turns": 1, "label": "冲鼻", "chance": 65}, {"type": "damage", "power": 0.65}]},
+        {"name": "酱油还是孜然", "text": "无从下筷的困惑感，让对手手足无措。", "cd": 4, "effects": [{"type": "damage", "power": 1.05, "power_max": 3.85}, {"type": "buff", "stat": "def", "pct": -35, "turns": 2, "target": "enemy"}]}
+      ]
+    },
+    "bamboo-pig": {
+      "style": "蓄力",
+      "stats": {"hp": 118, "atk": 18, "def": 14, "spd": 7, "crit": 5, "dodge": 3},
+      "skills": [
+        {"name": "笋尖戳", "text": "尖尖的笋头。", "effects": [{"type": "damage", "power": 1, "pierce": 20}]},
+        {"name": "层层外壳", "text": "一层又一层的硬壳。", "passive": true, "effects": [{"type": "shield", "pct": 13}, {"type": "buff", "stat": "def", "pct": 10}]},
+        {"name": "扎根积蓄", "text": "沉默地积蓄力量。", "cd": 3, "effects": [{"type": "buff", "stat": "atk", "pct": 25, "turns": 4}, {"type": "regen", "pct": 3.5, "turns": 3}]},
+        {"name": "雨后春笋", "text": "一下子冒出好多根。", "cd": 3, "effects": [{"type": "damage", "power": 0.5, "hits": 3, "pierce": 30}]},
+        {"name": "破土而出", "text": "时机成熟，谁也拦不住。", "cd": 5, "effects": [{"type": "damage", "power": 2.4, "pierce": 50}]}
+      ]
+    },
+    "curator-pig": {
+      "style": "品味",
+      "stats": {"hp": 101, "atk": 21, "def": 11, "spd": 10, "crit": 7, "dodge": 5},
+      "skills": [
+        {"name": "领结整理", "text": "整理领结的同时顺手一击。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "品味在线", "text": "有你在的地方，格调不一样。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 10}, {"type": "buff", "stat": "crit", "pct": 5}]},
+        {"name": "审核不通过", "text": "对手的增益不符合标准，驳回。", "cd": 3, "effects": [{"type": "dispel"}, {"type": "damage", "power": 1.1}]},
+        {"name": "围裙防护", "text": "专业围裙，滴水不漏。", "cd": 3, "effects": [{"type": "shield", "pct": 22}, {"type": "cleanse"}]},
+        {"name": "过于讲究", "text": "一丝不苟地挑出对手的每个破绽。", "cd": 4, "effects": [{"type": "damage", "power": 0.7, "hits": 3, "sure": true}, {"type": "buff", "stat": "def", "pct": -25, "turns": 2, "target": "enemy"}]}
+      ]
+    },
+    "upper-class-pig": {
+      "style": "优雅",
+      "stats": {"hp": 104, "atk": 20, "def": 11, "spd": 10, "crit": 8, "dodge": 6},
+      "skills": [
+        {"name": "刀叉礼仪", "text": "即使战斗，也要用刀叉。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "老钱气息", "text": "举手投蹄间散发着底气。", "passive": true, "effects": [{"type": "shield", "pct": 5}, {"type": "buff", "stat": "atk", "pct": 6}]},
+        {"name": "请叫我先生", "text": "气场压得对手抬不起头。", "cd": 3, "effects": [{"type": "buff", "stat": "atk", "pct": -25, "turns": 2, "target": "enemy"}, {"type": "damage", "power": 0.9}]},
+        {"name": "下午茶", "text": "优雅地喝口茶，从容回血。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 25}]},
+        {"name": "优雅掩盖本性", "text": "礼服下面，猪的本性一击爆发。", "cd": 4, "effects": [{"type": "damage", "power": 2.2, "pierce": 30}]}
+      ]
+    },
+    "stuck-pig": {
+      "style": "坚持",
+      "stats": {"hp": 121, "atk": 19, "def": 15, "spd": 4, "crit": 4, "dodge": 0},
+      "skills": [
+        {"name": "硬挤", "text": "使劲往前挤。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "进退两难", "text": "卡在门里，打也打不动。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 40}]},
+        {"name": "过不去了", "text": "卡住了，对手也过不去。", "cd": 3, "effects": [{"type": "buff", "stat": "spd", "pct": -50, "turns": 3, "target": "enemy"}, {"type": "shield", "pct": 18}]},
+        {"name": "不承认太胖", "text": "硬撑着不后退。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 25}, {"type": "buff", "stat": "def", "pct": 20, "turns": 2}]},
+        {"name": "下一扇门更宽", "text": "终于挤过去了，带着门框砸了出来。", "cd": 4, "effects": [{"type": "damage", "power": 1.9, "scale": "hp"}]}
+      ]
+    },
+    "alien-pig": {
+      "style": "异星",
+      "stats": {"hp": 93, "atk": 21, "def": 9, "spd": 12, "crit": 7, "dodge": 8},
+      "skills": [
+        {"name": "荧光射线", "text": "鼻子泛出不明蓝光。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "来自猪星", "text": "不属于这个猪圈的体质。", "passive": true, "effects": [{"type": "regen", "pct": 2}, {"type": "buff", "stat": "dodge", "pct": 4}]},
+        {"name": "自我怀疑光波", "text": "周围的猪都开始怀疑自己。", "cd": 3, "effects": [{"type": "damage", "power": 0.7}, {"type": "buff", "stat": "atk", "pct": -20, "turns": 3, "target": "enemy"}, {"type": "buff", "stat": "def", "pct": -20, "turns": 3, "target": "enemy"}]},
+        {"name": "绑架光束", "text": "把对手吸到半空。", "cd": 4, "effects": [{"type": "stun", "turns": 1, "label": "被绑架", "chance": 60}, {"type": "damage", "power": 0.85}]},
+        {"name": "不明飞行物", "text": "UFO 从天而降。", "cd": 4, "effects": [{"type": "damage", "power": 1.65, "true": true}]}
+      ]
+    },
+    "abstract-pig": {
+      "style": "抽象",
+      "stats": {"hp": 102, "atk": 20, "def": 10, "spd": 10, "crit": 8, "dodge": 8},
+      "skills": [
+        {"name": "低多边形", "text": "棱角分明地戳过去。", "effects": [{"type": "damage", "power": 1, "pierce": 15}]},
+        {"name": "极简主义", "text": "少即是多，减少受击面。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 6}, {"type": "buff", "stat": "def", "pct": 8}]},
+        {"name": "建模中", "text": "对手的画面卡住了。", "cd": 3, "effects": [{"type": "damage", "power": 0.7}, {"type": "stun", "turns": 1, "label": "加载中", "chance": 60}]},
+        {"name": "显存爆了", "text": "渲染出错，伤害随机。", "cd": 3, "effects": [{"type": "damage", "power": 0.35, "power_max": 2.6}]},
+        {"name": "面数不足", "text": "少了几个面，却多了几分锋利。", "cd": 4, "effects": [{"type": "damage", "power": 0.8, "hits": 3, "pierce": 50}]}
+      ]
+    },
+    "tiramisu-pig": {
+      "style": "层次",
+      "stats": {"hp": 103, "atk": 21, "def": 10, "spd": 10, "crit": 7, "dodge": 6},
+      "skills": [
+        {"name": "可可粉撒", "text": "顶上的可可粉飞扬。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "浓缩咖啡", "text": "苦涩的一层，提神醒脑。", "cd": 3, "effects": [{"type": "damage", "power": 0.7}, {"type": "buff", "stat": "spd", "pct": 35, "turns": 3}, {"type": "buff", "stat": "atk", "pct": 15, "turns": 3}]},
+        {"name": "绵密甜蜜", "text": "细腻的一层，治愈人心。", "cd": 3, "when": "hurt", "effects": [{"type": "heal", "pct": 24}]},
+        {"name": "苦甜交织", "text": "生活的滋味从来不单一。", "passive": true, "effects": [{"type": "thorns", "pct": 4}, {"type": "regen", "pct": 2}]},
+        {"name": "带我走", "text": "层层叠叠，意犹未尽。", "cd": 4, "effects": [{"type": "damage", "power": 0.6, "hits": 3}, {"type": "heal", "pct": 10}]}
+      ]
+    },
+    "computer-pig": {
+      "style": "运算",
+      "stats": {"hp": 110, "atk": 21, "def": 13, "spd": 5, "crit": 5, "dodge": 2},
+      "skills": [
+        {"name": "光标闪烁", "text": "一本正经地输出。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "开机半小时", "text": "启动很慢，但很结实。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 9}, {"type": "shield", "pct": 5}]},
+        {"name": "处理中", "text": "请稍候……进度条在跑。", "cd": 3, "effects": [{"type": "damage", "power": 0.55}, {"type": "buff", "stat": "atk", "pct": 55, "turns": 4}, {"type": "stun", "turns": 1, "label": "处理中", "target": "self", "chance": 25}]},
+        {"name": "CRT 辐射", "text": "老显示器的辐射。", "cd": 3, "effects": [{"type": "dot", "pct": 5, "turns": 3, "label": "辐射"}, {"type": "damage", "power": 0.55}]},
+        {"name": "进度条跑完", "text": "终于算完了，结果精准无误。", "cd": 4, "effects": [{"type": "damage", "power": 2.2, "sure": true, "pierce": 30}]}
+      ]
+    },
+    "clean-pig": {
+      "style": "洁净",
+      "stats": {"hp": 110, "atk": 19, "def": 11, "spd": 10, "crit": 5, "dodge": 7},
+      "skills": [
+        {"name": "泡泡弹", "text": "噗噗噗冒泡泡。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "出淤泥而不染", "text": "什么脏东西都沾不上身。", "passive": true, "effects": [{"type": "buff", "stat": "dodge", "pct": 5}, {"type": "regen", "pct": 1.5}]},
+        {"name": "每天洗澡", "text": "洗掉一切负面状态。", "cd": 3, "effects": [{"type": "cleanse"}, {"type": "heal", "pct": 23}]},
+        {"name": "小黄鸭", "text": "小黄鸭护驾。", "cd": 3, "effects": [{"type": "shield", "pct": 17}, {"type": "damage", "power": 0.45}]},
+        {"name": "洁癖爆发", "text": "看不惯对手脏兮兮的样子，全力清洗。", "cd": 4, "effects": [{"type": "dispel"}, {"type": "damage", "power": 1.75}]}
+      ]
+    },
+    "study-pig": {
+      "style": "学霸",
+      "stats": {"hp": 103, "atk": 21, "def": 10, "spd": 10, "crit": 8, "dodge": 6},
+      "skills": [
+        {"name": "书本拍", "text": "用《猪肉烹饪大全》拍过去。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "知识就是力量", "text": "越学越强。", "passive": true, "effects": [{"type": "buff", "stat": "atk", "pct": 8}, {"type": "buff", "stat": "crit", "pct": 5}]},
+        {"name": "划重点", "text": "找到对手的弱点。", "cd": 3, "effects": [{"type": "buff", "stat": "def", "pct": -25, "turns": 3, "target": "enemy"}, {"type": "damage", "power": 1.15}]},
+        {"name": "越学越慌", "text": "翻到第三章，紧张得发抖，却跑得更快了。", "cd": 3, "effects": [{"type": "damage", "power": 1.05}, {"type": "buff", "stat": "spd", "pct": 45, "turns": 3}, {"type": "buff", "stat": "dodge", "pct": 11, "turns": 3}]},
+        {"name": "知识改变命运", "text": "改变的方向不太对，但力量是真的。", "cd": 4, "effects": [{"type": "damage", "power": 2, "execute": 35}]}
+      ]
+    },
+    "antibacterial-pig": {
+      "style": "净化",
+      "stats": {"hp": 109, "atk": 20, "def": 11, "spd": 9, "crit": 5, "dodge": 6},
+      "skills": [
+        {"name": "泡沫喷射", "text": "满满的泡沫。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "99.9%", "text": "有效去除 99.9% 的不开心。", "cd": 3, "effects": [{"type": "cleanse"}, {"type": "heal", "pct": 26}]},
+        {"name": "泡泡包裹", "text": "被泡泡裹得满满当当。", "passive": true, "effects": [{"type": "shield", "pct": 20}]},
+        {"name": "抑菌配方", "text": "对手身上的增益被消毒了。", "cd": 3, "effects": [{"type": "dispel"}, {"type": "dot", "pct": 6, "turns": 3, "label": "消毒水"}]},
+        {"name": "剩下那 0.1%", "text": "没被清除的，大概是你自己的倔强。", "cd": 4, "effects": [{"type": "damage", "power": 1.7, "true": true}]}
+      ]
+    },
+    "pigskin-pig": {
+      "style": "韧性",
+      "stats": {"hp": 128, "atk": 18, "def": 12, "spd": 6, "crit": 4, "dodge": 4},
+      "skills": [
+        {"name": "扁扁一拍", "text": "只剩一层皮，拍起来啪啪响。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "撕不烂", "text": "猪皮的韧性出了名。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 12}, {"type": "thorns", "pct": 8}]},
+        {"name": "耗尽了", "text": "连翻身的力气都没有，干脆躺着回血。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 20}]},
+        {"name": "被压得再扁", "text": "压扁了也能弹回来。", "cd": 3, "effects": [{"type": "shield", "pct": 15}, {"type": "thorns", "pct": 24, "turns": 2}]},
+        {"name": "微弱的光环", "text": "头顶那圈光证明还在坚持。", "passive": true, "effects": [{"type": "revive", "pct": 22}]}
+      ]
+    },
+    "delivery-pig": {
+      "style": "易碎",
+      "stats": {"hp": 95, "atk": 21, "def": 9, "spd": 12, "crit": 8, "dodge": 6},
+      "skills": [
+        {"name": "纸箱砸", "text": "平平无奇的一个纸箱。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "此面朝上", "text": "被小心对待，伤害降低。", "passive": true, "effects": [{"type": "shield", "pct": 5}, {"type": "buff", "stat": "atk", "pct": -6, "target": "enemy"}]},
+        {"name": "暴力分拣", "text": "全程不保证完好无损。", "cd": 3, "effects": [{"type": "damage", "power": 0.55, "hits": 3}, {"type": "recoil", "pct": 4}]},
+        {"name": "次日达", "text": "加急配送，速度拉满。", "cd": 3, "effects": [{"type": "buff", "stat": "spd", "pct": 60, "turns": 3}, {"type": "damage", "power": 1.4}]},
+        {"name": "拆开真心", "text": "箱子打开，里面是一颗真心，和一记重拳。", "cd": 4, "effects": [{"type": "damage", "power": 1.9}, {"type": "heal", "pct": 14}]}
+      ]
+    },
+    "muscle-pig": {
+      "style": "力量",
+      "stats": {"hp": 92, "atk": 24, "def": 12, "spd": 8, "crit": 8, "dodge": 2},
+      "skills": [
+        {"name": "二头肌重拳", "text": "碾压级的二头肌。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "八块腹肌", "text": "猪也可以没有肥膘。", "passive": true, "effects": [{"type": "buff", "stat": "def", "pct": 60}]},
+        {"name": "第一百组深蹲", "text": "默默变强。", "cd": 3, "effects": [{"type": "buff", "stat": "atk", "pct": 35, "turns": 3}, {"type": "heal", "pct": 9}]},
+        {"name": "蛋白粉", "text": "没人知道从哪来的蛋白粉。", "cd": 4, "when": "hurt", "effects": [{"type": "heal", "pct": 31}]},
+        {"name": "练的", "text": "一拳下去，全靠练的。", "cd": 4, "effects": [{"type": "damage", "power": 1.8}, {"type": "stun", "turns": 1, "label": "被打懵", "chance": 25}]}
+      ]
+    },
+    "pigsleep": {
+      "style": "宕机",
+      "stats": {"hp": 94, "atk": 24, "def": 12, "spd": 6, "crit": 8, "dodge": 3},
+      "skills": [
+        {"name": "鲸尾一甩", "text": "鲸鱼的身子，猪的脑袋。", "effects": [{"type": "damage", "power": 1}]},
+        {"name": "服务器繁忙", "text": "请稍后再试。", "fail": {"chance": 35, "text": "服务器繁忙，请稍后再试"}, "cd": 2, "effects": [{"type": "damage", "power": 2}]},
+        {"name": "号称能回答一切", "text": "海量参数，知识渊博。", "passive": true, "effects": [{"type": "buff", "stat": "crit", "pct": 6}, {"type": "shield", "pct": 6}]},
+        {"name": "打呼", "text": "90% 的时间都在宕机，顺便回血。", "cd": 4, "effects": [{"type": "heal", "pct": 39}, {"type": "stun", "turns": 1, "label": "宕机", "target": "self", "chance": 35}]},
+        {"name": "深度思考", "text": "思考了很久很久，答案精准无比。", "cd": 5, "effects": [{"type": "damage", "power": 1.9, "true": true}]}
+      ]
+    }
+  }
+}
