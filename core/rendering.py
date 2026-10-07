@@ -56,7 +56,14 @@ class Card:
 
 
 def render_collection(
-    root: Path, name: str, progress: dict, entries: list[dict], page: int, pages: int, atlas: bool
+    root: Path,
+    name: str,
+    progress: dict,
+    entries: list[dict],
+    page: int,
+    pages: int,
+    atlas: bool,
+    level_cap: int = 20,
 ) -> Card:
     """Render the approved cream card; atlas tiles deliberately contain no names."""
     columns = 8 if atlas else 4
@@ -151,7 +158,9 @@ def render_collection(
             image.paste(art, (int(cx - art.width / 2), int(cy - art.height / 2)), art)
         if not atlas:
             text(pig["name"], cx, y + 163, 23, bold=True, width=198, center=True)
-            count = f"× {pig['count']}" + (" · 已下架" if not pig["enabled"] else "")
+            count = f"× {pig['count']} · Lv{min(pig['count'], level_cap)}" + (
+                " · 已下架" if not pig["enabled"] else ""
+            )
             text(count, cx, y + 197, 16, ACCENT, width=200, center=True)
     if not entries:
         text(
@@ -167,7 +176,7 @@ def render_collection(
     if atlas:
         text("彩色 · 已解锁    问号 · 待发现", 58, footer + 19, 17, SUB)
     else:
-        text("历史收藏会保留", 58, footer + 19, 17, SUB)
+        text("同种猪越多等级越高 · 发送「小猪玩法」和群友斗猪、换猪", 58, footer + 19, 17, ACCENT)
     text(f"{page:02d} / {pages:02d}", 888, footer + 16, 21, bold=True)
     return finish(image)
 
@@ -217,7 +226,13 @@ class Canvas:
 
 
 def render_today(
-    root: Path, name: str, result: dict, progress: dict, state: str, protection: str = ""
+    root: Path,
+    name: str,
+    result: dict,
+    progress: dict,
+    state: str,
+    protection: str = "",
+    level: int = 1,
 ) -> Card:
     pig = result["pig"]
     canvas = Canvas(root, WIDTH, 1)
@@ -246,7 +261,7 @@ def render_today(
         canvas.text(line, 94, description_y + 26 + i * 43, 28)
     y = panel_bottom + 35
     for x, label, value in (
-        (68, "本猪累计", f"{result['count']} 次"),
+        (68, f"本猪拥有 · Lv{level}", f"{result['count']} 只"),
         (412, "累计收获", f"{progress['total']} 只"),
         (735, "已解锁", f"{progress['unlocked']} / {progress['active_total']}"),
     ):
@@ -259,7 +274,10 @@ def render_today(
         canvas.draw.rounded_rectangle(
             (68, y, 68 + max(10, int(944 * min(ratio, 1))), y + 10), radius=5, fill=ACCENT
         )
-    canvas.text(protection or "每天一只小猪，慢慢填满收藏。", 68, y + 34, 19, SUB)
+    hint = "发送「小猪玩法」和群友斗猪、换猪"
+    canvas.text(
+        f"{protection} · {hint}" if protection else hint, 68, y + 34, 19, ACCENT, width=944
+    )
     return finish(canvas.image)
 
 
@@ -313,7 +331,13 @@ def render_ranking(root: Path, boards: dict, avatars: dict[str, bytes]) -> Card:
             canvas.text(
                 value, max(x + 521, x + 662 - text_width), y + 23, size, color, True, width=144
             )
-    canvas.text("每天领一只小猪，把日子攒成一座猪圈。", 58, canvas.image.height - 46, 18, SUB)
+    canvas.text(
+        "每天领一只小猪，把日子攒成一座猪圈 · 发送「小猪玩法」和群友斗猪、换猪",
+        58,
+        canvas.image.height - 46,
+        18,
+        SUB,
+    )
     return finish(canvas.image)
 
 
