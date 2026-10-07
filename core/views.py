@@ -134,7 +134,7 @@ async def collection_message(
     card = await asyncio.to_thread(
         render_collection,
         root,
-        display_name(user),
+        f"{display_name(user)} · 玩家编号 #{user['id']}",
         progress,
         entries,
         page,
@@ -208,6 +208,8 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
         "【斗猪】",
         [
             f"斗猪 @群友 {example} —— 用你的猪发起挑战",
+            f"@ 识别不到时用玩家编号代替：斗猪 #编号 {example}（你的编号是 #{user['id']}，"
+            "编号显示在「我的猪圈」上）",
             "对方发送「接受斗猪 他的猪」立即开打，或「拒绝斗猪」",
             "回合制自动对战，赢家把输家出战的那只猪收进猪圈，输家这只猪降 1 级",
             f"每天最多 {settings.duel_daily_limit} 场",
@@ -377,7 +379,7 @@ def _rate(wins: int, games: int) -> str:
 def duel_ranking_message(settings: Settings, user: dict, board: dict) -> Message:
     need = board["min_games"]
     lines = [
-        f"{row['rank']:02d}. {display_name(row)}  胜 {row['wins']} / 负 {row['losses']}  "
+        f"{row['rank']:02d}. {display_name(row)} #{row['id']}  胜 {row['wins']} / 负 {row['losses']}  "
         f"胜率 {_rate(row['wins'], row['games'])}"
         for row in board["top"]
     ]
