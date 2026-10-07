@@ -51,7 +51,13 @@ def keyboard(
 
     rows = [
         {"buttons": [button("今日小猪", "今日小猪"), button("小猪图鉴", "小猪图鉴")]},
-        {"buttons": [button("小猪排行", "小猪排行"), button("我的猪圈", "我的猪圈")]},
+        {
+            "buttons": [
+                button("小猪排行", "小猪排行"),
+                button("我的猪圈", "我的猪圈"),
+                button("小猪商店", "小猪商店"),
+            ]
+        },
         {
             "buttons": [
                 button("斗猪玩法", "小猪玩法"),
@@ -229,6 +235,11 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
             "斗猪记录 [页码] —— 自己的历史对战",
             "斗猪回放 编号 —— 重看某场的完整战报",
         ],
+        "【商店】",
+        [
+            "小猪商店 —— 每天 0 点上架 5 只小猪，每只限量 1 个，先到先得",
+            f"商店交换 编号 {example} —— 用自己的 1 只小猪换走它",
+        ],
     ]
     if favorite:
         blocks.append(f"你的「{example}」有 {favorite['count']} 只，是你现在最强的出战选择。")
@@ -369,6 +380,50 @@ def trade_message(settings: Settings, result: dict) -> Message:
             ],
         ],
         mention=request["from"],
+    )
+
+
+def shop_message(settings: Settings, user: dict, shop: dict) -> Message:
+    lines = []
+    for item in shop["items"]:
+        name = item["pig"]["name"]
+        if item["buyer"]:
+            lines.append(f"{item['slot']}. 「{name}」已被 {display_name(item['buyer'])} 换走")
+            continue
+        owned = item["owned"]
+        state = (
+            f"你有 {owned} 只，换到后 Lv{level_for(owned + 1, settings.battle_level_cap)}"
+            if owned
+            else "你还没有，可解锁新图鉴"
+        )
+        lines.append(f"{item['slot']}. 「{name}」（{state}）")
+    left = sum(1 for item in shop["items"] if not item["buyer"])
+    blocks = [
+        f"{shop['day']} · 剩余 {left}/{len(shop['items'])} 件 · 每件限量 1 只，先到先得",
+        lines,
+        "发送「商店交换 编号 你的小猪」用自己的 1 只小猪换走它，例如：商店交换 1 猪人",
+        "每天 0 点（东八区）刷新",
+    ]
+    return text_message(
+        settings,
+        "今日小猪商店",
+        blocks,
+        buttons=[("商店交换", "商店交换 "), ("我的猪圈", "我的猪圈")],
+    )
+
+
+def shop_exchange_message(settings: Settings, user: dict, result: dict) -> Message:
+    paid, got = result["paid"], result["got"]
+    return text_message(
+        settings,
+        "商店交换成功！",
+        [
+            f"{display_name(user)} 用「{paid['pig']['name']}」换到了 {result['slot']} 号"
+            f"「{got['pig']['name']}」",
+            [_level_text(paid), _level_text(got)],
+            f"商店今天还剩 {result['left']} 件",
+        ],
+        mention=user,
     )
 
 

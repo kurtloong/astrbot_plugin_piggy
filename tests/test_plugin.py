@@ -375,6 +375,40 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         request_buttons = sent.await_args.args[1]["keyboard"]["content"]["rows"][0]["buttons"]
         self.assertTrue(all(b["action"]["permission"] == {"type": 2} for b in request_buttons))
 
+    async def test_daily_shop_commands(self):
+        await self.plugin.initialize()
+        db = self.plugin.db
+        user = await db.identify("app", "member", "group-a", "")
+        sent = self.plugin.transport.request
+
+        def last():
+            return sent.await_args.args[1]["content"]
+
+        await self.plugin.shop(OfficialEvent("s1", text="小猪商店"))
+        self.assertIn("今日小猪商店", last())
+        self.assertIn("剩余 5/5 件", last())
+        shop = await db.shop("app", "group-a", user["id"])
+        stocked = {item["pig_id"] for item in shop["items"]}
+        pay = await db.find_pig(
+            next(
+                p
+                for p in ("pig", "black-pig", "wild-boar", "human", "pig-human", "tank_pig")
+                if p not in stocked
+            )
+        )
+        await db.run(
+            lambda c: c.execute(
+                "INSERT INTO collections VALUES(?,?,2,0,0)", (user["id"], pay["id"])
+            )
+        )
+        await self.plugin.shop_exchange(OfficialEvent("s2", text=f"商店交换 1号 {pay['name']}"))
+        self.assertIn("商店交换成功", last())
+        self.assertIn(f"「{pay['name']}」Lv2 → Lv1", last())
+        await self.plugin.shop_exchange(OfficialEvent("s3", text=f"商店交换 1 {pay['name']}"))
+        self.assertIn("已经被换走了", last())
+        await self.plugin.shop_exchange(OfficialEvent("s4", text="商店交换 猪"))
+        self.assertIn("用法：商店交换 编号 你的小猪", last())
+
     async def test_upload_failure_keeps_draw_and_next_command_displays_same_pig(self):
         from astrbot_plugin_piggy.core.storage import UploadError
 

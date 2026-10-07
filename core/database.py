@@ -13,6 +13,7 @@ from .battle import SKILL_SLOTS, entry_for, fighter, level_for, simulate
 from .config import PiggyError
 
 EAST_ASIA = timezone(timedelta(hours=8))
+SHOP_SIZE = 5
 REQUEST_LABELS = {"duel": "斗猪", "trade": "交换"}
 
 
@@ -27,23 +28,31 @@ def _owned(conn, user_id: int, pig_id: str) -> int:
     return row[0] if row else 0
 
 
-def _transfer(conn, source: int, target: int, pig_id: str, now: float):
-    count = _owned(conn, source, pig_id)
+def _take(conn, user_id: int, pig_id: str):
+    count = _owned(conn, user_id, pig_id)
     if count < 1:
         raise PiggyError("小猪已经不在原主人的猪圈里了。")
     if count == 1:
-        conn.execute("DELETE FROM collections WHERE user_id=? AND pig_id=?", (source, pig_id))
+        conn.execute("DELETE FROM collections WHERE user_id=? AND pig_id=?", (user_id, pig_id))
     else:
         conn.execute(
-            "UPDATE collections SET count=count-1 WHERE user_id=? AND pig_id=?", (source, pig_id)
+            "UPDATE collections SET count=count-1 WHERE user_id=? AND pig_id=?", (user_id, pig_id)
         )
+
+
+def _give(conn, user_id: int, pig_id: str, now: float):
     conn.execute(
         """
         INSERT INTO collections VALUES(?,?,1,?,?) ON CONFLICT(user_id,pig_id)
         DO UPDATE SET count=count+1,last_at=excluded.last_at
         """,
-        (target, pig_id, now, now),
+        (user_id, pig_id, now, now),
     )
+
+
+def _transfer(conn, source: int, target: int, pig_id: str, now: float):
+    _take(conn, source, pig_id)
+    _give(conn, target, pig_id, now)
 
 
 def _level_change(pig: dict, before: int, after: int, cap: int) -> dict:
@@ -150,6 +159,13 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS battles_a ON battle_records(a_user, day);
                 CREATE INDEX IF NOT EXISTS battles_b ON battle_records(b_user, day);
+                CREATE TABLE IF NOT EXISTS shop_items (
+                    app_id TEXT NOT NULL, group_id TEXT NOT NULL, day TEXT NOT NULL,
+                    slot INTEGER NOT NULL, pig_id TEXT NOT NULL REFERENCES pigs(id),
+                    sold_to INTEGER REFERENCES users(id), paid_pig TEXT REFERENCES pigs(id),
+                    sold_at REAL,
+                    PRIMARY KEY(app_id, group_id, day, slot)
+                );
             """)
             columns = {row[1] for row in conn.execute("PRAGMA table_info(pigs)")}
             if "battle" not in columns:
@@ -758,6 +774,105 @@ class Database:
             }
 
         return await self.run(read)
+
+    @staticmethod
+    def _shop_items(conn, app_id: str, group_id: str, day: str) -> list[dict]:
+        """Stock today's shelf on first visit; later visits see the same five pigs."""
+        rows = conn.execute(
+            "SELECT * FROM shop_items WHERE app_id=? AND group_id=? AND day=? ORDER BY slot",
+            (app_id, group_id, day),
+        ).fetchall()
+        if not rows:
+            pool = [r[0] for r in conn.execute("SELECT id FROM pigs WHERE enabled=1")]
+            if not pool:
+                raise PiggyError("猪库没有启用的小猪，商店暂时无法上货。")
+            picks = secrets.SystemRandom().sample(pool, min(SHOP_SIZE, len(pool)))
+            conn.executemany(
+                "INSERT OR IGNORE INTO shop_items(app_id,group_id,day,slot,pig_id) "
+                "VALUES(?,?,?,?,?)",
+                [(app_id, group_id, day, slot, pig) for slot, pig in enumerate(picks, 1)],
+            )
+            rows = conn.execute(
+                "SELECT * FROM shop_items WHERE app_id=? AND group_id=? AND day=? ORDER BY slot",
+                (app_id, group_id, day),
+            ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            pig = dict(conn.execute("SELECT * FROM pigs WHERE id=?", (row["pig_id"],)).fetchone())
+            pig.pop("battle", None)
+            item["pig"] = pig
+            item["buyer"] = (
+                dict(conn.execute("SELECT * FROM users WHERE id=?", (row["sold_to"],)).fetchone())
+                if row["sold_to"]
+                else None
+            )
+            items.append(item)
+        return items
+
+    async def shop(
+        self, app_id: str, group_id: str, user_id: int, now: datetime | None = None
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        day = now.astimezone(EAST_ASIA).date().isoformat()
+
+        def read(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            items = self._shop_items(conn, app_id, group_id, day)
+            for item in items:
+                item["owned"] = _owned(conn, user_id, item["pig_id"])
+            return {"day": day, "items": items}
+
+        return await self.run(read)
+
+    async def shop_exchange(
+        self,
+        app_id: str,
+        group_id: str,
+        user_id: int,
+        slot: int,
+        pay_pig: str,
+        *,
+        level_cap: int = 20,
+        now: datetime | None = None,
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        day = now.astimezone(EAST_ASIA).date().isoformat()
+        stamp = now.timestamp()
+
+        def exchange(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            items = self._shop_items(conn, app_id, group_id, day)
+            item = next((i for i in items if i["slot"] == slot), None)
+            if not item:
+                raise PiggyError(f"商店今天只有 1–{len(items)} 号小猪。")
+            if item["sold_to"]:
+                raise PiggyError(f"{slot} 号「{item['pig']['name']}」已经被换走了，看看别的吧。")
+            if pay_pig == item["pig_id"]:
+                raise PiggyError("不能用同一种小猪来换哦。")
+            paid = dict(conn.execute("SELECT * FROM pigs WHERE id=?", (pay_pig,)).fetchone())
+            pay_before = _owned(conn, user_id, pay_pig)
+            if pay_before < 1:
+                raise PiggyError(f"你的猪圈里没有「{paid['name']}」。")
+            got = dict(conn.execute("SELECT * FROM pigs WHERE id=?", (item["pig_id"],)).fetchone())
+            got_before = _owned(conn, user_id, item["pig_id"])
+            cursor = conn.execute(
+                "UPDATE shop_items SET sold_to=?,paid_pig=?,sold_at=? "
+                "WHERE app_id=? AND group_id=? AND day=? AND slot=? AND sold_to IS NULL",
+                (user_id, pay_pig, stamp, app_id, group_id, day, slot),
+            )
+            if cursor.rowcount != 1:
+                raise PiggyError(f"{slot} 号小猪刚刚被别人换走了。")
+            _take(conn, user_id, pay_pig)
+            _give(conn, user_id, item["pig_id"], stamp)
+            return {
+                "slot": slot,
+                "paid": _level_change(paid, pay_before, pay_before - 1, level_cap),
+                "got": _level_change(got, got_before, got_before + 1, level_cap),
+                "left": sum(1 for i in items if not i["sold_to"]) - 1,
+            }
+
+        return await self.run(exchange)
 
     async def duel_rankings(
         self, app_id: str, group_id: str, user_id: int, min_games: int = 3, limit: int = 10

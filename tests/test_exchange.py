@@ -18,6 +18,8 @@ from core.views import (
     duel_ranking_message,
     duel_replay_message,
     request_message,
+    shop_exchange_message,
+    shop_message,
     stats_message,
     trade_message,
 )
@@ -298,6 +300,114 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<qqbot-at-user id="bob" />', message.text)
         buttons = message.keyboard["content"]["rows"][0]["buttons"]
         self.assertTrue(all(b["action"]["permission"] == {"type": 2} for b in buttons))
+
+
+class ShopTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.db = Database(self.root)
+        await self.db.initialize()
+        images = self.root / "catalog" / "images"
+        images.mkdir(parents=True)
+        definitions = []
+        for index in range(8):
+            pig_id = f"p{index}"
+            Image.new("RGB", (8, 8), (index * 20, 90, 120)).save(images / f"{pig_id}.png")
+            definitions.append(
+                {"id": pig_id, "name": f"猪{index}", "description": "描述", "analysis": "性格"}
+            )
+        (self.root / "catalog" / "pigs.json").write_text(json.dumps(definitions), "utf-8")
+        await self.db.catalog(read_catalog(self.root))
+        self.alice = await self.db.identify("app", "alice", "group", "阿离")
+        self.bob = await self.db.identify("app", "bob", "group", "阿波")
+
+    async def asyncTearDown(self):
+        self.temp.cleanup()
+
+    async def own(self, user, pig_id, count):
+        await self.db.run(
+            lambda c: c.execute(
+                "INSERT OR REPLACE INTO collections VALUES(?,?,?,0,0)", (user["id"], pig_id, count)
+            )
+        )
+
+    async def count(self, user, pig_id):
+        return await self.db.pig_count(user["id"], pig_id)
+
+    def payment_for(self, shop, slot):
+        """A pig that is not on sale in this slot, to pay with."""
+        stocked = {item["pig_id"] for item in shop["items"]}
+        return next(f"p{i}" for i in range(8) if f"p{i}" not in stocked)
+
+    async def test_shelf_is_stable_within_a_day_and_refreshes_at_midnight(self):
+        before_midnight = datetime(2026, 10, 7, 15, 59, tzinfo=timezone.utc)
+        first = await self.db.shop("app", "group", self.alice["id"], now=NOW)
+        again = await self.db.shop("app", "group", self.bob["id"], now=before_midnight)
+        pigs = [item["pig_id"] for item in first["items"]]
+        self.assertEqual(len(pigs), 5)
+        self.assertEqual(len(set(pigs)), 5)
+        self.assertEqual(pigs, [item["pig_id"] for item in again["items"]])
+        self.assertEqual(first["day"], "2026-10-07")
+        tomorrow = await self.db.shop(
+            "app", "group", self.alice["id"], now=before_midnight + timedelta(minutes=1)
+        )
+        self.assertEqual(tomorrow["day"], "2026-10-08")
+        other_group = await self.db.shop("app", "elsewhere", self.alice["id"], now=NOW)
+        self.assertEqual(len(other_group["items"]), 5)
+
+    async def test_exchange_takes_one_payment_and_sells_each_slot_once(self):
+        shop = await self.db.shop("app", "group", self.alice["id"], now=NOW)
+        item = shop["items"][0]
+        pay = self.payment_for(shop, 1)
+        await self.own(self.alice, pay, 2)
+        await self.own(self.bob, pay, 1)
+        result = await self.db.shop_exchange("app", "group", self.alice["id"], 1, pay, now=NOW)
+        self.assertEqual(await self.count(self.alice, pay), 1)
+        self.assertEqual(await self.count(self.alice, item["pig_id"]), 1)
+        self.assertEqual((result["paid"]["before"], result["paid"]["after"]), (2, 1))
+        self.assertEqual(result["got"]["after"], 1)
+        self.assertEqual(result["left"], 4)
+        text = shop_exchange_message(Settings(), self.alice, result).text
+        self.assertIn(f"换到了 1 号「{item['pig']['name']}」", text)
+        with self.assertRaises(PiggyError):
+            await self.db.shop_exchange("app", "group", self.bob["id"], 1, pay, now=NOW)
+        self.assertEqual(await self.count(self.bob, pay), 1)
+        listing = shop_message(
+            Settings(), self.bob, await self.db.shop("app", "group", self.bob["id"], now=NOW)
+        ).text
+        self.assertIn("已被 阿离 换走", listing)
+        self.assertIn("剩余 4/5 件", listing)
+
+    async def test_exchange_rejects_missing_payment_same_species_and_bad_slot(self):
+        shop = await self.db.shop("app", "group", self.alice["id"], now=NOW)
+        stocked = shop["items"][1]["pig_id"]
+        pay = self.payment_for(shop, 2)
+        await self.own(self.alice, stocked, 3)
+        for slot, payment in ((2, stocked), (2, pay), (9, stocked)):
+            with self.assertRaises(PiggyError):
+                await self.db.shop_exchange(
+                    "app", "group", self.alice["id"], slot, payment, now=NOW
+                )
+        self.assertEqual(await self.count(self.alice, stocked), 3)
+
+    async def test_concurrent_buyers_only_one_gets_the_pig(self):
+        shop = await self.db.shop("app", "group", self.alice["id"], now=NOW)
+        pay = self.payment_for(shop, 3)
+        buyers = [await self.db.identify("app", f"buyer{i}", "group", "") for i in range(6)]
+        for buyer in buyers:
+            await self.own(buyer, pay, 1)
+        results = await asyncio.gather(
+            *(
+                Database(self.root).shop_exchange("app", "group", b["id"], 3, pay, now=NOW)
+                for b in buyers
+            ),
+            return_exceptions=True,
+        )
+        self.assertEqual(sum(isinstance(r, dict) for r in results), 1)
+        self.assertTrue(all(isinstance(r, (dict, PiggyError)) for r in results))
+        remaining = [await self.count(b, pay) for b in buyers]
+        self.assertEqual(sorted(remaining), [0, 1, 1, 1, 1, 1])
 
 
 class MigrationTests(unittest.IsolatedAsyncioTestCase):
