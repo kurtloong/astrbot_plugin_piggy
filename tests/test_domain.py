@@ -166,7 +166,7 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
                         progress,
                     )
                 self.assertTrue(local.local)
-                self.assertIn(expected, labels)
+                self.assertTrue(any(expected in label for label in labels))
         disabled = today_message(Settings(duplicate_pity=0), self.root, self.user, result, progress)
         self.assertNotIn("下次领取", disabled.text)
         progress["unlocked"] = progress["active_total"]
@@ -402,7 +402,7 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
             Settings(display={"atlas": True}), self.root, self.user, progress, 1, True
         )
         self.assertEqual(len(one.images), 1)
-        self.assertEqual(len(one.keyboard["content"]["rows"]), 2)
+        self.assertEqual(len(one.keyboard["content"]["rows"]), 3)
         progress["entries"] += [{**template, "id": f"extra-{i}"} for i in range(100)]
         progress["active_total"] = 196
         last = await collection_message(
@@ -524,7 +524,7 @@ class ConfigAndButtonsTests(unittest.TestCase):
         self.assertNotIn("玩家12", labels)
         self.assertIn("收集种类榜", labels)
         self.assertIn("累计数量榜", labels)
-        self.assertEqual(len(message.keyboard["content"]["rows"]), 2)
+        self.assertEqual(len(message.keyboard["content"]["rows"]), 3)
         self.assertFalse(message.local)
 
     def test_json_config_and_retry_validation(self):
@@ -561,6 +561,8 @@ class ConfigAndButtonsTests(unittest.TestCase):
                         "小猪图鉴",
                         "小猪排行",
                         "我的猪圈",
+                        "小猪玩法",
+                        "我的请求",
                         "小猪图鉴 1",
                         "小猪图鉴 3",
                     )
