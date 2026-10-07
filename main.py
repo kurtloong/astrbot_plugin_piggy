@@ -34,6 +34,8 @@ from .core.views import (
     ranking_message,
     request_message,
     requests_message,
+    shop_exchange_message,
+    shop_message,
     stats_message,
     today_message,
     trade_message,
@@ -60,6 +62,8 @@ BATTLE_COMMANDS = {
     "duel_ranking",
     "duel_history",
     "duel_replay",
+    "shop",
+    "shop_exchange",
 }
 USAGE = {
     "duel": "用法：斗猪 @对方 你的小猪",
@@ -162,7 +166,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.2.2")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.3.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -462,6 +466,22 @@ class PiggyPlugin(Star):
             )
             level = level_for(request["give_count"], settings.battle_level_cap)
             return request_message(settings, request, level)
+        if command == "shop":
+            return shop_message(settings, user, await self.db.shop(app_id, group, user["id"]))
+        if command == "shop_exchange":
+            slot = words[0].strip("#＃号") if words else ""
+            if not slot.isdigit() or len(words) < 2:
+                raise PiggyError("用法：商店交换 编号 你的小猪，例如：商店交换 1 猪人")
+            pay = await self.db.find_pig(" ".join(words[1:]))
+            result = await self.db.shop_exchange(
+                app_id,
+                group,
+                user["id"],
+                int(slot),
+                pay["id"],
+                level_cap=settings.battle_level_cap,
+            )
+            return shop_exchange_message(settings, user, result)
         if command == "duel_ranking":
             board = await self.db.duel_rankings(app_id, group, user["id"])
             return duel_ranking_message(settings, user, board)
@@ -548,6 +568,16 @@ class PiggyPlugin(Star):
     async def guide(self, event: AstrMessageEvent):
         """查看等级、斗猪和交换的玩法说明。"""
         await self._handle(event, "guide")
+
+    @filter.command("小猪商店")
+    async def shop(self, event: AstrMessageEvent):
+        """查看今日小猪商店：每天 0 点刷新 5 只，每只限量 1 个。"""
+        await self._handle(event, "shop")
+
+    @filter.command("商店交换")
+    async def shop_exchange(self, event: AstrMessageEvent):
+        """用自己的 1 只小猪换商店里的小猪。用法：商店交换 编号 你的小猪"""
+        await self._handle(event, "shop_exchange", command_words(event, ("商店交换",)))
 
     @filter.command("斗猪排行")
     async def duel_ranking(self, event: AstrMessageEvent):
