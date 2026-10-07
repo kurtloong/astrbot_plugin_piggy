@@ -12,7 +12,15 @@ from PIL import Image
 from core.catalog import read_catalog
 from core.config import PiggyError, Settings
 from core.database import Database
-from core.views import battle_message, request_message, stats_message, trade_message
+from core.views import (
+    battle_message,
+    duel_history_message,
+    duel_ranking_message,
+    duel_replay_message,
+    request_message,
+    stats_message,
+    trade_message,
+)
 
 NOW = datetime(2026, 10, 7, 4, 0, tzinfo=timezone.utc)
 
@@ -204,6 +212,78 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(PiggyError):
             await self.db.find_group_player("app", "group", "阿波")
 
+    async def fight(self, challenger, target, seed, group="group"):
+        await self.db.create_request(
+            "app", group, "duel", challenger["id"], target["id"], "pig", now=NOW, daily_limit=99
+        )
+        return await self.db.respond(
+            "app", group, target["id"], "duel", True, "cat", now=NOW, seed=seed, daily_limit=99
+        )
+
+    async def test_duel_ranking_history_and_replay(self):
+        carol = await self.db.identify("app", "carol", "group", "阿卡")
+        dave = await self.db.identify("app", "dave", "other", "阿戴")
+        await self.db.identify("app", "alice", "other", "")
+        for user in (self.alice, self.bob, dave):
+            await self.own(user, "pig", 50)
+            await self.own(user, "cat", 50)
+        results = [await self.fight(self.alice, self.bob, seed) for seed in range(4)]
+        results += [await self.fight(dave, self.alice, seed, "other") for seed in range(4, 7)]
+        alice_wins = sum(r["winner"]["id"] == self.alice["id"] for r in results)
+
+        board = await self.db.duel_rankings("app", "group", carol["id"])
+        ranked = {row["id"]: row for row in board["top"]}
+        self.assertEqual(set(ranked), {self.alice["id"], self.bob["id"]})
+        self.assertEqual(ranked[self.alice["id"]]["games"], 7)
+        self.assertEqual(ranked[self.alice["id"]]["wins"], alice_wins)
+        self.assertEqual(ranked[self.bob["id"]]["games"], 4)
+        rates = [row["rate"] for row in board["top"]]
+        self.assertEqual(rates, sorted(rates, reverse=True))
+        self.assertIsNone(board["me"])
+        text = duel_ranking_message(Settings(), carol, board).text
+        self.assertIn("斗猪胜率排行", text)
+        self.assertIn("你还没有斗过猪", text)
+        bob_board = await self.db.duel_rankings("app", "group", self.bob["id"], min_games=5)
+        self.assertEqual([row["id"] for row in bob_board["top"]], [self.alice["id"]])
+        self.assertIn(
+            "再打 1 场即可上榜", duel_ranking_message(Settings(), self.bob, bob_board).text
+        )
+
+        history = await self.db.duel_history(self.alice["id"], 1, size=5)
+        self.assertEqual((history["total"], history["wins"], history["pages"]), (7, alice_wins, 2))
+        ids = [record["id"] for record in history["records"]]
+        self.assertEqual(ids, sorted(ids, reverse=True))
+        latest = history["records"][0]
+        self.assertEqual(latest["opponent"]["id"], dave["id"])
+        self.assertEqual(latest["my_pig"], "cat猪")
+        text = duel_history_message(Settings(), self.alice, history).text
+        self.assertIn(f"#{latest['id']}", text)
+        self.assertIn("vs 阿戴", text)
+        self.assertIn("第 1/2 页", text)
+        with self.assertRaises(PiggyError):
+            await self.db.duel_history(self.alice["id"], 3, size=5)
+
+        record = await self.db.duel_record(self.bob["id"], 1)
+        self.assertEqual(record["log"], results[0]["result"]["log"])
+        replay = duel_replay_message(Settings(), record).text
+        for line in record["log"]:
+            self.assertIn(line, replay)
+        self.assertIn("斗猪回放 #1", replay)
+        with self.assertRaises(PiggyError):
+            await self.db.duel_record(carol["id"], 1)
+
+    async def test_forget_bot_removes_it_from_group_and_cancels_requests(self):
+        bot = await self.db.identify("app", "bot-id", "group", "猪圈")
+        await self.own(self.alice, "pig", 1)
+        await self.db.create_request(
+            "app", "group", "duel", self.alice["id"], bot["id"], "pig", now=NOW
+        )
+        await self.db.forget_bot("app", {"bot-id", "unknown"})
+        with self.assertRaises(PiggyError):
+            await self.db.find_group_player("app", "group", "猪圈")
+        listed = await self.db.list_requests("app", "group", self.alice["id"], now=NOW)
+        self.assertEqual(listed["outgoing"], [])
+
     async def test_markdown_mode_mentions_target_and_limits_buttons(self):
         await self.own(self.alice, "pig", 1)
         request = await self.duel()
@@ -211,7 +291,7 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(message.markdown)
         self.assertIn('<qqbot-at-user id="bob" />', message.text)
         buttons = message.keyboard["content"]["rows"][0]["buttons"]
-        self.assertEqual(buttons[0]["action"]["permission"]["specify_user_ids"], ["bob"])
+        self.assertTrue(all(b["action"]["permission"] == {"type": 2} for b in buttons))
 
 
 class MigrationTests(unittest.IsolatedAsyncioTestCase):

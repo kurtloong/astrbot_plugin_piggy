@@ -289,6 +289,16 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("获胜", last())
         self.assertIn("Lv3 → Lv2", last())
         self.assertEqual(sent.await_args.args[1]["msg_type"], 0)
+        await self.plugin.duel_ranking(OfficialEvent("k1", text="斗猪排行"))
+        self.assertIn("还没有玩家打满 3 场", last())
+        self.assertIn("再打 2 场即可上榜", last())
+        await self.plugin.duel_history(OfficialEvent("h1", text="斗猪记录"))
+        self.assertIn("共 1 场", last())
+        self.assertIn("#1 ", last())
+        await self.plugin.duel_replay(OfficialEvent("p1", user="rival", text="斗猪回放 #1"))
+        self.assertIn("斗猪回放 #1", last())
+        await self.plugin.duel_replay(OfficialEvent("p2", text="斗猪回放 abc"))
+        self.assertIn("用法：斗猪回放 编号", last())
         await self.plugin.trade(OfficialEvent("t1", text="小猪交换 阿波 猪 换 小黑猪"))
         self.assertIn("想和你交换", last())
         await self.plugin.requests(OfficialEvent("r1", user="rival", text="我的请求"))
@@ -298,9 +308,59 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.stats(OfficialEvent("s1", text="小猪属性 坦克猪"))
         self.assertIn("履带碾压", last())
         await self.plugin.duel(OfficialEvent("d3", text="斗猪 <@member> 猪", mentions=("member",)))
-        self.assertIn("不能和自己斗猪", last())
+        self.assertIn("没有识别到你 @ 的群友", last())
         await self.plugin.cancel(OfficialEvent("c1", text="取消请求"))
         self.assertIn("没有待处理", last())
+
+    async def test_mentions_skip_the_bot_and_fall_back_to_text_markup(self):
+        await self.plugin.initialize()
+        db = self.plugin.db
+        challenger = await db.identify("app", "member", "group-a", "")
+        await db.run(
+            lambda c: c.execute(
+                "INSERT INTO collections VALUES(?,'pig-souffle',2,0,0)", (challenger["id"],)
+            )
+        )
+        await db.identify("app", "bot-openid", "group-a", "猪圈")
+        sent = self.plugin.transport.request
+
+        def last():
+            return sent.await_args.args[1]["content"]
+
+        async def target_of():
+            listed = await db.list_requests("app", "group-a", challenger["id"])
+            await db.cancel_requests("app", "group-a", challenger["id"])
+            return listed["outgoing"][0]["to"]["open_id"]
+
+        # Newer AstrBot keeps the bot itself (is_you) first in mentions.
+        event = OfficialEvent("m1", text="斗猪 <@christina> 猪芙蕾")
+        event.message_obj.raw_message.mentions = [
+            SimpleNamespace(id="bot-openid", member_openid=None, is_you=True, bot=True),
+            SimpleNamespace(
+                id="christina", member_openid="christina", username="Christina", is_you=False
+            ),
+        ]
+        await self.plugin.duel(event)
+        self.assertIn("Christina 玩家名字 向你发起斗猪", last())
+        self.assertEqual(await target_of(), "christina")
+        with self.assertRaises(self.module.PiggyError):
+            await db.find_group_player("app", "group-a", "猪圈")
+
+        # Older AstrBot drops mention fields; the text markup still carries the id.
+        await self.plugin.duel(OfficialEvent("m2", text="斗猪 <@dayangyu> 猪芙蕾"))
+        self.assertEqual(await target_of(), "dayangyu")
+        markup = '斗猪 <qqbot-at-user id="tagged" /> 猪芙蕾'
+        await self.plugin.duel(OfficialEvent("m3", text=markup))
+        self.assertEqual(await target_of(), "tagged")
+
+        # No mention and only a pig name: never treat the pig as a player.
+        await self.plugin.duel(OfficialEvent("m4", text="斗猪 猪芙蕾"))
+        self.assertIn("没有识别到你 @ 的群友。可以改用：斗猪 对方称呼 你的小猪", last())
+
+        self.plugin.settings = replace(self.plugin.settings, battle_markdown=True)
+        await self.plugin.duel(OfficialEvent("m5", text="斗猪 <@christina> 猪芙蕾"))
+        request_buttons = sent.await_args.args[1]["keyboard"]["content"]["rows"][0]["buttons"]
+        self.assertTrue(all(b["action"]["permission"] == {"type": 2} for b in request_buttons))
 
     async def test_upload_failure_keeps_draw_and_next_command_displays_same_pig(self):
         from astrbot_plugin_piggy.core.storage import UploadError

@@ -562,7 +562,8 @@ class ConfigAndButtonsTests(unittest.TestCase):
                         "小猪排行",
                         "我的猪圈",
                         "小猪玩法",
-                        "我的请求",
+                        "斗猪排行",
+                        "斗猪记录",
                         "小猪图鉴 1",
                         "小猪图鉴 3",
                     )

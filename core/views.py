@@ -2,10 +2,12 @@ import asyncio
 import math
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 from .battle import STAT_NAMES, STATS, describe_skill, entry_for, fighter, level_for
 from .config import PiggyError, Settings
+from .database import EAST_ASIA
 from .delivery import Message
 from .rendering import (
     ATLAS_SHEET_SIZE,
@@ -50,7 +52,13 @@ def keyboard(
     rows = [
         {"buttons": [button("今日小猪", "今日小猪"), button("小猪图鉴", "小猪图鉴")]},
         {"buttons": [button("小猪排行", "小猪排行"), button("我的猪圈", "我的猪圈")]},
-        {"buttons": [button("⚔️ 斗猪玩法", "小猪玩法"), button("我的请求", "我的请求")]},
+        {
+            "buttons": [
+                button("斗猪玩法", "小猪玩法"),
+                button("斗猪排行", "斗猪排行"),
+                button("斗猪记录", "斗猪记录"),
+            ]
+        },
     ]
     navigation = []
     if page > 1:
@@ -145,12 +153,12 @@ def ranking_message(
     )
 
 
-def _button(settings: Settings, label: str, data: str, owners: tuple[str, ...] = ()) -> dict:
-    permission = {"type": 0, "specify_user_ids": list(owners)} if owners else {"type": 2}
+def _button(settings: Settings, label: str, data: str) -> dict:
+    # Anyone may tap; respond() only matches requests addressed to the sender.
     return {
         "id": data,
         "render_data": {"label": label, "visited_label": label, "style": 1},
-        "action": {"type": 2, "permission": permission, "data": settings.command_prefix + data},
+        "action": {"type": 2, "permission": {"type": 2}, "data": settings.command_prefix + data},
     }
 
 
@@ -160,7 +168,6 @@ def text_message(
     blocks: list,
     mention: dict | None = None,
     buttons: list[tuple[str, str]] = (),
-    button_owner: dict | None = None,
 ) -> Message:
     """Blocks are paragraphs (str) or bullet lists (list of str)."""
     if not settings.battle_markdown:
@@ -181,12 +188,9 @@ def text_message(
             parts.append(md(block))
     keyboard = None
     if buttons:
-        owners = (button_owner["open_id"],) if button_owner else ()
         keyboard = {
             "content": {
-                "rows": [
-                    {"buttons": [_button(settings, label, data, owners) for label, data in buttons]}
-                ]
+                "rows": [{"buttons": [_button(settings, label, data) for label, data in buttons]}]
             }
         }
     return Message("\n\n".join(parts), keyboard=keyboard, markdown=True)
@@ -217,12 +221,18 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
         [
             f"我的请求 / 取消请求 —— 查看或撤回，{settings.request_ttl_minutes} 分钟内未处理自动作废",
         ],
+        "【战绩】",
+        [
+            "斗猪排行 —— 本群斗猪胜率排行，至少 3 场上榜",
+            "斗猪记录 [页码] —— 自己的历史对战",
+            "斗猪回放 编号 —— 重看某场的完整战报",
+        ],
     ]
     if favorite:
         blocks.append(f"你的「{example}」有 {favorite['count']} 只，是你现在最强的出战选择。")
     return text_message(
         settings,
-        "⚔️ 小猪玩法：斗猪与交换",
+        "小猪玩法：斗猪与交换",
         blocks,
         buttons=[("小猪属性", "小猪属性 "), ("斗猪", "斗猪 "), ("我的请求", "我的请求")],
     )
@@ -250,7 +260,7 @@ def stats_message(settings: Settings, user: dict, pig: dict, count: int, cap: in
         for slot, skill in enumerate(entry["skills"], 1)
     ]
     return text_message(
-        settings, f"🐷 {pig['name']}（{entry['style']}）", [owned, numbers, "技能", skills]
+        settings, f"{pig['name']}（{entry['style']}）", [owned, numbers, "技能", skills]
     )
 
 
@@ -285,7 +295,6 @@ def request_message(settings: Settings, request: dict, level: int) -> Message:
             ],
             mention=target,
             buttons=[("接受斗猪", "接受斗猪 "), ("拒绝斗猪", "拒绝斗猪")],
-            button_owner=target,
         )
     return text_message(
         settings,
@@ -296,7 +305,6 @@ def request_message(settings: Settings, request: dict, level: int) -> Message:
         ],
         mention=target,
         buttons=[("接受交换", "接受交换"), ("拒绝交换", "拒绝交换")],
-        button_owner=target,
     )
 
 
@@ -323,10 +331,10 @@ def battle_message(settings: Settings, result: dict) -> Message:
     left = result["duels_left"]
     return text_message(
         settings,
-        f"⚔️ 斗猪：{a['label']} Lv{a['level']} VS {b['label']} Lv{b['level']}",
+        f"斗猪：{a['label']} Lv{a['level']} VS {b['label']} Lv{b['level']}",
         [
             fight["log"],
-            f"🏆 {display_name(winner)} 获胜！（{fight['rounds']} 回合，剩余生命 {hp}）",
+            f"{display_name(winner)} 获胜！（{fight['rounds']} 回合，剩余生命 {hp}）",
             f"{display_name(loser)} 的「{result['loser_change']['pig']['name']}」归 "
             f"{display_name(winner)} 所有。",
             [
@@ -337,6 +345,7 @@ def battle_message(settings: Settings, result: dict) -> Message:
             + "，".join(
                 f"{display_name(user)} {left[uid]} 场" for uid, user in result["users"].items()
             ),
+            "发送「斗猪记录」查看历史战绩，「斗猪排行」看本群胜率榜",
         ],
         mention=result["request"]["from"],
     )
@@ -347,7 +356,7 @@ def trade_message(settings: Settings, result: dict) -> Message:
     sender, target = display_name(request["from"]), display_name(request["to"])
     return text_message(
         settings,
-        "🤝 交换成功！",
+        "交换成功！",
         [
             f"{sender} 的「{request['give']['name']}」⇄ {target} 的「{request['want']['name']}」",
             [
@@ -358,6 +367,77 @@ def trade_message(settings: Settings, result: dict) -> Message:
             ],
         ],
         mention=request["from"],
+    )
+
+
+def _rate(wins: int, games: int) -> str:
+    return f"{wins / games:.0%}" if games else "0%"
+
+
+def duel_ranking_message(settings: Settings, user: dict, board: dict) -> Message:
+    need = board["min_games"]
+    lines = [
+        f"{row['rank']:02d}. {display_name(row)}  胜 {row['wins']} / 负 {row['losses']}  "
+        f"胜率 {_rate(row['wins'], row['games'])}"
+        for row in board["top"]
+    ]
+    blocks = [lines or [f"还没有玩家打满 {need} 场，快去斗猪吧。"]]
+    me = board["me"]
+    if not me:
+        blocks.append("你还没有斗过猪，发送「小猪玩法」看看怎么开始。")
+    elif not any(row["id"] == me["id"] for row in board["top"]):
+        mine = f"你：胜 {me['wins']} / 负 {me['losses']}，胜率 {_rate(me['wins'], me['games'])}"
+        if me["games"] < need:
+            mine += f"，再打 {need - me['games']} 场即可上榜"
+        elif "rank" in me:
+            mine += f"，排第 {me['rank']} 名"
+        blocks.append(mine)
+    blocks.append(f"本群玩家 · 跨群累计战绩 · 至少 {need} 场上榜 · 发送「斗猪记录」查看自己的对战")
+    return text_message(settings, "斗猪胜率排行", blocks)
+
+
+def duel_history_message(settings: Settings, user: dict, history: dict) -> Message:
+    total, wins = history["total"], history["wins"]
+    if not total:
+        return text_message(
+            settings, "斗猪记录", ["你还没有斗过猪，发送「小猪玩法」看看怎么开始。"]
+        )
+    lines = []
+    for record in history["records"]:
+        day = datetime.fromtimestamp(record["fought_at"], EAST_ASIA).strftime("%m-%d")
+        result = "胜" if record["won"] else "负"
+        change = "得到" if record["won"] else "失去"
+        lines.append(
+            f"#{record['id']} {day} {result} vs {display_name(record['opponent'])} · "
+            f"我方「{record['my_pig']}」Lv{record['my_level']} vs "
+            f"对方「{record['their_pig']}」Lv{record['their_level']} · "
+            f"{change}「{record['prize']}」"
+        )
+    blocks = [
+        f"共 {total} 场，胜 {wins} 负 {total - wins}，胜率 {_rate(wins, total)}",
+        lines,
+        "发送「斗猪回放 编号」查看完整战报",
+    ]
+    if history["pages"] > 1:
+        blocks.append(f"第 {history['page']}/{history['pages']} 页，发送「斗猪记录 页码」翻页")
+    return text_message(settings, f"{display_name(user)} 的斗猪记录", blocks)
+
+
+def duel_replay_message(settings: Settings, record: dict) -> Message:
+    players = record["players"]
+    a, b = players[record["a_user"]], players[record["b_user"]]
+    winner = players[record["winner"]]
+    day = datetime.fromtimestamp(record["fought_at"], EAST_ASIA).strftime("%Y-%m-%d %H:%M")
+    return text_message(
+        settings,
+        f"斗猪回放 #{record['id']}：{display_name(a)}的{record['a_pig_name']} "
+        f"Lv{record['a_level']} VS {display_name(b)}的{record['b_pig_name']} "
+        f"Lv{record['b_level']}",
+        [
+            day,
+            record["log"],
+            f"{display_name(winner)} 获胜，赢走了「{record['prize']}」。",
+        ],
     )
 
 
@@ -385,7 +465,7 @@ def requests_message(settings: Settings, requests: dict) -> Message:
         blocks += ["发出的请求", [_request_line(r, False) for r in requests["outgoing"]]]
     if not blocks:
         blocks = ["你在本群没有待处理的请求。"]
-    return text_message(settings, "📮 我的请求", blocks)
+    return text_message(settings, "我的请求", blocks)
 
 
 def cancelled_message(settings: Settings, cancelled: list[dict]) -> Message:

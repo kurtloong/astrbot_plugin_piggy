@@ -740,6 +740,139 @@ class Database:
 
         return await self.run(read)
 
+    async def duel_rankings(
+        self, app_id: str, group_id: str, user_id: int, min_games: int = 3, limit: int = 10
+    ) -> dict:
+        def read(conn):
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    WITH games AS (
+                        SELECT a_user AS uid, winner FROM battle_records
+                        UNION ALL SELECT b_user, winner FROM battle_records
+                    )
+                    SELECT u.*, count(*) AS games, sum(g.winner = u.id) AS wins
+                    FROM group_players gp JOIN users u ON u.id = gp.user_id
+                    JOIN games g ON g.uid = u.id
+                    WHERE gp.app_id=? AND gp.group_id=? GROUP BY u.id
+                    """,
+                    (app_id, group_id),
+                )
+            ]
+            for row in rows:
+                row["losses"] = row["games"] - row["wins"]
+                row["rate"] = row["wins"] / row["games"]
+            ranked = sorted(
+                (row for row in rows if row["games"] >= min_games),
+                key=lambda row: (-row["rate"], -row["wins"], row["id"]),
+            )
+            for index, row in enumerate(ranked, 1):
+                row["rank"] = index
+            mine = next((row for row in rows if row["id"] == user_id), None)
+            return {"top": ranked[:limit], "me": mine, "min_games": min_games}
+
+        return await self.run(read)
+
+    @staticmethod
+    def _battle_view(conn, row, user_id: int) -> dict:
+        record = dict(row)
+        mine_a = record["a_user"] == user_id
+        names = {
+            pig["id"]: pig["name"]
+            for pig in conn.execute(
+                "SELECT id,name FROM pigs WHERE id IN (?,?)", (record["a_pig"], record["b_pig"])
+            )
+        }
+        other = conn.execute(
+            "SELECT * FROM users WHERE id=?", (record["b_user"] if mine_a else record["a_user"],)
+        ).fetchone()
+        won = record["winner"] == user_id
+        loser_pig = record["b_pig"] if record["winner"] == record["a_user"] else record["a_pig"]
+        return {
+            **record,
+            "won": won,
+            "opponent": dict(other),
+            "my_pig": names.get(record["a_pig" if mine_a else "b_pig"], "?"),
+            "my_level": record["a_level" if mine_a else "b_level"],
+            "their_pig": names.get(record["b_pig" if mine_a else "a_pig"], "?"),
+            "their_level": record["b_level" if mine_a else "a_level"],
+            "prize": names.get(loser_pig, "?"),
+            "a_pig_name": names.get(record["a_pig"], "?"),
+            "b_pig_name": names.get(record["b_pig"], "?"),
+        }
+
+    async def duel_history(self, user_id: int, page: int = 1, size: int = 10) -> dict:
+        def read(conn):
+            total, wins = conn.execute(
+                "SELECT count(*), coalesce(sum(winner=?),0) FROM battle_records "
+                "WHERE a_user=? OR b_user=?",
+                (user_id, user_id, user_id),
+            ).fetchone()
+            pages = max(1, -(-total // size))
+            if not 1 <= page <= pages:
+                raise PiggyError(f"页码超出范围，请输入 1–{pages}。")
+            rows = conn.execute(
+                "SELECT * FROM battle_records WHERE a_user=? OR b_user=? "
+                "ORDER BY id DESC LIMIT ? OFFSET ?",
+                (user_id, user_id, size, (page - 1) * size),
+            ).fetchall()
+            return {
+                "records": [self._battle_view(conn, row, user_id) for row in rows],
+                "total": total,
+                "wins": wins,
+                "page": page,
+                "pages": pages,
+            }
+
+        return await self.run(read)
+
+    async def duel_record(self, user_id: int, record_id: int) -> dict:
+        def read(conn):
+            row = conn.execute(
+                "SELECT * FROM battle_records WHERE id=? AND (a_user=? OR b_user=?)",
+                (record_id, user_id, user_id),
+            ).fetchone()
+            if not row:
+                raise PiggyError(f"没有找到你参与的第 {record_id} 场斗猪。")
+            view = self._battle_view(conn, row, user_id)
+            view["log"] = json.loads(row["log"])
+            view["players"] = {
+                uid: dict(conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone())
+                for uid in (row["a_user"], row["b_user"])
+            }
+            return view
+
+        return await self.run(read)
+
+    async def forget_bot(self, app_id: str, open_ids) -> None:
+        """Remove bot accounts that an earlier version mistook for players."""
+        open_ids = [str(i) for i in open_ids if i]
+        if not open_ids:
+            return
+        stamp = time.time()
+
+        def forget(conn):
+            marks = ",".join("?" * len(open_ids))
+            ids = [
+                row[0]
+                for row in conn.execute(
+                    f"SELECT id FROM users WHERE app_id=? AND open_id IN ({marks})",
+                    (app_id, *open_ids),
+                )
+            ]
+            if not ids:
+                return
+            marks = ",".join("?" * len(ids))
+            conn.execute(f"DELETE FROM group_players WHERE user_id IN ({marks})", ids)
+            conn.execute(
+                f"UPDATE requests SET status='cancelled',resolved_at=? "
+                f"WHERE status='pending' AND to_user IN ({marks})",
+                (stamp, *ids),
+            )
+
+        await self.run(forget)
+
     async def cache_get(self, namespace: str, digest: str):
         def read(conn):
             row = conn.execute(
