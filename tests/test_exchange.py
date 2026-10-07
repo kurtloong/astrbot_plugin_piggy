@@ -280,6 +280,46 @@ class ExchangeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(PiggyError):
             await self.db.duel_record(carol["id"], 1)
 
+    async def test_duel_messages_use_buttons_in_markdown_and_hints_in_plain_text(self):
+        for user in (self.alice, self.bob):
+            await self.own(user, "pig", 50)
+            await self.own(user, "cat", 50)
+        results = [await self.fight(self.alice, self.bob, seed) for seed in range(12)]
+        board = await self.db.duel_rankings("app", "group", self.alice["id"])
+        history = await self.db.duel_history(self.alice["id"], 1)
+        markdown, plain = Settings(battle_markdown=True), Settings()
+
+        def labels(message):
+            rows = message.keyboard["content"]["rows"]
+            return [b["render_data"]["label"] for row in rows for b in row["buttons"]]
+
+        cases = (
+            (battle_message, results[-1], ["斗猪记录", "斗猪排行"], "「斗猪排行」看本群胜率榜"),
+            (
+                lambda s, b: duel_ranking_message(s, self.alice, b),
+                board,
+                ["斗猪记录", "斗猪玩法"],
+                "发送「斗猪记录」查看自己的对战",
+            ),
+            (
+                lambda s, h: duel_history_message(s, self.alice, h),
+                history,
+                ["斗猪回放", "下一页", "斗猪排行"],
+                "「斗猪记录 页码」翻页",
+            ),
+        )
+        for render, data, expected, hint in cases:
+            rich = render(markdown, data)
+            self.assertEqual(labels(rich), expected)
+            self.assertNotIn(hint, rich.text)
+            text = render(plain, data)
+            self.assertIsNone(text.keyboard)
+            self.assertIn(hint, text.text)
+        last_page = await self.db.duel_history(self.alice["id"], 2)
+        self.assertEqual(
+            labels(duel_history_message(markdown, self.alice, last_page)), ["斗猪回放", "斗猪排行"]
+        )
+
     async def test_forget_bot_removes_it_from_group_and_cancels_requests(self):
         bot = await self.db.identify("app", "bot-id", "group", "猪圈")
         await self.own(self.alice, "pig", 1)
