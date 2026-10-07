@@ -79,11 +79,15 @@ def scale_skill(skill, factor):
         kind = effect["type"]
         if kind == "damage":
             hits = effect.get("hits", 1)
-            effect["power"] = round(min(3.2 / hits, max(0.35, effect["power"] * factor)), 2)
+            floor = 0.35 if hits == 1 else 0.15
+            effect["power"] = round(min(3.2 / hits, max(floor, effect["power"] * factor)), 2)
             if "power_max" in effect:
                 effect["power_max"] = round(
                     min(6, max(effect["power"], effect["power_max"] * factor)), 2
                 )
+        elif kind == "evade" and factor < 0.97:
+            # Evading twice cannot be scaled smoothly; it is the first thing to give up.
+            effect["count"] = 1
         elif kind in PCT_CAP:
             effect["pct"] = max(1, min(PCT_CAP[kind], round(effect["pct"] * factor, 1)))
         elif kind == "buff":
@@ -156,8 +160,11 @@ def tune(from_order, rounds):
         print(round_index, *(f"L{lv} {spread(r)}" for lv, r in result.items()), flush=True)
         for pig_id in targets:
             entry = raw["pigs"][pig_id]
+            # Level 1 is pure stats; the higher-level average catches skills that cannot scale.
             low = 0.5 - result[1][pig_id]
-            entry["stats"]["hp"] = max(40, min(250, round(entry["stats"]["hp"] * (1 + 0.25 * low))))
+            later = sum(0.5 - result[level][pig_id] for level in range(2, 6)) / 4
+            factor = 1 + 0.25 * low + 0.1 * later
+            entry["stats"]["hp"] = max(40, min(250, round(entry["stats"]["hp"] * factor)))
             for level in range(2, 6):
                 gap = (0.5 - result[level][pig_id]) - 0.5 * (0.5 - result[level - 1][pig_id])
                 scale_skill(entry["skills"][level - 1], 1 + 0.35 * gap)
