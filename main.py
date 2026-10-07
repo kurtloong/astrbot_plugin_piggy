@@ -171,7 +171,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.4.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.4.1")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -481,7 +481,10 @@ class PiggyPlugin(Star):
             level = level_for(request["give_count"], settings.battle_level_cap)
             return request_message(settings, request, level)
         if command == "shop":
-            return shop_message(settings, user, await self.db.shop(app_id, group, user["id"]))
+            shop = await self.db.shop(app_id, group, user["id"])
+            if settings.use_host("shop"):
+                settings.check_host()
+            return await shop_message(settings, self.root, user, shop)
         if command == "shop_exchange":
             slot = words[0].strip("#＃号") if words else ""
             if not slot.isdigit() or len(words) < 2:

@@ -6,8 +6,9 @@ import unittest
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from core.catalog import read_catalog
 from core.config import PiggyError, Settings
@@ -413,11 +414,23 @@ class ShopTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(PiggyError):
             await self.db.shop_exchange("app", "group", self.bob["id"], 1, pay, now=NOW)
         self.assertEqual(await self.count(self.bob, pay), 1)
-        listing = shop_message(
-            Settings(), self.bob, await self.db.shop("app", "group", self.bob["id"], now=NOW)
-        ).text
-        self.assertIn("已被 阿离 换走", listing)
-        self.assertIn("剩余 4/5 件", listing)
+        labels = []
+        original = ImageDraw.ImageDraw.text
+
+        def record(canvas, xy, text, *args, **kwargs):
+            labels.append(str(text))
+            return original(canvas, xy, text, *args, **kwargs)
+
+        shop = await self.db.shop("app", "group", self.bob["id"], now=NOW)
+        with patch.object(ImageDraw.ImageDraw, "text", record):
+            card = await shop_message(Settings(), self.root, self.bob, shop)
+        self.assertTrue(card.local)
+        self.assertIn("已被 阿离 换走", labels)
+        self.assertIn("新图鉴！换到即解锁", labels)
+        self.assertTrue(any("剩余 4/5 件" in label for label in labels))
+        hosted = await shop_message(Settings(display={"shop": True}), self.root, self.bob, shop)
+        self.assertFalse(hosted.local)
+        self.assertIn("今日小猪商店", hosted.text)
 
     async def test_exchange_rejects_missing_payment_same_species_and_bad_slot(self):
         shop = await self.db.shop("app", "group", self.alice["id"], now=NOW)

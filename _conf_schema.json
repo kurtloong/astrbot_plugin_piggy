@@ -38,13 +38,20 @@
         "type": "bool",
         "default": false,
         "hint": "开启：图床图片 + Markdown + 按钮。关闭：内存渲染后直传 QQ，不带 MD 或按钮。"
+      },
+      "shop": {
+        "description": "小猪商店使用图床",
+        "type": "bool",
+        "default": false,
+        "hint": "开启：图床图片 + Markdown + 按钮。关闭：内存渲染后直传 QQ，不带 MD 或按钮。"
       }
     },
     "default": {
       "draw": true,
       "atlas": false,
       "pen": false,
-      "ranking": false
+      "ranking": false,
+      "shop": false
     }
   },
   "backup_keep": {

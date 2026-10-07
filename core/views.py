@@ -14,13 +14,16 @@ from .rendering import (
     PEN_SHEET_SIZE,
     render_collection,
     render_ranking,
+    render_shop,
     render_today,
 )
 
 
 def md(text: str) -> str:
     text = str(text).replace("{{", "｛｛").replace("}}", "｝｝")
-    return re.sub(r"([\\`*_{}\[\]<>()#+.!|~>-])", r"\\\1", text)
+    # QQ renders backslash-escaped parentheses incorrectly; full-width ones read the same.
+    text = text.replace("(", "（").replace(")", "）")
+    return re.sub(r"([\\`*_{}\[\]<>#+.!|~>-])", r"\\\1", text)
 
 
 def display_name(user: dict) -> str:
@@ -390,33 +393,11 @@ def trade_message(settings: Settings, result: dict) -> Message:
     )
 
 
-def shop_message(settings: Settings, user: dict, shop: dict) -> Message:
-    lines = []
-    for item in shop["items"]:
-        name = item["pig"]["name"]
-        if item["buyer"]:
-            lines.append(f"{item['slot']}. 「{name}」已被 {display_name(item['buyer'])} 换走")
-            continue
-        owned = item["owned"]
-        state = (
-            f"你有 {owned} 只，换到后 Lv{level_for(owned + 1, settings.battle_level_cap)}"
-            if owned
-            else "你还没有，可解锁新图鉴"
-        )
-        lines.append(f"{item['slot']}. 「{name}」（{state}）")
-    left = sum(1 for item in shop["items"] if not item["buyer"])
-    blocks = [
-        f"{shop['day']} · 剩余 {left}/{len(shop['items'])} 件 · 每件限量 1 只，先到先得",
-        lines,
-        "发送「商店交换 编号 你的小猪」用自己的 1 只小猪换走它，例如：商店交换 1 猪人",
-        "每天 0 点（东八区）刷新",
-    ]
-    return text_message(
-        settings,
-        "今日小猪商店",
-        blocks,
-        buttons=[("商店交换", "商店交换 "), ("我的猪圈", "我的猪圈")],
+async def shop_message(settings: Settings, root: Path, user: dict, shop: dict) -> Message:
+    card = await asyncio.to_thread(
+        render_shop, root, display_name(user), shop, settings.battle_level_cap
     )
+    return card_message(settings, user, card, "今日小猪商店", "shop")
 
 
 def shop_exchange_message(settings: Settings, user: dict, result: dict) -> Message:
