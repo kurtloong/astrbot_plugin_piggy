@@ -533,7 +533,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         manifest.write_text(json.dumps(pigs, ensure_ascii=False), "utf-8")
         await self.plugin.reload(OfficialEvent("reload"))
         progress = await self.plugin.db.collection(999)
-        self.assertEqual(progress["active_total"], 95)
+        self.assertEqual(progress["active_total"], len(pigs) - 1)
         await self.plugin.backup(OfficialEvent("backup"))
         self.assertTrue(list((self.root / "backups").glob("*.zip")))
         manifest.unlink()
@@ -541,7 +541,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.ready = False
         await self.plugin.initialize()
         self.assertFalse(manifest.exists())
-        self.assertEqual((await self.plugin.db.collection(999))["active_total"], 95)
+        self.assertEqual((await self.plugin.db.collection(999))["active_total"], len(pigs) - 1)
 
 
 if __name__ == "__main__":

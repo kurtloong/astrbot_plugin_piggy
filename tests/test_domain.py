@@ -417,7 +417,9 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
         other = self.root / "bundled"
         initialize_catalog(other, resources)
         definitions = read_catalog(other)
-        self.assertEqual(len(definitions), 96)
+        bundled = json.loads((resources / "pigs.json").read_text("utf-8"))
+        self.assertEqual(len(definitions), len(bundled))
+        self.assertGreater(len(bundled), 900)
         manifest = other / "catalog" / "pigs.json"
         original = manifest.read_text("utf-8")
         manifest.write_text("[]", "utf-8")
