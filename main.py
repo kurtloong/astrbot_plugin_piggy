@@ -364,9 +364,13 @@ class PiggyPlugin(Star):
             level = level_for(request["give_count"], settings.battle_level_cap)
             return request_message(settings, request, level)
         if command == "cancel":
-            return cancelled_message(settings, await self.db.cancel_requests(app_id, group, user["id"]))
+            return cancelled_message(
+                settings, await self.db.cancel_requests(app_id, group, user["id"])
+            )
         if command == "requests":
-            return requests_message(settings, await self.db.list_requests(app_id, group, user["id"]))
+            return requests_message(
+                settings, await self.db.list_requests(app_id, group, user["id"])
+            )
         kind, verb = command.split("_")
         pig_id = None
         if kind == "duel" and verb == "accept":
@@ -385,7 +389,9 @@ class PiggyPlugin(Star):
         )
         if not result["accepted"]:
             return declined_message(settings, result)
-        return battle_message(settings, result) if kind == "duel" else trade_message(settings, result)
+        return (
+            battle_message(settings, result) if kind == "duel" else trade_message(settings, result)
+        )
 
     async def _failure(self, event, text: str):
         try:

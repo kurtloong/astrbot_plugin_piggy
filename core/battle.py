@@ -312,7 +312,7 @@ def describe_effect(effect: dict) -> str:
         if effect.get("execute"):
             extras.append(f"对手低于 {effect['execute']:g}% 生命时伤害提高")
         if extras:
-            text += f"（{'，'.join(extras)}）"
+            text += "，" + "，".join(extras)
     elif kind == "heal":
         text = f"回复 {effect['pct']:g}% 生命"
     elif kind == "shield":

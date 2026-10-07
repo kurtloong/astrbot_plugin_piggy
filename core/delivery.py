@@ -229,7 +229,7 @@ class Sender:
                     msg_type=2,
                     markdown={
                         "content": message.content(urls),
-                        "force_verify_image_resource": True,
+                        **({"force_verify_image_resource": True} if message.images else {}),
                     },
                 )
                 if message.keyboard:
