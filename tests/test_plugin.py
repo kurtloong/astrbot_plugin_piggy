@@ -220,6 +220,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 "secret_key": "secret",
                 "public_base_url": "https://img.example.com",
                 "image_retry_count": 0,
+                # Keep the classic one-pig draw here; gather/chain have their own tests.
+                "draw_gather_chance": 0,
+                "draw_chain_chance": 0,
             }
         )
         self.config.save_config = Mock()
@@ -416,6 +419,36 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.shop_exchange(OfficialEvent("s4", text="商店交换 猪"))
         self.assertIn("用法：商店交换 编号 你的小猪", last())
 
+    async def test_taming_the_wild_pig_lets_today_draw_again(self):
+        await self.plugin.initialize()
+        db = self.plugin.db
+        sent = self.plugin.transport.request
+        await self.plugin.draw(OfficialEvent("w1", text="今日小猪"))
+        user = await db.identify("app", "member", "group-a", "")
+        await self.plugin.wild(OfficialEvent("w2", text="小猪挑战"))
+        self.assertEqual(sent.await_args.args[1]["msg_type"], 7)
+        await db.run(
+            lambda c: c.execute("INSERT INTO collections VALUES(?,'tank_pig',5,0,0)", (user["id"],))
+        )
+
+        def win(*args):
+            return {"winner": 0, "rounds": 1, "log": ["R1 胜"], "hp": [9, 0], "max_hp": [9, 9]}
+
+        with patch("astrbot_plugin_piggy.core.database.simulate", win):
+            await self.plugin.wild_challenge(OfficialEvent("w3", text="挑战小猪 坦克猪"))
+        self.assertEqual(sent.await_args.args[1]["msg_type"], 7)
+        self.assertEqual(await db.bonus_count("app", "group-a", user["id"]), 1)
+        await self.plugin.draw(OfficialEvent("w4", text="今日小猪"))
+        self.assertEqual(await db.bonus_count("app", "group-a", user["id"]), 0)
+        sessions = await db.run(
+            lambda c: c.execute(
+                "SELECT kind FROM draw_sessions WHERE user_id=? ORDER BY id", (user["id"],)
+            ).fetchall()
+        )
+        self.assertEqual([row[0] for row in sessions], ["daily", "bonus"])
+        await self.plugin.wild_challenge(OfficialEvent("w5", text="挑战小猪 坦克猪"))
+        self.assertIn("已经被", sent.await_args.args[1]["content"])
+
     async def test_upload_failure_keeps_draw_and_next_command_displays_same_pig(self):
         from astrbot_plugin_piggy.core.storage import UploadError
 
@@ -457,7 +490,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_every_command_works_without_host_and_switching_keeps_daily_record(self):
         from astrbot_plugin_piggy.core.config import Settings
 
-        config = Settings(display={"draw": False})
+        config = Settings(display={"draw": False}, draw_gather_chance=0, draw_chain_chance=0)
         self.plugin.settings = self.plugin.sender.settings = config
         self.plugin.publisher.publish = AsyncMock(side_effect=AssertionError("No host expected"))
         for command in (self.plugin.draw, self.plugin.atlas, self.plugin.pen, self.plugin.ranking):
@@ -487,7 +520,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         from astrbot_plugin_piggy.core.config import Settings
         from astrbot_plugin_piggy.core.delivery import QQError
 
-        self.plugin.settings = self.plugin.sender.settings = Settings(display={"draw": False})
+        self.plugin.settings = self.plugin.sender.settings = Settings(
+            display={"draw": False}, draw_gather_chance=0, draw_chain_chance=0
+        )
         self.plugin.transport.upload_image.side_effect = QQError(123, 401)
         await self.plugin.draw(OfficialEvent("failed-local"))
         self.assertIn(

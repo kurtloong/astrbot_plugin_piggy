@@ -11,6 +11,18 @@
     "default": 2,
     "hint": "0–30，0=关闭。连续抽到指定次数的重复猪后，下次必出未收集猪（如有）。漏签不清零，当天重复查看不累计；已有历史也计入。"
   },
+  "draw_gather_chance": {
+    "description": "猪群聚集概率（%）",
+    "type": "int",
+    "default": 50,
+    "hint": "0–90。每抽到一只猪（含连抽出来的），按此概率再得到 1 只相同的猪。"
+  },
+  "draw_chain_chance": {
+    "description": "小猪连抽概率（%）",
+    "type": "int",
+    "default": 50,
+    "hint": "0–90。每抽到一只猪后，按此概率继续抽一只新猪，可一直连下去。期望数量 =（1+聚集概率）÷（1−连抽概率），默认 3 只。"
+  },
   "display": {
     "description": "消息展示",
     "type": "object",
@@ -50,6 +62,12 @@
         "type": "bool",
         "default": false,
         "hint": "开启：图床图片 + Markdown + 按钮。关闭：内存渲染后直传 QQ，不带 MD 或按钮。"
+      },
+      "wild": {
+        "description": "野猪卡片与挑战海报使用图床",
+        "type": "bool",
+        "default": false,
+        "hint": "开启：图床图片 + Markdown + 按钮。关闭：内存渲染后直传 QQ，不带 MD 或按钮。"
       }
     },
     "default": {
@@ -58,7 +76,8 @@
       "pen": false,
       "ranking": false,
       "shop": false,
-      "duel": false
+      "duel": false,
+      "wild": false
     }
   },
   "backup_keep": {
@@ -90,6 +109,12 @@
     "type": "int",
     "default": 10,
     "hint": "1–60。超时未处理的请求自动作废。"
+  },
+  "wild_level_max": {
+    "description": "野生小猪最高等级",
+    "type": "int",
+    "default": 20,
+    "hint": "1–100。每个群每天出现一只野猪，等级在 1 到此值之间随机。"
   },
   "battle_markdown": {
     "description": "斗猪/交换使用 Markdown 与按钮",

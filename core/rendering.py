@@ -234,7 +234,13 @@ def render_today(
     state: str,
     protection: str = "",
     level: int = 1,
+    *,
+    title: str = "今日小猪",
+    extras: list = (),
+    summary: str = "",
+    hint: str = "",
 ) -> Card:
+    """The first pig in full, then a grid of every extra pig from gather/chain."""
     pig = result["pig"]
     canvas = Canvas(root, WIDTH, 1)
     description = " ".join(pig["description"].split())
@@ -243,9 +249,13 @@ def render_today(
     canvas.image.close()
     description_y = 870
     panel_bottom = description_y + 58 + 43 * len(lines)
-    canvas = Canvas(root, WIDTH, panel_bottom + 262)
+    columns, tile_w, tile_h = 4, 224, 230
+    rows = math.ceil(len(extras) / columns)
+    grid_top = panel_bottom + 40
+    grid_bottom = grid_top + (70 + rows * 246 if extras else 0)
+    canvas = Canvas(root, WIDTH, grid_bottom + 262 + (40 if summary else 0))
     canvas.text("PIGGY  /  DAILY", 58, 34, 18, ACCENT, True)
-    canvas.text("今日小猪", 54, 76, 56, bold=True)
+    canvas.text(title, 54, 76, 56, bold=True, width=760)
     canvas.text(name, 58, 158, 25, SUB, width=700)
     canvas.text(result["day"], 826, 43, 19, SUB)
     canvas.draw.rounded_rectangle((56, 222, 1024, 824), radius=32, fill="#ffffff")
@@ -260,7 +270,49 @@ def render_today(
     canvas.draw.rounded_rectangle((56, description_y, 1024, panel_bottom), radius=28, fill=PANEL)
     for i, line in enumerate(lines):
         canvas.text(line, 94, description_y + 26 + i * 43, 28)
-    y = panel_bottom + 35
+    if extras:
+        canvas.text("本次还获得", 58, grid_top, 30, bold=True)
+        canvas.text(f"共 {len(extras)} 只", 900, grid_top + 8, 20, SUB)
+        for index, item in enumerate(extras):
+            x = 56 + (index % columns) * 248
+            y = grid_top + 62 + (index // columns) * 246
+            canvas.draw.rounded_rectangle(
+                (x, y + 3, x + tile_w, y + tile_h + 3), radius=23, fill=BORDER
+            )
+            canvas.draw.rounded_rectangle((x, y, x + tile_w, y + tile_h), radius=23, fill="#ffffff")
+            canvas.draw.rounded_rectangle(
+                (x + 12, y + 12, x + 212, y + 154), radius=17, fill="#f9f4ed"
+            )
+            _paste_art(canvas, root, item["pig"]["asset"], (x + 32, y + 19, 160, 128))
+            badge = "聚集" if item["kind"] == "gather" else "连抽"
+            canvas.draw.rounded_rectangle(
+                (x + 150, y + 18, x + 206, y + 46),
+                radius=14,
+                fill=ACCENT if badge == "连抽" else TEXT,
+            )
+            canvas.text(badge, x + 158, y + 19, 18, "#ffffff", True)
+            if item["new"]:
+                canvas.draw.rounded_rectangle(
+                    (x + 18, y + 18, x + 74, y + 46), radius=14, fill="#d9a441"
+                )
+                canvas.text("NEW", x + 26, y + 20, 17, "#ffffff", True)
+            label = item["pig"]["name"]
+            face = canvas.font(23, True)
+            if canvas.draw.textlength(label, font=face) > 198:
+                while label and canvas.draw.textlength(label + "…", font=face) > 198:
+                    label = label[:-1]
+                label += "…"
+            canvas.text(
+                label,
+                x + 112 - canvas.draw.textlength(label, font=face) / 2,
+                y + 168,
+                23,
+                bold=True,
+            )
+    y = grid_bottom + 35
+    if summary:
+        canvas.text(summary, 68, y, 22, ACCENT, True, width=944)
+        y += 40
     for x, label, value in (
         (68, f"本猪拥有 · Lv{level}", f"{result['count']} 只"),
         (412, "累计收获", f"{progress['total']} 只"),
@@ -275,8 +327,67 @@ def render_today(
         canvas.draw.rounded_rectangle(
             (68, y, 68 + max(10, int(944 * min(ratio, 1))), y + 10), radius=5, fill=ACCENT
         )
-    hint = "发送「小猪玩法」和群友斗猪、换猪"
+    hint = hint or "发送「小猪玩法」和群友斗猪、换猪"
     canvas.text(f"{protection} · {hint}" if protection else hint, 68, y + 34, 19, ACCENT, width=944)
+    return finish(canvas.image)
+
+
+def render_wild(root: Path, wild: dict, unit: dict, describe) -> Card:
+    """Today's wild pig with its stats and skills, or who tamed it."""
+    tamed = wild["status"] == "defeated"
+    skills = unit["skills"]
+    height = 1000 + len(skills) * 44 + 120
+    canvas = Canvas(root, WIDTH, height)
+    canvas.text("PIGGY  /  WILD", 58, 34, 18, ACCENT, True)
+    canvas.text("野生小猪出没", 54, 76, 56, bold=True)
+    canvas.text(
+        f"{wild['day']} · 本群今日唯一一只 · 已被挑战 {wild['attempts']} 次",
+        58,
+        158,
+        24,
+        SUB,
+        width=960,
+    )
+    canvas.draw.rounded_rectangle(
+        (56, 222, 1024, 780), radius=32, fill="#efe9e2" if tamed else "#ffffff"
+    )
+    canvas.draw.rounded_rectangle((84, 244, 994, 664), radius=25, fill="#f9f4ed")
+    _paste_art(canvas, root, wild["pig"]["asset"], (250, 262, 580, 384), faded=tamed)
+    canvas.text(wild["pig"]["name"], 88, 690, 43, bold=True, width=640)
+    canvas.draw.rounded_rectangle((780, 690, 994, 746), radius=28, fill=SUB if tamed else ACCENT)
+    level = f"Lv{wild['level']} · {unit['style']}"
+    face = canvas.font(26, True)
+    canvas.draw.text(
+        (887 - canvas.draw.textlength(level, font=face) / 2, 702), level, font=face, fill="#ffffff"
+    )
+    stats = unit["stats"]
+    numbers = [
+        ("生命", stats["hp"]),
+        ("攻击", stats["atk"]),
+        ("防御", stats["def"]),
+        ("速度", stats["spd"]),
+        ("暴击", f"{stats['crit']}%"),
+        ("闪避", f"{stats['dodge']}%"),
+    ]
+    canvas.draw.rounded_rectangle((56, 806, 1024, 920), radius=26, fill=PANEL)
+    for index, (label, value) in enumerate(numbers):
+        x = 86 + index * 156
+        canvas.text(label, x, 822, 20, SUB)
+        canvas.text(str(value), x, 856, 32, bold=True)
+    canvas.text("已解锁技能", 58, 950, 26, bold=True)
+    for index, skill in enumerate(skills):
+        canvas.text(
+            f"{skill['name']}：{describe(skill)}", 70, 996 + index * 44, 22, TEXT, width=950
+        )
+    footer = height - 96
+    canvas.draw.line((56, footer, 1024, footer), fill=BORDER, width=2)
+    if tamed:
+        message = f"已被 {display(wild['victor'])} 收服 · 明天 0 点出现新的野猪"
+    else:
+        message = (
+            "发送「挑战小猪 你的小猪」出战 · 输了会失去出战的小猪 · 赢了收服它，全群各得 1 次再抽"
+        )
+    canvas.text(message, 58, footer + 26, 21, ACCENT, True, width=966)
     return finish(canvas.image)
 
 

@@ -13,6 +13,9 @@ from .battle import SKILL_SLOTS, entry_for, fighter, level_for, simulate
 from .config import PiggyError
 
 EAST_ASIA = timezone(timedelta(hours=8))
+# Safety valve only: with the default 50% chain chance this is never reached.
+MAX_DRAW_ITEMS = 500
+_SYSTEM_RANDOM = secrets.SystemRandom()
 SHOP_SIZE = 5
 REQUEST_LABELS = {"duel": "斗猪", "trade": "交换"}
 
@@ -166,6 +169,34 @@ class Database:
                     sold_at REAL,
                     PRIMARY KEY(app_id, group_id, day, slot)
                 );
+                CREATE TABLE IF NOT EXISTS draw_sessions (
+                    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+                    app_id TEXT NOT NULL, group_id TEXT NOT NULL, day TEXT NOT NULL,
+                    kind TEXT NOT NULL CHECK(kind IN ('daily','bonus')),
+                    event_id TEXT NOT NULL, created_at REAL NOT NULL, items TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS draw_sessions_user ON draw_sessions(user_id, day);
+                CREATE TABLE IF NOT EXISTS draw_bonus (
+                    app_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                    user_id INTEGER NOT NULL REFERENCES users(id), day TEXT NOT NULL,
+                    count INTEGER NOT NULL CHECK(count >= 0),
+                    PRIMARY KEY(app_id, group_id, user_id, day)
+                );
+                CREATE TABLE IF NOT EXISTS wild_pigs (
+                    id INTEGER PRIMARY KEY, app_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                    day TEXT NOT NULL, pig_id TEXT NOT NULL REFERENCES pigs(id),
+                    level INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active'
+                        CHECK(status IN ('active','defeated','expired')),
+                    attempts INTEGER NOT NULL DEFAULT 0, spawned_at REAL NOT NULL,
+                    defeated_by INTEGER REFERENCES users(id), defeated_at REAL,
+                    UNIQUE(app_id, group_id, day)
+                );
+                CREATE TABLE IF NOT EXISTS wild_battles (
+                    id INTEGER PRIMARY KEY, wild_id INTEGER NOT NULL REFERENCES wild_pigs(id),
+                    user_id INTEGER NOT NULL REFERENCES users(id), pig_id TEXT NOT NULL,
+                    level INTEGER NOT NULL, won INTEGER NOT NULL, seed INTEGER NOT NULL,
+                    log TEXT NOT NULL, summary TEXT NOT NULL, fought_at REAL NOT NULL
+                );
             """)
             columns = {row[1] for row in conn.execute("PRAGMA table_info(pigs)")}
             if "battle" not in columns:
@@ -255,11 +286,23 @@ class Database:
         *,
         duplicate_rate_cap: int = 20,
         duplicate_pity: int = 2,
+        gather_chance: int = 0,
+        chain_chance: int = 0,
+        app_id: str = "",
+        rng=None,
     ) -> dict:
+        """Daily draw, or a bonus draw when today's is done and a chance is left.
+
+        Every pig drawn (the first one and each chained one) independently rolls
+        "gather" (one extra copy) and then "chain" (draw another pig).
+        """
         now = now or datetime.now(timezone.utc)
         if now.tzinfo is None:
             raise ValueError("The draw clock must be timezone-aware")
         day = now.astimezone(EAST_ASIA).date().isoformat()
+        below = rng.randrange if rng else secrets.randbelow
+        choose = rng.choice if rng else secrets.choice
+        roll = rng.random if rng else _SYSTEM_RANDOM.random
 
         def draw(conn):
             conn.execute("BEGIN IMMEDIATE")
@@ -279,35 +322,96 @@ class Database:
                     (i for i, row in enumerate(records) if not row["repeated"]), len(records)
                 )
 
+            def finish(session, created):
+                items = json.loads(session["items"])
+                first = items[0]["pig"]
+                sessions_today = conn.execute(
+                    "SELECT count(*) FROM draw_sessions WHERE user_id=? AND day=? AND id<=?",
+                    (user_id, day, session["id"]),
+                ).fetchone()[0]
+                return {
+                    "pig": first,
+                    "items": items,
+                    "day": day,
+                    "created": created,
+                    "kind": session["kind"],
+                    "index": max(1, sessions_today),
+                    "count": _owned(conn, user_id, first["id"]),
+                    "new_species": created and items[0]["new"],
+                    "repeat_streak": repeat_streak() if duplicate_pity else 0,
+                    "bonus_left": self._bonus_left(conn, app_id, group_id, user_id, day),
+                }
+
+            replay = conn.execute(
+                "SELECT * FROM draw_sessions WHERE user_id=? AND event_id=?", (user_id, event_id)
+            ).fetchone()
+            if replay:
+                return finish(replay, False)
             existing = conn.execute(
                 "SELECT * FROM draw_records WHERE user_id=? AND day=?", (user_id, day)
             ).fetchone()
-            created = existing is None
-            if created:
-                available = conn.execute(
-                    "SELECT * FROM pigs WHERE enabled=1 ORDER BY id"
-                ).fetchall()
-                if not available:
-                    raise PiggyError("猪库没有启用的小猪，请联系管理员检查。")
-                owned_ids = {
-                    row[0]
-                    for row in conn.execute(
-                        "SELECT pig_id FROM collections WHERE user_id=?", (user_id,)
-                    )
-                }
+            if existing:
+                if self._bonus_left(conn, app_id, group_id, user_id, day) < 1:
+                    latest = conn.execute(
+                        "SELECT * FROM draw_sessions WHERE user_id=? AND day=? "
+                        "ORDER BY id DESC LIMIT 1",
+                        (user_id, day),
+                    ).fetchone()
+                    if latest:
+                        return finish(latest, False)
+                    # Drawn before sessions existed: show the single recorded pig.
+                    pig = json.loads(existing["snapshot"])
+                    legacy = {
+                        "id": 0,
+                        "kind": "daily",
+                        "items": json.dumps(
+                            [{"pig": pig, "kind": "base", "parent": None, "new": False}]
+                        ),
+                    }
+                    return finish(legacy, False)
+                conn.execute(
+                    "UPDATE draw_bonus SET count=count-1 "
+                    "WHERE app_id=? AND group_id=? AND user_id=? AND day=?",
+                    (app_id, group_id, user_id, day),
+                )
+            available = [
+                dict(row) for row in conn.execute("SELECT * FROM pigs WHERE enabled=1 ORDER BY id")
+            ]
+            if not available:
+                raise PiggyError("猪库没有启用的小猪，请联系管理员检查。")
+            for pig in available:
+                pig.pop("battle", None)
+            owned_ids = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT pig_id FROM collections WHERE user_id=?", (user_id,)
+                )
+            }
+            timestamp = now.timestamp()
+
+            def pick(force_new: bool) -> dict:
                 owned = [p for p in available if p["id"] in owned_ids]
                 unseen = [p for p in available if p["id"] not in owned_ids]
                 if not unseen:
                     pool = owned
-                elif not owned or (duplicate_pity and repeat_streak() >= duplicate_pity):
+                elif not owned or force_new:
                     pool = unseen
                 else:
                     # Integer comparison preserves the natural rate without rounding.
                     threshold = min(len(owned) * 100, duplicate_rate_cap * len(available))
-                    pool = owned if secrets.randbelow(100 * len(available)) < threshold else unseen
-                pig = dict(secrets.choice(pool))
-                pig.pop("battle", None)
-                timestamp = now.timestamp()
+                    pool = owned if below(100 * len(available)) < threshold else unseen
+                return dict(choose(pool))
+
+            def collect(pig: dict, kind: str, parent) -> dict:
+                new = pig["id"] not in owned_ids
+                _give(conn, user_id, pig["id"], timestamp)
+                owned_ids.add(pig["id"])
+                return {"pig": pig, "kind": kind, "parent": parent, "new": new}
+
+            daily = existing is None
+            pity = daily and bool(duplicate_pity) and repeat_streak() >= duplicate_pity
+            first = pick(pity)
+            if daily:
                 conn.execute(
                     """
                     INSERT INTO draw_records(user_id,day,drawn_at,pig_id,source_group,source_event,snapshot)
@@ -317,35 +421,229 @@ class Database:
                         user_id,
                         day,
                         timestamp,
-                        pig["id"],
+                        first["id"],
                         group_id,
                         event_id,
-                        json.dumps(pig, ensure_ascii=False),
+                        json.dumps(first, ensure_ascii=False),
                     ),
                 )
-                conn.execute(
-                    """
-                    INSERT INTO collections VALUES(?,?,1,?,?) ON CONFLICT(user_id,pig_id)
-                    DO UPDATE SET count=count+1,last_at=excluded.last_at
-                """,
-                    (user_id, pig["id"], timestamp, timestamp),
-                )
-            else:
-                pig = json.loads(existing["snapshot"])
-            count = conn.execute(
-                "SELECT count FROM collections WHERE user_id=? AND pig_id=?",
-                (user_id, pig["id"]),
-            ).fetchone()[0]
-            return {
-                "pig": pig,
-                "day": day,
-                "created": created,
-                "count": count,
-                "new_species": created and count == 1,
-                "repeat_streak": repeat_streak() if duplicate_pity else 0,
-            }
+            items, current, kind, parent = [], first, "base", None
+            while True:
+                index = len(items)
+                items.append(collect(current, kind, parent))
+                if roll() * 100 < gather_chance:
+                    items.append(collect(current, "gather", index))
+                if len(items) >= MAX_DRAW_ITEMS or roll() * 100 >= chain_chance:
+                    break
+                current, kind, parent = pick(False), "chain", index
+            cursor = conn.execute(
+                "INSERT INTO draw_sessions(user_id,app_id,group_id,day,kind,event_id,created_at,"
+                "items) VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    user_id,
+                    app_id,
+                    group_id,
+                    day,
+                    "daily" if daily else "bonus",
+                    event_id,
+                    timestamp,
+                    json.dumps(items, ensure_ascii=False),
+                ),
+            )
+            session = conn.execute(
+                "SELECT * FROM draw_sessions WHERE id=?", (cursor.lastrowid,)
+            ).fetchone()
+            return finish(session, True)
 
         return await self.run(draw)
+
+    @staticmethod
+    def _bonus_left(conn, app_id: str, group_id: str, user_id: int, day: str) -> int:
+        row = conn.execute(
+            "SELECT count FROM draw_bonus WHERE app_id=? AND group_id=? AND user_id=? AND day=?",
+            (app_id, group_id, user_id, day),
+        ).fetchone()
+        return row[0] if row else 0
+
+    async def bonus_count(
+        self, app_id: str, group_id: str, user_id: int, now: datetime | None = None
+    ) -> int:
+        day = (now or datetime.now(timezone.utc)).astimezone(EAST_ASIA).date().isoformat()
+        return await self.run(lambda c: self._bonus_left(c, app_id, group_id, user_id, day))
+
+    @staticmethod
+    def _wild_today(conn, app_id: str, group_id: str, day: str, level_max: int, stamp: float):
+        """One wild pig per group per day, spawned on first sight."""
+        row = conn.execute(
+            "SELECT * FROM wild_pigs WHERE app_id=? AND group_id=? AND day=?",
+            (app_id, group_id, day),
+        ).fetchone()
+        if row:
+            return row
+        conn.execute(
+            "UPDATE wild_pigs SET status='expired' "
+            "WHERE app_id=? AND group_id=? AND day<? AND status='active'",
+            (app_id, group_id, day),
+        )
+        pool = [r[0] for r in conn.execute("SELECT id FROM pigs WHERE enabled=1")]
+        if not pool:
+            raise PiggyError("猪库没有启用的小猪，野猪暂时无法出现。")
+        conn.execute(
+            "INSERT OR IGNORE INTO wild_pigs(app_id,group_id,day,pig_id,level,spawned_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (
+                app_id,
+                group_id,
+                day,
+                _SYSTEM_RANDOM.choice(pool),
+                _SYSTEM_RANDOM.randint(1, level_max),
+                stamp,
+            ),
+        )
+        return conn.execute(
+            "SELECT * FROM wild_pigs WHERE app_id=? AND group_id=? AND day=?",
+            (app_id, group_id, day),
+        ).fetchone()
+
+    @staticmethod
+    def _wild_view(conn, row) -> dict:
+        wild = dict(row)
+        wild["pig"] = dict(
+            conn.execute("SELECT * FROM pigs WHERE id=?", (row["pig_id"],)).fetchone()
+        )
+        wild["victor"] = (
+            dict(conn.execute("SELECT * FROM users WHERE id=?", (row["defeated_by"],)).fetchone())
+            if row["defeated_by"]
+            else None
+        )
+        return wild
+
+    async def wild_pig(
+        self, app_id: str, group_id: str, now: datetime | None = None, level_max: int = 20
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        day = now.astimezone(EAST_ASIA).date().isoformat()
+
+        def read(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            return self._wild_view(
+                conn, self._wild_today(conn, app_id, group_id, day, level_max, now.timestamp())
+            )
+
+        return await self.run(read)
+
+    async def challenge_wild(
+        self,
+        app_id: str,
+        group_id: str,
+        user_id: int,
+        pig_id: str,
+        *,
+        level_cap: int = 20,
+        level_max: int = 20,
+        now: datetime | None = None,
+        seed: int | None = None,
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        day = now.astimezone(EAST_ASIA).date().isoformat()
+        stamp = now.timestamp()
+
+        def challenge(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            wild = self._wild_view(
+                conn, self._wild_today(conn, app_id, group_id, day, level_max, stamp)
+            )
+            if wild["status"] == "defeated":
+                victor = wild["victor"]
+                raise PiggyError(
+                    f"今天的野生「{wild['pig']['name']}」已经被 {player_name(victor)} 收服了，"
+                    "明天 0 点会出现新的野猪。"
+                )
+            count = _owned(conn, user_id, pig_id)
+            if count < 1:
+                raise PiggyError("你的猪圈里没有这只小猪，换一只出战吧。")
+            user = dict(conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
+            mine = dict(conn.execute("SELECT * FROM pigs WHERE id=?", (pig_id,)).fetchone())
+            level = level_for(count, level_cap)
+            fighters = [
+                fighter(
+                    mine, entry_for(mine["battle"]), level, f"{player_name(user)}的{mine['name']}"
+                ),
+                fighter(
+                    wild["pig"],
+                    entry_for(wild["pig"]["battle"]),
+                    wild["level"],
+                    f"野生的{wild['pig']['name']}",
+                ),
+            ]
+            fight_seed = secrets.randbits(32) if seed is None else seed
+            result = simulate(fighters[0], fighters[1], fight_seed)
+            won = result["winner"] == 0
+            conn.execute("UPDATE wild_pigs SET attempts=attempts+1 WHERE id=?", (wild["id"],))
+            rewarded = 0
+            if won:
+                cursor = conn.execute(
+                    "UPDATE wild_pigs SET status='defeated',defeated_by=?,defeated_at=? "
+                    "WHERE id=? AND status='active'",
+                    (user_id, stamp, wild["id"]),
+                )
+                if cursor.rowcount != 1:
+                    raise PiggyError("野猪刚刚被别人收服了。")
+                prize = wild["pig"]
+                before = _owned(conn, user_id, prize["id"])
+                _give(conn, user_id, prize["id"], stamp)
+                change = _level_change(prize, before, before + 1, level_cap)
+                players = [
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT user_id FROM group_players WHERE app_id=? AND group_id=?",
+                        (app_id, group_id),
+                    )
+                ]
+                conn.executemany(
+                    """
+                    INSERT INTO draw_bonus VALUES(?,?,?,?,1) ON CONFLICT(app_id,group_id,user_id,day)
+                    DO UPDATE SET count=count+1
+                    """,
+                    [(app_id, group_id, player, day) for player in players],
+                )
+                rewarded = len(players)
+            else:
+                _take(conn, user_id, pig_id)
+                change = _level_change(mine, count, count - 1, level_cap)
+            cursor = conn.execute(
+                "INSERT INTO wild_battles(wild_id,user_id,pig_id,level,won,seed,log,summary,"
+                "fought_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    wild["id"],
+                    user_id,
+                    pig_id,
+                    level,
+                    int(won),
+                    fight_seed,
+                    json.dumps(result["log"], ensure_ascii=False),
+                    json.dumps(
+                        {"hp": result["hp"], "max_hp": result["max_hp"], "rounds": result["rounds"]}
+                    ),
+                    stamp,
+                ),
+            )
+            wild = self._wild_view(
+                conn, conn.execute("SELECT * FROM wild_pigs WHERE id=?", (wild["id"],)).fetchone()
+            )
+            return {
+                "id": cursor.lastrowid,
+                "day": day,
+                "user": user,
+                "wild": wild,
+                "fighters": fighters,
+                "result": result,
+                "won": won,
+                "change": change,
+                "rewarded": rewarded,
+            }
+
+        return await self.run(challenge)
 
     async def collection(self, user_id: int) -> dict:
         def read(conn):

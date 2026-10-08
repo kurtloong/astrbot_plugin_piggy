@@ -139,6 +139,19 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
     async def test_protection_messages_in_both_display_modes(self):
         start = datetime(2026, 9, 1, tzinfo=timezone.utc)
         await self.db.draw(self.user["id"], "a", "first", start)
+
+        def drawn(settings, result, progress):
+            labels = []
+            original = ImageDraw.ImageDraw.text
+
+            def record(canvas, xy, text, *args, **kwargs):
+                labels.append(str(text))
+                return original(canvas, xy, text, *args, **kwargs)
+
+            with patch.object(ImageDraw.ImageDraw, "text", record):
+                message = today_message(settings, self.root, self.user, result, progress)
+            return message, " ".join(labels)
+
         with patch("core.database.secrets.randbelow", return_value=0):
             for offset, expected in ((1, "重复保护 1/2"), (2, "下次领取必出未收集小猪！")):
                 result = await self.db.draw(
@@ -148,30 +161,17 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
                     start + timedelta(days=offset),
                 )
                 progress = await self.db.collection(self.user["id"])
-                hosted = today_message(Settings(), self.root, self.user, result, progress)
-                self.assertIn(expected, hosted.text)
-                labels = []
-                original = ImageDraw.ImageDraw.text
-
-                def record(canvas, xy, text, *args, **kwargs):
-                    labels.append(str(text))
-                    return original(canvas, xy, text, *args, **kwargs)
-
-                with patch.object(ImageDraw.ImageDraw, "text", record):
-                    local = today_message(
-                        Settings(display={"draw": False}),
-                        self.root,
-                        self.user,
-                        result,
-                        progress,
-                    )
+                hosted, text = drawn(Settings(), result, progress)
+                self.assertFalse(hosted.local)
+                self.assertIn(expected, text)
+                local, text = drawn(Settings(display={"draw": False}), result, progress)
                 self.assertTrue(local.local)
-                self.assertTrue(any(expected in label for label in labels))
-        disabled = today_message(Settings(duplicate_pity=0), self.root, self.user, result, progress)
-        self.assertNotIn("下次领取", disabled.text)
+                self.assertIn(expected, text)
+        _, text = drawn(Settings(duplicate_pity=0), result, progress)
+        self.assertNotIn("下次领取", text)
         progress["unlocked"] = progress["active_total"]
-        complete = today_message(Settings(), self.root, self.user, result, progress)
-        self.assertNotIn("下次领取", complete.text)
+        _, text = drawn(Settings(), result, progress)
+        self.assertNotIn("下次领取", text)
 
     def write_catalog(self, ids):
         definitions = []
@@ -470,32 +470,43 @@ class ConfigAndButtonsTests(unittest.TestCase):
         self.assertIn("CERTIFICATE_VERIFY_FAILED", detail)
         self.assertNotIn("\n", detail)
 
-    def test_today_mentions_requester_and_quotes_all_description_lines(self):
-        result = {
-            "pig": {
-                "name": "猪",
-                "asset": "pig.png",
-                "description": "第一行\n第二行",
-                "analysis": '性格\n<qqbot-at-user id="someone" />',
-            },
-            "created": True,
-            "new_species": True,
-            "day": "2026-09-14",
-            "count": 1,
-        }
-        user = {"id": 1, "open_id": "actual-member", "nickname": "不应出现在正文的昵称"}
-        progress = {"unlocked": 1, "active_total": 96, "total": 1}
-        message = today_message(Settings(), Path("."), user, result, progress)
-        self.assertTrue(message.text.startswith('<qqbot-at-user id="actual-member" />\n'))
-        self.assertNotIn(user["nickname"], message.text)
-        self.assertIn("\n\n首次解锁！\n\n**猪**\n\n![", message.text)
-        self.assertIn("> 第一行\n> 第二行\n>\n> 性格\n> ", message.text)
-        self.assertNotIn('<qqbot-at-user id="someone" />', message.text)
-        result["created"] = False
-        repeated = today_message(Settings(), Path("."), user, result, progress)
-        self.assertTrue(repeated.text.startswith('<qqbot-at-user id="actual-member" />\n'))
-        self.assertNotIn("首次解锁", repeated.text)
-        self.assertIn("今天已经抽过", repeated.text)
+    def test_today_card_mentions_requester_and_draws_description(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "assets").mkdir()
+            Image.new("RGB", (16, 16)).save(root / "assets" / "pig.png")
+            result = {
+                "pig": {
+                    "name": "猪",
+                    "asset": "pig.png",
+                    "description": "第一行\n第二行",
+                    "analysis": '性格\n<qqbot-at-user id="someone" />',
+                },
+                "created": True,
+                "new_species": True,
+                "day": "2026-09-14",
+                "count": 1,
+            }
+            user = {"id": 1, "open_id": "actual-member", "nickname": "不应出现在正文的昵称"}
+            progress = {"unlocked": 1, "active_total": 96, "total": 1}
+            labels = []
+            original = ImageDraw.ImageDraw.text
+
+            def record(canvas, xy, text, *args, **kwargs):
+                labels.append(str(text))
+                return original(canvas, xy, text, *args, **kwargs)
+
+            with patch.object(ImageDraw.ImageDraw, "text", record):
+                message = today_message(Settings(), root, user, result, progress)
+                result["created"] = False
+                repeated = today_message(Settings(), root, user, result, progress)
+            self.assertTrue(message.text.startswith('<qqbot-at-user id="actual-member" />\n'))
+            self.assertIn("![今日小猪", message.text)
+            self.assertNotIn(user["nickname"], message.text)
+            self.assertNotIn('<qqbot-at-user id="someone" />', message.text)
+            self.assertIn("首次解锁！", labels)
+            self.assertIn("今天已经抽过啦，还是这只", labels)
+            self.assertTrue(repeated.text.startswith('<qqbot-at-user id="actual-member" />\n'))
 
     def test_both_rankings_only_show_ten_players_without_pagination(self):
         user = {"open_id": "requester"}
@@ -567,6 +578,7 @@ class ConfigAndButtonsTests(unittest.TestCase):
                         "小猪玩法",
                         "斗猪排行",
                         "斗猪记录",
+                        "小猪挑战",
                         "小猪图鉴 1",
                         "小猪图鉴 3",
                     )
