@@ -725,6 +725,120 @@ def render_raid_poster(root: Path, poster: dict) -> Card:
     return finish(canvas.image)
 
 
+def _raid_footer(canvas, measure_lines: list[str], top: int):
+    for index, line in enumerate(measure_lines):
+        canvas.text(line, 70, top + index * 34, 21, SUB, width=950)
+
+
+def render_raid_list(root: Path, data: dict) -> Card:
+    """All dungeons at a glance: three boss portraits each, with mechanic names."""
+    measure = Canvas(root, WIDTH, 1)
+    team = [line for entry in data["team"] for line in measure.wrap(entry, 22, 900)]
+    tips = [line for entry in data["tips"] for line in measure.wrap(entry, 21, 940)]
+    measure.image.close()
+    panel_h, gap, top = 404, 24, 232
+    dungeons = data["dungeons"]
+    team_top = top + len(dungeons) * (panel_h + gap)
+    team_h = 70 + len(team) * 34 if team else 0
+    tips_top = team_top + team_h + (30 if team else 0)
+    height = tips_top + 50 + len(tips) * 34 + 100
+    canvas = Canvas(root, WIDTH, height)
+    canvas.text("PIGGY  /  RAID", 58, 34, 18, ACCENT, True)
+    canvas.text(data["title"], 54, 76, 56, bold=True)
+    canvas.text(data["subtitle"], 58, 158, 24, SUB, width=960)
+    tile_w = (920 - 2 * 16) // 3
+    for index, item in enumerate(dungeons):
+        y = top + index * (panel_h + gap)
+        done = item["done"]
+        canvas.draw.rounded_rectangle((56, y + 3, 1024, y + panel_h + 3), radius=28, fill=BORDER)
+        canvas.draw.rounded_rectangle(
+            (56, y, 1024, y + panel_h), radius=28, fill="#f1ebe4" if done else "#ffffff"
+        )
+        canvas.draw.ellipse((80, y + 22, 128, y + 70), fill=SUB if done else ACCENT)
+        face = canvas.font(26, True)
+        key = str(item["key"])
+        canvas.draw.text(
+            (104 - canvas.draw.textlength(key, font=face) / 2, y + 29),
+            key,
+            font=face,
+            fill="#ffffff",
+        )
+        canvas.text(item["name"], 144, y + 22, 32, TEXT, True, width=480)
+        canvas.text(item["intro"], 144, y + 66, 19, SUB, width=640)
+        _tag(canvas, "今天已打过" if done else "今天可挑战", 860, y + 26, SUB if done else TEXT, 18)
+        for slot, boss in enumerate(item["bosses"]):
+            x = 80 + slot * (tile_w + 16)
+            ty = y + 110
+            canvas.draw.rounded_rectangle((x, ty, x + tile_w, ty + 274), radius=20, fill=PANEL)
+            canvas.draw.rounded_rectangle(
+                (x + 10, ty + 10, x + tile_w - 10, ty + 130), radius=16, fill="#f9f4ed"
+            )
+            _paste_art(canvas, root, boss["asset"], (x + 20, ty + 14, tile_w - 40, 112), faded=done)
+            canvas.text(f"第 {slot + 1} 关", x + 16, ty + 140, 17, ACCENT, True)
+            canvas.text(boss["name"], x + 16, ty + 164, 22, TEXT, True, width=tile_w - 32)
+            for row, name in enumerate(boss["mechanics"]):
+                canvas.text(f"· {name}", x + 16, ty + 198 + row * 21, 17, SUB, width=tile_w - 32)
+    if team:
+        canvas.draw.rounded_rectangle(
+            (56, team_top, 1024, team_top + team_h), radius=26, fill=PANEL
+        )
+        canvas.text("本群队伍", 84, team_top + 18, 26, bold=True)
+        for index, line in enumerate(team):
+            canvas.text(line, 84, team_top + 62 + index * 34, 22, TEXT, width=920)
+    canvas.text("怎么玩", 58, tips_top, 26, bold=True)
+    _raid_footer(canvas, tips, tips_top + 46)
+    footer = height - 78
+    canvas.draw.line((56, footer, 1024, footer), fill=BORDER, width=2)
+    canvas.text(data["footer"], 58, footer + 22, 20, ACCENT, width=966)
+    return finish(canvas.image)
+
+
+def render_raid_detail(root: Path, data: dict) -> Card:
+    """One dungeon: each boss with its art and the full text of its mechanics."""
+    measure = Canvas(root, WIDTH, 1)
+    rows = []
+    for boss in data["bosses"]:
+        lines = []
+        for name, text in boss["mechanics"]:
+            wrapped = measure.wrap(text, 21, 640)
+            lines.append((name, wrapped))
+        height = max(270, 96 + sum(36 + len(w) * 30 + 10 for _, w in lines))
+        rows.append((boss, lines, height))
+    tips = [line for entry in data["tips"] for line in measure.wrap(entry, 21, 940)]
+    measure.image.close()
+    top = 232
+    body = sum(h + 24 for _, _, h in rows)
+    tips_top = top + body + 10
+    height = tips_top + 50 + len(tips) * 34 + 100
+    canvas = Canvas(root, WIDTH, height)
+    canvas.text("PIGGY  /  RAID", 58, 34, 18, ACCENT, True)
+    canvas.text(data["title"], 54, 76, 56, bold=True, width=960)
+    canvas.text(data["subtitle"], 58, 158, 24, SUB, width=960)
+    y = top
+    for boss, lines, row_h in rows:
+        canvas.draw.rounded_rectangle((56, y + 3, 1024, y + row_h + 3), radius=28, fill=BORDER)
+        canvas.draw.rounded_rectangle((56, y, 1024, y + row_h), radius=28, fill="#ffffff")
+        canvas.draw.rounded_rectangle((76, y + 20, 316, y + 250), radius=20, fill="#f9f4ed")
+        _paste_art(canvas, root, boss["asset"], (86, y + 30, 220, 210))
+        canvas.text(f"第 {boss['stage']} 关", 340, y + 22, 20, ACCENT, True)
+        canvas.text(boss["name"], 340, y + 50, 32, TEXT, True, width=660)
+        cursor = y + 100
+        for name, wrapped in lines:
+            canvas.text(name, 340, cursor, 23, ACCENT, True, width=660)
+            cursor += 36
+            for line in wrapped:
+                canvas.text(line, 340, cursor, 21, TEXT, width=660)
+                cursor += 30
+            cursor += 10
+        y += row_h + 24
+    canvas.text("怎么玩", 58, tips_top, 26, bold=True)
+    _raid_footer(canvas, tips, tips_top + 46)
+    footer = height - 78
+    canvas.draw.line((56, footer, 1024, footer), fill=BORDER, width=2)
+    canvas.text(data["footer"], 58, footer + 22, 20, ACCENT, width=966)
+    return finish(canvas.image)
+
+
 def render_duel_history(root: Path, name: str, history: dict) -> Card:
     """One row per duel with both pigs' art, the result and what changed hands."""
     records = history["records"]

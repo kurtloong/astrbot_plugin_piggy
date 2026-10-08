@@ -34,6 +34,24 @@ DUNGEONS = (
         "intro": "供奉着猪神的古老神殿，诅咒与神迹并存。",
         "bosses": ("demon-pig", "chained_crown_pig", "pig_god"),
     },
+    {
+        "key": 4,
+        "name": "亡灵猪墓",
+        "intro": "埋着历代老猪的墓园，半夜总有骨头在响。",
+        "bosses": ("zombie-pig", "pighub0876", "skeleton-pig"),
+    },
+    {
+        "key": 5,
+        "name": "深海猪渊",
+        "intro": "一路潜到马里亚纳海沟，水压越来越大。",
+        "bosses": ("pighub0233", "pighub0007", "pighub0830"),
+    },
+    {
+        "key": 6,
+        "name": "星际猪港",
+        "intro": "停满了 UFO 的太空港，外面是一整片猪星团。",
+        "bosses": ("alien-pig", "pighub0872", "pighub0336"),
+    },
 )
 
 GUARD_SKILL = {
@@ -89,6 +107,11 @@ class _RaidUnit(_Unit):
         self.glitch = False
         self.blind = False
         self.zeroed = set()
+        # Rounds left off the field (abducted, or a boss away on its mothership).
+        self.away = 0
+        self.possessed = False
+        self.lured = False
+        self.marked = False
 
     def stat(self, key: str) -> float:
         if key in self.zeroed or (key == "dodge" and self.blind):
@@ -118,6 +141,7 @@ class _RaidBattle(_Battle):
         self.falls = []
         self.field_events = []
         self.void_note = ""
+        self.acting = None
         self._configure()
 
     def _configure(self):
@@ -153,6 +177,10 @@ class _RaidBattle(_Battle):
     def alive_heroes(self) -> list:
         return [h for h in self.heroes if h.alive]
 
+    def present_heroes(self) -> list:
+        """Alive heroes that are on the field and can be targeted."""
+        return [h for h in self.heroes if h.alive and not h.away]
+
     def alive_units(self) -> list:
         return [u for u in self.heroes + self.foes if u.alive]
 
@@ -165,9 +193,13 @@ class _RaidBattle(_Battle):
             raw *= CRIT_MULTIPLIER
         raw *= 60 / (60 + target.stat("def"))
         raw *= 1 + target.vuln / 100
-        return self.hurt(target, max(1.0, raw))
+        acting, self.acting = self.acting, attacker
+        try:
+            return self.hurt(target, max(1.0, raw))
+        finally:
+            self.acting = acting
 
-    def summon(self, label: str, hp_pct: float, atk_pct: float):
+    def summon(self, label: str, hp_pct: float, atk_pct: float, skill: dict = GUARD_SKILL):
         base = self.boss.data
         stats = dict(base["stats"])
         stats["hp"] = max(1, round(self.boss.max_hp * hp_pct))
@@ -176,7 +208,24 @@ class _RaidBattle(_Battle):
             **base,
             "label": label,
             "stats": stats,
-            "skills": [GUARD_SKILL],
+            "skills": [skill],
+            "dot_basis": stats["hp"],
+            "start_hp": stats["hp"],
+        }
+        unit = _RaidUnit(data, 1)
+        self.foes.append(unit)
+        return unit
+
+    def summon_from(self, hero, label: str, hp_pct: float):
+        """Raise a fallen hero on the enemy side, keeping its own skills."""
+        stats = dict(hero.data["stats"])
+        stats["hp"] = max(1, round(hero.max_hp * hp_pct))
+        data = {
+            **hero.data,
+            "label": label,
+            "stats": stats,
+            "seat": None,
+            "mods": {},
             "dot_basis": stats["hp"],
             "start_hp": stats["hp"],
         }
@@ -194,10 +243,12 @@ class _RaidBattle(_Battle):
 
     def target_for(self, unit):
         if unit.side == 0:
-            foes = [f for f in self.foes if f.alive]
+            foes = [f for f in self.foes if f.alive and not f.away]
             guards = [f for f in foes if f is not self.boss]
-            return self.rng.choice(guards) if guards else self.boss
-        heroes = self.alive_heroes()
+            if guards and self.mech.GUARDS_FIRST:
+                return self.rng.choice(guards)
+            return self.rng.choice(foes) if foes else None
+        heroes = self.present_heroes()
         if not heroes:
             return None
         if unit is self.boss:
@@ -217,6 +268,8 @@ class _RaidBattle(_Battle):
     def hurt(self, unit, amount: float, source: str = "") -> float:
         was_alive = unit.alive
         dealt = super().hurt(unit, amount)
+        if was_alive and not unit.alive and unit is self.boss and self.mech.prevent_fall(self):
+            return dealt
         if was_alive and not unit.alive and unit.charm:
             unit.charm = False
             unit.hp = 1.0
@@ -233,10 +286,19 @@ class _RaidBattle(_Battle):
         self.flush()
 
     def dot_amount(self, unit, dot):
-        return unit.dot_basis * dot["pct"] / 100
+        amount = unit.dot_basis * dot["pct"] / 100 * self.mech.dot_factor(self, unit)
+        if unit.side == 0 and self.cfg.get("dot_cut"):
+            amount *= 1 - self.cfg["dot_cut"] / 100
+        return amount
+
+    def heal(self, unit, amount: float) -> int:
+        return super().heal(unit, amount * self.mech.heal_factor(self, unit))
 
     def crit_roll(self, unit, enemy) -> bool:
         crit = super().crit_roll(unit, enemy)
+        if unit.lured and enemy is self.boss:
+            unit.lured, unit.marked = False, True
+            return True
         if crit and enemy is self.boss:
             return self.mech.crit_against(self, unit)
         return crit
@@ -247,6 +309,13 @@ class _RaidBattle(_Battle):
 
     def adjust_hit(self, unit, enemy, raw, effect):
         raw *= 1 + enemy.vuln / 100
+        raw *= self.mech.outgoing_factor(self, unit, enemy)
+        if unit is self.boss and enemy.marked:
+            enemy.marked = False
+            raw *= 2
+            self.note(f"灯笼鱼的光还亮在 {enemy.label} 身上，这一下伤害翻倍")
+        if enemy.side == 1:
+            raw = self.mech.foe_hit(self, unit, enemy, raw, effect)
         if enemy is self.boss:
             raw = self.mech.incoming(self, unit, raw, effect)
         return raw
@@ -256,6 +325,8 @@ class _RaidBattle(_Battle):
             self.mech.outgoing(self, enemy, dealt)
 
     def effect(self, unit, enemy, effect, skill):
+        if self.mech.blocks_effect(self, unit, effect):
+            return "被禁令挡下了"
         text = super().effect(unit, enemy, effect, skill)
         if effect["type"] == "cleanse":
             unit.vuln = 0
@@ -264,14 +335,32 @@ class _RaidBattle(_Battle):
             self.mech.dispelled(self)
         return text
 
+    def choose(self, unit, enemy) -> dict:
+        if unit.side == 0 and self.mech.force_basic(self, unit):
+            return unit.actives[0]
+        return super().choose(unit, enemy)
+
+    def turn(self, unit, enemy):
+        self.acting = None
+        super().turn(unit, enemy)
+
     def act(self, unit, enemy):
+        self.acting = unit
         if unit is self.boss and self.mech.before_act(self):
             return
-        if getattr(unit, "glitch", False):
+        if unit.glitch:
             unit.glitch = False
             lost = self.hurt(unit, unit.max_hp * 0.05)
             self.say(f"{unit.label} 返回了 404，原地疯狂刷新，损失 {round(lost)} 生命")
             return
+        if unit.possessed:
+            unit.possessed = False
+            allies = [h for h in self.present_heroes() if h is not unit]
+            if allies:
+                ally = self.rng.choice(allies)
+                self.say(f"{unit.label} 被附身了，转身攻击了队友 {ally.label}")
+                self.cast(unit, ally, unit.actives[0])
+                return
         super().act(unit, enemy)
 
     def decided(self):
@@ -285,9 +374,10 @@ class _RaidBattle(_Battle):
         units = self.alive_units()
         if self.cfg.get("conveyor"):
             self.rng.shuffle(units)
-            return units
-        keyed = [(-u.stat("spd"), self.rng.random(), index) for index, u in enumerate(units)]
-        return [units[k[2]] for k in sorted(keyed)]
+        else:
+            keyed = [(-u.stat("spd"), self.rng.random(), index) for index, u in enumerate(units)]
+            units = [units[k[2]] for k in sorted(keyed)]
+        return self.mech.order(self, units)
 
     def run(self) -> dict:
         for unit in self.heroes + self.foes:
@@ -313,11 +403,19 @@ class _RaidBattle(_Battle):
             if winner is not None:
                 break
             for unit in self.order():
-                if not unit.alive:
+                if not unit.alive or unit.away:
                     continue
                 if self.cfg.get("slip") and unit.side == 0 and self.rng.random() < 0.1:
                     self.say(f"{unit.label} 在冰面上滑倒了，这回合爬不起来")
                     continue
+                if self.cfg.get("shark") and unit.side == 0 and self.rng.random() < 0.05:
+                    bitten = self.hurt(unit, unit.max_hp * 0.1)
+                    self.say(
+                        f"一条鲨鱼从水里窜出来咬了 {unit.label} 一口，损失 {round(bitten)} 生命"
+                    )
+                    self.flush()
+                    if not unit.alive:
+                        continue
                 actions = 1
                 if unit is self.boss:
                     actions += self.mech.extra_actions(self)
@@ -328,6 +426,8 @@ class _RaidBattle(_Battle):
                         break
                     enemy = self.target_for(unit)
                     if enemy is None:
+                        if index == 0:
+                            self.say(f"{unit.label} 找不到可以攻击的目标")
                         break
                     if index == 0:
                         self.turn(unit, enemy)
@@ -340,6 +440,8 @@ class _RaidBattle(_Battle):
             if winner is not None:
                 break
             self.mech.round_end(self)
+            for unit in self.heroes + self.foes:
+                unit.away = max(0, unit.away - 1)
             if self.cfg.get("leak"):
                 for unit in self.alive_units():
                     self.hurt(unit, unit.dot_basis * self.cfg["leak"] / 100)

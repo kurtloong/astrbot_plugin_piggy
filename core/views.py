@@ -9,13 +9,15 @@ from .battle import STAT_NAMES, STATS, describe_skill, entry_for, fighter, level
 from .config import PiggyError, Settings
 from .database import EAST_ASIA
 from .delivery import Message
-from .raid import DUNGEONS, PARTY_SIZE, REST_HEAL, TIMEOUT_MINUTES, mechanics_for
+from .raid import DUNGEONS, PARTY_SIZE, REST_HEAL, TIMEOUT_MINUTES, dungeon, mechanics_for
 from .rendering import (
     ATLAS_SHEET_SIZE,
     PEN_SHEET_SIZE,
     render_collection,
     render_duel_history,
     render_duel_poster,
+    render_raid_detail,
+    render_raid_list,
     render_raid_poster,
     render_ranking,
     render_shop,
@@ -208,46 +210,97 @@ def _raid_members(raid: dict) -> list[str]:
     ]
 
 
-def raid_list_message(settings: Settings, user: dict, status: dict) -> Message:
-    blocks = _expired_notice(status["expired"])
-    names = status["bosses"]
-    for item in DUNGEONS:
-        state = "今天已打过" if item["key"] in status["done"] else "今天可挑战"
-        blocks.append(f"【{item['key']} {item['name']}】{item['intro']}（{state}）")
-        lines = []
-        for stage, slot in enumerate(item["bosses"], 1):
-            mechanics = mechanics_for(slot).MECHANICS
-            lines.append(f"第 {stage} 关 {names[slot]}")
-            lines += [f"　{name}：{text}" for name, text in mechanics]
-        blocks.append(lines)
+RAID_TIPS = (
+    "开启副本 编号 你的小猪 —— 发起组队，例如：开启副本 1 猪人",
+    "加入副本 你的小猪 —— 加入本群正在组队的队伍，满 4 人自动出发",
+    f"组队 {TIMEOUT_MINUTES} 分钟内没满 {PARTY_SIZE} 人自动取消；开打后不能中途加入",
+    "每关打赢：每位队员各得 1 只 boss 猪，本群所有玩家各得 1 次再抽",
+    "战斗中倒下的猪，主人失去 1 只；每个副本每人每天 1 次",
+)
+
+
+def _raid_team(status: dict) -> list[str]:
+    lines = _expired_notice(status["expired"])
     raid = status["raid"]
     if raid:
         minutes = max(1, math.ceil((raid["expires_at"] - status["now"]) / 60))
         if raid["status"] == "forming":
-            blocks.append(
-                f"本群正在组队：「{raid['dungeon']['name']}」{len(raid['members'])}/{PARTY_SIZE}，"
+            lines.append(
+                f"正在组队：「{raid['dungeon']['name']}」{len(raid['members'])}/{PARTY_SIZE}，"
                 f"约 {minutes} 分钟后过期，发送「加入副本 你的小猪」加入"
             )
         else:
-            blocks.append(
-                f"本群的「{raid['dungeon']['name']}」队伍已打完第 {raid['stage']} 关，"
+            lines.append(
+                f"「{raid['dungeon']['name']}」队伍已打完第 {raid['stage']} 关，"
                 f"等队长决定继续还是撤退（约 {minutes} 分钟）"
             )
-        blocks.append(_raid_members(raid))
-    blocks.append(
-        [
-            "开启副本 编号 你的小猪 —— 发起组队，例如：开启副本 1 猪人",
-            "加入副本 你的小猪 —— 加入本群正在组队的队伍，满 4 人自动出发",
-            f"组队 {TIMEOUT_MINUTES} 分钟内没满 4 人自动取消；开打后不能中途加入",
-            "每关打赢：每位队员各得 1 只 boss 猪，本群所有玩家各得 1 次再抽",
-            "战斗中倒下的猪，主人失去 1 只；每个副本每人每天 1 次",
-        ]
-    )
-    return text_message(
+        lines += _raid_members(raid)
+    return lines
+
+
+def _raid_subtitle(user: dict, status: dict) -> str:
+    left = sum(1 for item in DUNGEONS if item["key"] not in status["done"])
+    return f"{status['day']} · {display_name(user)} 今天还能挑战 {left}/{len(DUNGEONS)} 个副本"
+
+
+async def raid_list_message(settings: Settings, root: Path, user: dict, status: dict) -> Message:
+    data = {
+        "title": "猪副本",
+        "subtitle": _raid_subtitle(user, status),
+        "dungeons": [
+            {
+                "key": item["key"],
+                "name": item["name"],
+                "intro": item["intro"],
+                "done": item["key"] in status["done"],
+                "bosses": [
+                    {
+                        **status["bosses"][slot],
+                        "mechanics": [name for name, _ in mechanics_for(slot).MECHANICS],
+                    }
+                    for slot in item["bosses"]
+                ],
+            }
+            for item in DUNGEONS
+        ],
+        "team": _raid_team(status),
+        "tips": RAID_TIPS,
+        "footer": "发送「猪副本 编号」查看某个副本 boss 机制的详细说明",
+    }
+    card = await asyncio.to_thread(render_raid_list, root, data)
+    return card_message(
         settings,
+        user,
+        card,
         "猪副本",
-        blocks,
+        "raid",
         buttons=[("开启副本", "开启副本 "), ("加入副本", "加入副本 ")],
+    )
+
+
+async def raid_detail_message(
+    settings: Settings, root: Path, user: dict, status: dict, key: int
+) -> Message:
+    item = dungeon(key)
+    state = "今天已打过" if item["key"] in status["done"] else "今天可挑战"
+    data = {
+        "title": f"{item['key']} {item['name']}",
+        "subtitle": f"{item['intro']} · {state}",
+        "bosses": [
+            {**status["bosses"][slot], "stage": stage, "mechanics": mechanics_for(slot).MECHANICS}
+            for stage, slot in enumerate(item["bosses"], 1)
+        ],
+        "tips": (f"开启副本 {item['key']} 你的小猪 —— 发起这个副本的组队", *RAID_TIPS[1:]),
+        "footer": "发送「猪副本」查看全部副本",
+    }
+    card = await asyncio.to_thread(render_raid_detail, root, data)
+    return card_message(
+        settings,
+        user,
+        card,
+        f"猪副本 · {item['name']}",
+        "raid",
+        buttons=[("开启副本", f"开启副本 {item['key']} "), ("猪副本", "猪副本")],
     )
 
 
@@ -548,7 +601,7 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
         ],
         "【副本】",
         [
-            "猪副本 —— 查看 3 个副本、9 个 boss 的专属机制",
+            f"猪副本 [编号] —— 查看 {len(DUNGEONS)} 个副本、{len(DUNGEONS) * 3} 个 boss 的专属机制",
             f"开启副本 编号 {example} —— 发起组队；群友发送「加入副本 他的猪」加入",
             f"满 {PARTY_SIZE} 人自动开打，{TIMEOUT_MINUTES} 分钟没满员自动取消，开打后不能中途加入",
             "每关打赢：每位队员各得 1 只 boss 猪，全群各得 1 次再抽；倒下的猪，主人失去 1 只",
