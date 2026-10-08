@@ -526,11 +526,28 @@ class Database:
 
         def read(conn):
             conn.execute("BEGIN IMMEDIATE")
-            return self._wild_view(
+            existed = conn.execute(
+                "SELECT 1 FROM wild_pigs WHERE app_id=? AND group_id=? AND day=?",
+                (app_id, group_id, day),
+            ).fetchone()
+            wild = self._wild_view(
                 conn, self._wild_today(conn, app_id, group_id, day, level_max, now.timestamp())
             )
+            wild["spawned"] = existed is None
+            return wild
 
         return await self.run(read)
+
+    async def active_groups(self, app_id: str, since: float) -> list[str]:
+        """Groups where anyone used the plugin after `since`."""
+        rows = await self.run(
+            lambda c: c.execute(
+                "SELECT DISTINCT group_id FROM group_players WHERE app_id=? AND last_seen>=? "
+                "ORDER BY group_id",
+                (app_id, since),
+            ).fetchall()
+        )
+        return [row[0] for row in rows]
 
     async def challenge_wild(
         self,

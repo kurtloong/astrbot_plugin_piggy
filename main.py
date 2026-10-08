@@ -4,6 +4,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -49,6 +50,10 @@ from .core.views import (
 )
 
 MAX_INFLIGHT = 12
+ANNOUNCE_INTERVAL = 600
+ANNOUNCE_ACTIVE_DAYS = 7
+# Bound at import so a patched asyncio.sleep can never turn the loop into a busy spin.
+_sleep = asyncio.sleep
 REQUEST_TIMEOUT = 240
 MENTION_TAG = re.compile(r"<@!?[^>]*>|<qqbot-at-user[^>]*>")
 MENTION_ID = re.compile(
@@ -175,7 +180,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.6.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.6.1")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -198,6 +203,9 @@ class PiggyPlugin(Star):
         self.stopping = False
         self.backup_task = None
         self.cleanup_task = None
+        self.announce_task = None
+        # The QQ client of each bot app, learnt from the latest message it handled.
+        self.bots = {}
 
     async def initialize(self):
         async with self.init_lock:
@@ -230,6 +238,8 @@ class PiggyPlugin(Star):
             self.ready = True
             self.backup_task = asyncio.create_task(self._backups())
             self.cleanup_task = asyncio.create_task(self._cleanup())
+            if self.settings.wild_announce:
+                self.announce_task = asyncio.create_task(self._announce_wild())
 
     async def _backups(self):
         while True:
@@ -254,6 +264,45 @@ class PiggyPlugin(Star):
                 )
             await asyncio.sleep(3600)
 
+    async def _announce_wild(self):
+        while True:
+            try:
+                await self.announce_wild_once()
+            except Exception as exc:
+                logger.warning(
+                    "[piggy] Wild pig announcement failed: %s",
+                    exception_detail(exc, self.settings),
+                )
+            # Wake shortly after midnight (UTC+8), and at least every few minutes for
+            # groups whose bot only becomes known after a restart.
+            now = time.time() + 8 * 3600
+            await _sleep(min(ANNOUNCE_INTERVAL, 86400 - now % 86400 + 5))
+
+    async def announce_wild_once(self):
+        """Spawn today's wild pig in recently active groups and post it without @."""
+        if not self.settings.wild_announce:
+            return
+        since = time.time() - ANNOUNCE_ACTIVE_DAYS * 86400
+        for app_id, bot in list(self.bots.items()):
+            for group in await self.db.active_groups(app_id, since):
+                if self.stopping:
+                    return
+                wild = await self.db.wild_pig(app_id, group, level_max=self.settings.wild_level_max)
+                if not wild["spawned"]:
+                    continue
+                target = SimpleNamespace(bot=bot, get_group_id=lambda group=group: group)
+                try:
+                    message = await asyncio.to_thread(
+                        wild_message, self.settings, self.root, {"open_id": ""}, wild
+                    )
+                    await self.sender.announce(target, message)
+                except Exception as exc:
+                    logger.warning(
+                        "[piggy] Could not announce the wild pig in a group "
+                        "(the group may not allow proactive bot messages): %s",
+                        exception_detail(exc, self.settings),
+                    )
+
     async def _handle(self, event: AstrMessageEvent, command: str, args: tuple = ()):
         if (
             not isinstance(event, QQOfficialMessageEvent)
@@ -270,6 +319,7 @@ class PiggyPlugin(Star):
         if not app_id or not event.message_obj.message_id:
             await event.send(event.plain_result("未取得官方消息标识，暂时无法处理收藏。"))
             return
+        self.bots[app_id] = event.bot
         key = message_key(event, app_id)
         if key in self.inflight:
             await asyncio.shield(self.inflight[key])
@@ -725,7 +775,7 @@ class PiggyPlugin(Star):
         await asyncio.gather(*tasks, return_exceptions=True)
         async with self.init_lock:
             pass
-        for task in (self.backup_task, self.cleanup_task):
+        for task in (self.backup_task, self.cleanup_task, self.announce_task):
             if task:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
