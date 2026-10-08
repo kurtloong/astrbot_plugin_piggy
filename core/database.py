@@ -508,7 +508,9 @@ class Database:
     @staticmethod
     def _wild_view(conn, row) -> dict:
         wild = dict(row)
-        wild["pig"] = dict(conn.execute("SELECT * FROM pigs WHERE id=?", (row["pig_id"],)).fetchone())
+        wild["pig"] = dict(
+            conn.execute("SELECT * FROM pigs WHERE id=?", (row["pig_id"],)).fetchone()
+        )
         wild["victor"] = (
             dict(conn.execute("SELECT * FROM users WHERE id=?", (row["defeated_by"],)).fetchone())
             if row["defeated_by"]

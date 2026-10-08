@@ -120,6 +120,7 @@ class Settings:
             "ranking": False,
             "shop": False,
             "duel": False,
+            "wild": False,
         }
     )
     temp_cache_hours: int = 12
@@ -151,6 +152,9 @@ class Settings:
     duel_daily_limit: int = 5
     request_ttl_minutes: int = 10
     battle_markdown: bool = False
+    draw_gather_chance: int = 50
+    draw_chain_chance: int = 50
+    wild_level_max: int = 20
 
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":
@@ -208,7 +212,7 @@ class Settings:
                     raise PiggyError(f"配置 {key} 必须是合法 JSON。") from None
         obj = cls(**values)
         if not isinstance(obj.display, dict) or any(
-            key not in {"draw", "atlas", "pen", "ranking", "shop", "duel"}
+            key not in {"draw", "atlas", "pen", "ranking", "shop", "duel", "wild"}
             or type(value) is not bool
             for key, value in obj.display.items()
         ):
@@ -227,6 +231,9 @@ class Settings:
             ("battle_level_cap", 5, 100),
             ("duel_daily_limit", 1, 100),
             ("request_ttl_minutes", 1, 60),
+            ("draw_gather_chance", 0, 90),
+            ("draw_chain_chance", 0, 90),
+            ("wild_level_max", 1, 100),
         ):
             value = getattr(obj, key)
             if type(value) is not int or not low <= value <= high:

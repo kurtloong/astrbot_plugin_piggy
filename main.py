@@ -44,6 +44,8 @@ from .core.views import (
     stats_message,
     today_message,
     trade_message,
+    wild_battle_message,
+    wild_message,
 )
 
 MAX_INFLIGHT = 12
@@ -69,6 +71,8 @@ BATTLE_COMMANDS = {
     "duel_replay",
     "shop",
     "shop_exchange",
+    "wild",
+    "wild_challenge",
 }
 USAGE = {
     "duel": "用法：斗猪 @对方 你的小猪",
@@ -331,6 +335,9 @@ class PiggyPlugin(Star):
                     event.message_obj.message_id,
                     duplicate_rate_cap=self.settings.duplicate_rate_cap,
                     duplicate_pity=self.settings.duplicate_pity,
+                    gather_chance=self.settings.draw_gather_chance,
+                    chain_chance=self.settings.draw_chain_chance,
+                    app_id=app_id,
                 )
                 message = await asyncio.to_thread(
                     today_message,
@@ -480,6 +487,26 @@ class PiggyPlugin(Star):
             )
             level = level_for(request["give_count"], settings.battle_level_cap)
             return request_message(settings, request, level)
+        if command == "wild":
+            if settings.use_host("wild"):
+                settings.check_host()
+            wild = await self.db.wild_pig(app_id, group, level_max=settings.wild_level_max)
+            return await asyncio.to_thread(wild_message, settings, self.root, user, wild)
+        if command == "wild_challenge":
+            if not words:
+                raise PiggyError("用法：挑战小猪 你的小猪，例如：挑战小猪 猪人")
+            if settings.use_host("wild"):
+                settings.check_host()
+            pig = await self.db.find_pig(" ".join(words))
+            result = await self.db.challenge_wild(
+                app_id,
+                group,
+                user["id"],
+                pig["id"],
+                level_cap=settings.battle_level_cap,
+                level_max=settings.wild_level_max,
+            )
+            return await wild_battle_message(settings, self.root, result)
         if command == "shop":
             shop = await self.db.shop(app_id, group, user["id"])
             if settings.use_host("shop"):
@@ -600,6 +627,16 @@ class PiggyPlugin(Star):
     async def shop_exchange(self, event: AstrMessageEvent):
         """用自己的 1 只小猪换商店里的小猪。用法：商店交换 编号 你的小猪"""
         await self._handle(event, "shop_exchange", command_words(event, ("商店交换",)))
+
+    @filter.command("小猪挑战")
+    async def wild(self, event: AstrMessageEvent):
+        """查看本群今天的野生小猪：每天一只，打败后全群各得 1 次再抽。"""
+        await self._handle(event, "wild")
+
+    @filter.command("挑战小猪")
+    async def wild_challenge(self, event: AstrMessageEvent):
+        """用自己的小猪挑战野猪，输了会失去出战的小猪。用法：挑战小猪 你的小猪"""
+        await self._handle(event, "wild_challenge", command_words(event, ("挑战小猪",)))
 
     @filter.command("斗猪排行")
     async def duel_ranking(self, event: AstrMessageEvent):

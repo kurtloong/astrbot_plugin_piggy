@@ -18,6 +18,7 @@ from .rendering import (
     render_ranking,
     render_shop,
     render_today,
+    render_wild,
 )
 
 
@@ -68,6 +69,7 @@ def keyboard(
                 button("斗猪玩法", "小猪玩法"),
                 button("斗猪排行", "斗猪排行"),
                 button("斗猪记录", "斗猪记录"),
+                button("小猪挑战", "小猪挑战"),
             ]
         },
     ]
@@ -84,14 +86,16 @@ def keyboard(
 def today_message(
     settings: Settings, root: Path, user: dict, result: dict, progress: dict
 ) -> Message:
-    pig = result["pig"]
-    state = (
-        "今天已经抽过啦，还是这只"
-        if not result["created"]
-        else "首次解锁！"
-        if result["new_species"]
-        else "老朋友又来啦！"
-    )
+    items = result.get("items") or [
+        {"pig": result["pig"], "kind": "base", "parent": None, "new": result["new_species"]}
+    ]
+    extras = items[1:]
+    if not result["created"]:
+        state = "今天已经抽过啦，还是这些" if extras else "今天已经抽过啦，还是这只"
+    elif result["new_species"]:
+        state = "首次解锁！"
+    else:
+        state = "老朋友又来啦！"
     protection = ""
     streak = result.get("repeat_streak", 0)
     if settings.duplicate_pity and streak and progress["unlocked"] < progress["active_total"]:
@@ -101,34 +105,85 @@ def today_message(
             else f"重复保护 {streak}/{settings.duplicate_pity}"
         )
     level = level_for(result["count"], settings.battle_level_cap)
-    tip = f"Lv{level} · 已解锁 {min(level, 5)}/5 个技能 · 发送「小猪玩法」和群友斗猪、换猪"
-    if not settings.use_host("draw"):
-        card = render_today(
-            root,
-            display_name(user),
-            result,
-            progress,
-            "今日已领取" if not result["created"] else state,
-            protection,
-            level,
-        )
-        return Message("", (card.data,), local=True)
-    description = "\n".join(
-        f"> {line}" if line else ">"
-        for line in md(f"{pig['description']}\n\n{pig['analysis']}").splitlines()
+    index = result.get("index", 1)
+    title = "今日小猪" if index == 1 else f"今日小猪 · 第 {index} 抽"
+    summary = ""
+    if extras:
+        new = sum(1 for item in items if item["new"])
+        gathers = sum(1 for item in items if item["kind"] == "gather")
+        chains = sum(1 for item in items if item["kind"] == "chain")
+        summary = f"本次共 {len(items)} 只 · 新图鉴 {new} 只 · 聚集 {gathers} 次 · 连抽 {chains} 次"
+    left = result.get("bonus_left", 0)
+    if left:
+        hint = f"还有 {left} 次再抽机会，再发「今日小猪」即可"
+    elif not result["created"]:
+        hint = "打败本群的野生小猪，全群都能再抽一次 · 发送「小猪挑战」"
+    else:
+        hint = f"Lv{level} · 已解锁 {min(level, 5)}/5 个技能 · 发送「小猪玩法」和群友斗猪、换猪"
+    card = render_today(
+        root,
+        display_name(user),
+        result,
+        progress,
+        state,
+        protection,
+        level,
+        title=title,
+        extras=extras,
+        summary=summary,
+        hint=hint,
     )
-    text = (
-        f'<qqbot-at-user id="{user["open_id"]}" />\n\n### 🐷 今日小猪\n\n'
-        f"{state}\n\n**{md(pig['name'])}**\n\n"
-        f"![小猪 #512px #512px]({{{{image:0}}}})\n\n"
-        f"{description}\n\n"
-        f"本猪拥有 **{result['count']}** 只 · 总收获 **{progress['total']}** 只\n\n"
-        f"已解锁 **{progress['unlocked']}/{progress['active_total']}** · {result['day']}"
+    return card_message(settings, user, card, "今日小猪", "draw", mention=user)
+
+
+def wild_message(settings: Settings, root: Path, user: dict, wild: dict) -> Message:
+    entry = entry_for(wild["pig"].get("battle"))
+    unit = fighter(wild["pig"], entry, wild["level"])
+    card = render_wild(root, wild, unit, describe_skill)
+    buttons = [] if wild["status"] == "defeated" else [("挑战小猪", "挑战小猪 ")]
+    return card_message(
+        settings, user, card, "野生小猪", "wild", buttons=buttons + [("今日小猪", "今日小猪")]
     )
-    if protection:
-        text += f"\n\n{protection}"
-    text += f"\n\n{md(tip)}"
-    return Message(text, (root / "assets" / pig["asset"],), keyboard(settings, user["open_id"]))
+
+
+async def wild_battle_message(settings: Settings, root: Path, result: dict) -> Message:
+    mine, wild_unit = result["fighters"]
+    fight = result["result"]
+    user, wild = result["user"], result["wild"]
+    name = display_name(user)
+    if result["won"]:
+        headline = f"{name} 收服了野生「{wild['pig']['name']}」！"
+        settlement = [
+            f"{name}：{_level_text(result['change'])}",
+            f"本群 {result['rewarded']} 位玩家各获得 1 次再抽机会，今天再发「今日小猪」即可使用",
+        ]
+    else:
+        headline = f"野生「{wild['pig']['name']}」获胜，{name} 失去了「{mine['name']}」"
+        settlement = [f"{name}：{_level_text(result['change'])}", "野猪还在，大家可以继续挑战"]
+    poster = {
+        "title": "野猪挑战",
+        "subtitle": f"{result['day']} · 第 {wild['attempts']} 次挑战 · {fight['rounds']} 回合",
+        "sides": [
+            {
+                "owner": owner,
+                "pig": unit["name"],
+                "asset": unit["asset"],
+                "level": unit["level"],
+                "style": unit["style"],
+                "hp": fight["hp"][index],
+                "max_hp": fight["max_hp"][index],
+                "won": fight["winner"] == index,
+            }
+            for index, (unit, owner) in enumerate(((mine, name), (wild_unit, "野生小猪")))
+        ],
+        "headline": headline,
+        "log": fight["log"],
+        "settlement": settlement,
+        "footer": "发送「小猪挑战」查看野猪 · 每个群每天只有一只野猪",
+    }
+    card = await asyncio.to_thread(render_duel_poster, root, poster)
+    buttons = [("今日小猪", "今日小猪")] if result["won"] else [("挑战小猪", "挑战小猪 ")]
+    return card_message(settings, user, card, "野猪挑战", "wild", buttons=buttons)
 
 
 async def collection_message(
@@ -245,6 +300,16 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
             "斗猪排行 —— 本群斗猪胜率排行，至少 3 场上榜",
             "斗猪记录 [页码] —— 自己的历史对战",
             "斗猪回放 编号 —— 重看某场的完整战报",
+        ],
+        "【抽卡】",
+        [
+            "今日小猪 —— 每天一抽，每只猪都可能触发猪群聚集（多得 1 只相同的）和小猪连抽（再抽 1 只）",
+            "有再抽机会时，当天再发「今日小猪」就能再抽一次",
+        ],
+        "【野猪】",
+        [
+            "小猪挑战 —— 查看本群今天的野生小猪（每天一只，1–20 级随机）",
+            f"挑战小猪 {example} —— 输了失去出战的猪，赢了收服野猪，全群各得 1 次再抽（当天有效）",
         ],
         "【商店】",
         [
@@ -550,7 +615,7 @@ def cancelled_message(settings: Settings, cancelled: list[dict]) -> Message:
     )
 
 
-def card_message(settings, user, card, title, command, page=1, pages=1, buttons=()):
+def card_message(settings, user, card, title, command, page=1, pages=1, buttons=(), mention=None):
     hosted = settings.use_host(command)
     board = None
     if hosted:
@@ -560,7 +625,10 @@ def card_message(settings, user, card, title, command, page=1, pages=1, buttons=
             else keyboard(settings, user["open_id"], title, page, pages)
         )
     return Message(
-        f"![{title} #{card.width}px #{card.height}px]({{{{image:0}}}})" if hosted else "",
+        (f'<qqbot-at-user id="{mention["open_id"]}" />\n\n' if mention else "")
+        + f"![{title} #{card.width}px #{card.height}px]({{{{image:0}}}})"
+        if hosted
+        else "",
         (card.data,),
         board,
         local=not hosted,
