@@ -1,4 +1,6 @@
 Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'
+Noto Emoji, Noto Sans Symbols, Noto Sans Symbols 2 and Noto Sans Math (fallback fonts):
+Copyright 2013-2022 The Noto Project Authors (https://github.com/notofonts)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

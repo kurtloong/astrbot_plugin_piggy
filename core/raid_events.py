@@ -123,6 +123,60 @@ ENTRY_EVENTS = (
         [("team", "dodge", 15)],
         3,
     ),
+    _event("holywater", "圣水", "洒了一身圣水，本关受到的持续伤害 -50%", 4, [("dot_cut", 50)], 4),
+    _event(
+        "gravefog",
+        "墓地迷雾",
+        "墓地起了雾，全队闪避 +10，但脚下看不清，速度 -10%",
+        4,
+        [("team", "dodge", 10), ("team", "spd", -10)],
+        4,
+    ),
+    _event(
+        "revived",
+        "诈尸",
+        "棺材板动了一下，boss 生命 +15%、攻击 +10%",
+        3,
+        [("boss_hp", 15), ("boss", "atk", 10)],
+        4,
+    ),
+    _event(
+        "relic", "亡者遗物", "墓里埋着遗物！每位队员各得 1 只随机小猪", 2, [("chest",)], 4, True
+    ),
+    _event("bubble", "气泡", "被一串大气泡包住，全队获得 15% 生命的护盾", 4, [("shield", 15)], 5),
+    _event("current", "顺流", "赶上一股顺流，全队速度 +15%", 4, [("team", "spd", 15)], 5),
+    _event(
+        "shark",
+        "鲨鱼出没",
+        "附近有鲨鱼游荡，每回合每只队员猪有 5% 概率被咬一口",
+        3,
+        [("shark",)],
+        5,
+    ),
+    _event(
+        "wreck", "沉船宝藏", "发现一艘沉船！每位队员各得 1 只随机小猪", 2, [("chest",)], 5, True
+    ),
+    _event(
+        "zerog",
+        "失重",
+        "进入失重区，全队闪避 +15，但使不上劲，攻击 -10%",
+        4,
+        [("team", "dodge", 15), ("team", "atk", -10)],
+        6,
+    ),
+    _event("station", "能量补给站", "找到一座能量补给站，全队回复 25% 生命", 4, [("heal", 25)], 6),
+    _event(
+        "junk", "太空垃圾", "被太空垃圾砸得坑坑洼洼，全队防御 -15%", 4, [("team", "def", -15)], 6
+    ),
+    _event(
+        "express",
+        "星际快递",
+        "星际快递送来包裹！本群所有玩家额外得到 1 次再抽",
+        2,
+        [("clover",)],
+        6,
+        True,
+    ),
 )
 
 INTERLUDE_EVENTS = (
@@ -226,13 +280,13 @@ def resolve(events, party: list[dict], rng, cfg: dict, rewards: dict, mechanics=
                 cfg["boss_hp"] += op[1]
             elif kind == "boss_stun":
                 cfg["boss_stun"] = max(cfg["boss_stun"], op[1])
-            elif kind in ("ally", "charm", "frost_ward", "slip", "conveyor", "mimic"):
+            elif kind in ("ally", "charm", "frost_ward", "slip", "conveyor", "mimic", "shark"):
                 if kind == "mimic":
                     rewards["mimic"] = True
                 else:
                     cfg[kind] = True
-            elif kind == "leak":
-                cfg["leak"] = op[1]
+            elif kind in ("leak", "dot_cut"):
+                cfg[kind] = op[1]
             elif kind == "fury":
                 cfg["fury_round"] = op[1]
             elif kind == "tablet":

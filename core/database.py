@@ -764,17 +764,21 @@ class Database:
         return raid
 
     @staticmethod
-    def _boss_names(conn) -> dict:
-        """Boss slot id -> display name; a missing boss pig is shown as possessed."""
-        names = {
-            row["id"]: row["name"]
-            for row in conn.execute("SELECT id,name FROM pigs WHERE enabled=1")
+    def _boss_pigs(conn) -> dict:
+        """Boss slot id -> name and art; a missing boss pig is shown as possessed."""
+        found = {
+            row["id"]: {"name": row["name"], "asset": row["asset"]}
+            for row in conn.execute("SELECT id,name,asset FROM pigs WHERE enabled=1")
         }
         return {
-            slot: names.get(slot, "被附身的神秘小猪")
+            slot: found.get(slot, {"name": "被附身的神秘小猪", "asset": ""})
             for item in DUNGEONS
             for slot in item["bosses"]
         }
+
+    @classmethod
+    def _boss_names(cls, conn) -> dict:
+        return {slot: pig["name"] for slot, pig in cls._boss_pigs(conn).items()}
 
     @staticmethod
     def _group_raid(conn, app_id: str, group_id: str):
@@ -829,7 +833,7 @@ class Database:
                 "done": done,
                 "day": day,
                 "now": now.timestamp(),
-                "bosses": self._boss_names(conn),
+                "bosses": self._boss_pigs(conn),
             }
 
         return await self.run(read)
@@ -1169,6 +1173,7 @@ class Database:
                     "hp": state["hp"],
                     "max_hp": state["max_hp"],
                     "alive": state["alive"],
+                    "dealt": state.get("dealt", 0),
                 }
             )
         copies = 2 if rewards["mimic"] else 1
@@ -1272,6 +1277,7 @@ class Database:
                     "hp": result["heroes"][-1]["hp"],
                     "max_hp": result["heroes"][-1]["max_hp"],
                     "alive": result["heroes"][-1]["alive"],
+                    "dealt": result["heroes"][-1].get("dealt", 0),
                 }
                 if ally and result
                 else None

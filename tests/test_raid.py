@@ -25,7 +25,12 @@ from core.raid_events import (
     resolve,
     roll_entry,
 )
-from core.views import raid_battle_message, raid_list_message, raid_lobby_message
+from core.views import (
+    raid_battle_message,
+    raid_detail_message,
+    raid_list_message,
+    raid_lobby_message,
+)
 
 NOW = datetime(2026, 10, 8, 4, 0, tzinfo=timezone.utc)
 BOSS_IDS = [slot for item in DUNGEONS for slot in item["bosses"]]
@@ -335,12 +340,44 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             poster = await raid_battle_message(Settings(), self.root, battle)
         self.assertTrue(poster.local)
         joined = "".join(labels)
-        for text in ("BOSS", "援军", "野生援军", "战斗过程", "结算"):
+        for text in ("BOSS", "援军", "野生援军", "伤害统计", "/回合", "战斗过程", "结算"):
             self.assertIn(text, joined)
         status = await self.db.raid_status("app", "group", self.users[0]["id"], NOW)
-        listing = raid_list_message(Settings(), self.users[0], status)
-        self.assertIn("三重锁链", listing.text)
-        self.assertIn("今天已打过", listing.text)
+        for message in (
+            raid_list_message(Settings(), self.root, self.users[0], status),
+            raid_detail_message(Settings(), self.root, self.users[0], status, 6),
+        ):
+            labels.clear()
+            with patch.object(ImageDraw.ImageDraw, "text", record):
+                card = await message
+            self.assertTrue(card.local)
+            joined = "".join(labels)
+            self.assertIn("今天", joined)
+            self.assertIn("怎么玩", joined)
+
+    async def test_raid_cards_list_every_dungeon_and_detail_text(self):
+        status = await self.db.raid_status("app", "group", self.users[0]["id"], NOW)
+        labels = []
+        original = ImageDraw.ImageDraw.text
+
+        def record(canvas, xy, text, *args, **kwargs):
+            labels.append(str(text))
+            return original(canvas, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", record):
+            await raid_list_message(Settings(), self.root, self.users[0], status)
+        joined = "".join(labels)
+        for item in DUNGEONS:
+            self.assertIn(item["name"], joined)
+        self.assertIn("三重锁链", joined)
+        self.assertIn("6/6", joined)
+        labels.clear()
+        with patch.object(ImageDraw.ImageDraw, "text", record):
+            await raid_detail_message(Settings(), self.root, self.users[0], status, 4)
+        joined = "".join(labels)
+        self.assertIn("亡灵猪墓", joined)
+        self.assertIn("白骨重组", joined)
+        self.assertIn("开启副本 4", joined)
 
 
 class RaidEngineTests(unittest.TestCase):
@@ -455,6 +492,144 @@ class RaidEngineTests(unittest.TestCase):
             fight.hurt(guard, 10_000)
         self.assertIs(fight.target_for(fight.heroes[0]), fight.boss)
 
+    def test_damage_is_credited_to_each_pig(self):
+        fight = battle("goblin-pig")
+        hero, other = fight.heroes[0], fight.heroes[1]
+        fight.acting = hero
+        fight.hurt(fight.boss, 40)
+        fight.effect(hero, fight.boss, {"type": "dot", "pct": 5, "turns": 2}, {})
+        fight.acting = None
+        fight.dot_amount(fight.boss, fight.boss.dots[-1])
+        fight.hurt(fight.boss, 10)
+        fight.acting = other
+        fight.hurt(hero, 30)
+        self.assertEqual(fight.dealt[id(hero)], 50)
+        self.assertNotIn(id(other), fight.dealt)
+        result = battle("pig_god").run()
+        dealt = [h["dealt"] for h in result["heroes"]]
+        self.assertTrue(all(isinstance(value, int) for value in dealt))
+        self.assertGreater(sum(dealt), 0)
+
+    def test_zombie_poisons_and_raises_its_victims(self):
+        fight = battle("zombie-pig")
+        hero = fight.heroes[0]
+        hero.dots.append({"pct": 5, "turns": 3, "label": "尸毒"})
+        for _ in range(4):
+            fight.mech.outgoing(fight, hero, 1)
+        poison = [d for d in hero.dots if d.get("stacks")]
+        self.assertEqual([(d["pct"], d["label"]) for d in poison], [(9, "尸毒×3")])
+        self.assertEqual(hero.dots[0]["pct"], 5)
+        self.assertEqual(fight.mech.heal_factor(fight, hero), 0.5)
+        self.assertIs(fight.order()[-1], fight.boss)
+        fight.acting = fight.boss
+        fight.hurt(fight.heroes[1], 10_000)
+        self.assertEqual(len(fight.foes), 2)
+        self.assertTrue(fight.foes[1].label.startswith("僵尸"))
+        self.assertEqual(fight.foes[1].side, 1)
+        fight.acting = None
+        fight.hurt(fight.heroes[2], 10_000)
+        self.assertEqual(len(fight.foes), 2)
+
+    def test_two_faced_ghost_flips_damage_types_and_possesses(self):
+        fight = battle("pighub0876")
+        fight.round = 1
+        fight.mech.round_start(fight)
+        self.assertEqual(fight.mech.dot_factor(fight, fight.boss), 2.0)
+        self.assertEqual(fight.mech.incoming(fight, None, 10, {"true": True}), 20)
+        self.assertEqual(fight.mech.incoming(fight, None, 10, {}), 5)
+        fight.round = 3
+        fight.mech.round_start(fight)
+        self.assertEqual(fight.mech.dot_factor(fight, fight.boss), 0.0)
+        hero = fight.heroes[0]
+        hero.possessed = True
+        boss_hp = fight.boss.hp
+        fight.act(hero, fight.boss)
+        self.assertFalse(hero.possessed)
+        self.assertEqual(fight.boss.hp, boss_hp)
+        self.assertTrue(any("被附身了" in line for line in fight.log))
+
+    def test_skeleton_reassembles_twice(self):
+        fight = battle("skeleton-pig")
+        boss = fight.boss
+        fight.hurt(boss, 10**6)
+        self.assertTrue(boss.alive)
+        self.assertAlmostEqual(boss.ratio, 0.35)
+        fight.hurt(boss, 10**6)
+        self.assertAlmostEqual(boss.ratio, 0.15)
+        self.assertEqual(boss.mods["def"], 40)
+        fight.hurt(boss, 10**6)
+        self.assertFalse(boss.alive)
+        self.assertEqual(fight.mech.incoming(fight, None, 10, {"hits": 3}), 6)
+
+    def test_nezha_always_moves_first(self):
+        fight = battle("pighub0233")
+        for hero in fight.heroes:
+            hero.mods["spd"] = 500
+        for _ in range(5):
+            self.assertIs(fight.order()[0], fight.boss)
+
+    def test_fish_duke_decrees_and_scales(self):
+        fight = battle("pighub0007")
+        hero = fight.heroes[0]
+        hero.hp = 10
+        fight.round = 4
+        fight.mech.decree, fight.mech.until = "禁疗令", 5
+        self.assertEqual(fight.heal(hero, 50), 0)
+        heal = {"type": "heal", "pct": 20}
+        self.assertEqual(fight.effect(hero, fight.boss, heal, {}), "被禁令挡下了")
+        fight.round = 6
+        self.assertGreater(fight.heal(hero, 50), 0)
+        fight.mech.decree, fight.mech.until = "禁技令", 7
+        self.assertIs(fight.choose(hero, fight.boss), hero.actives[0])
+        shields = sum(h.shield for h in fight.heroes)
+        self.assertAlmostEqual(fight.mech.incoming(fight, hero, 10, {}), 8)
+        self.assertEqual(fight.mech.scales, 19)
+        self.assertGreater(sum(h.shield for h in fight.heroes), shields)
+
+    def test_deep_sea_lure_crits_then_doubles_the_counter(self):
+        fight = battle("pighub0830")
+        hero = fight.heroes[0]
+        hero.lured = True
+        self.assertTrue(fight.crit_roll(hero, fight.boss))
+        self.assertTrue(hero.marked)
+        self.assertEqual(fight.adjust_hit(fight.boss, hero, 10, {}), 20)
+        self.assertFalse(hero.marked)
+
+    def test_alien_abducts_a_pig_off_the_field(self):
+        fight = battle("alien-pig")
+        fight.round = 4
+        fight.mech.round_start(fight)
+        taken = [h for h in fight.heroes if h.away]
+        self.assertEqual(len(taken), 1)
+        self.assertNotIn(taken[0], fight.present_heroes())
+        for _ in range(20):
+            self.assertIsNot(fight.target_for(fight.boss), taken[0])
+        fight.hurt(fight.boss, fight.boss.max_hp * 0.6)
+        self.assertTrue(fight.boss.away)
+        self.assertIsNone(fight.target_for(fight.heroes[1]))
+
+    def test_star_cluster_shares_damage(self):
+        fight = battle("pighub0872")
+        fight.mech.setup(fight)
+        core, first, second = fight.foes
+        before = [unit.hp for unit in fight.foes]
+        share = fight.adjust_hit(fight.heroes[0], first, 90, {})
+        self.assertAlmostEqual(share, 30)
+        self.assertAlmostEqual(before[0] - core.hp, 30)
+        self.assertAlmostEqual(before[2] - second.hp, 30)
+
+    def test_cosmic_rings_absorb_every_segment(self):
+        fight = battle("pighub0336")
+        before = fight.boss.hp
+        text = fight.damage(
+            fight.heroes[0], fight.boss, {"type": "damage", "power": 1, "hits": 3, "sure": True}
+        )
+        self.assertIn("打了个空", text)
+        self.assertEqual((fight.boss.hp, fight.mech.rings), (before, 0))
+        fight.round = 3
+        fight.mech.round_start(fight)
+        self.assertEqual(fight.mech.rings, 1)
+
     def test_boss_mechanics_are_listed_for_every_boss(self):
         for slot in BOSS_IDS:
             fight = battle(slot)
@@ -502,7 +677,7 @@ class RaidEventTests(unittest.TestCase):
 
     def test_dungeon_events_stay_in_their_dungeon(self):
         rng = random.Random(5)
-        seen = {1: set(), 2: set(), 3: set()}
+        seen = {item["key"]: set() for item in DUNGEONS}
         for key in seen:
             for _ in range(600):
                 seen[key] |= {e["dungeon"] for e in roll_entry(rng, key)}

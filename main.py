@@ -26,7 +26,7 @@ from .core.config import PiggyError, Settings, migrate_host_config
 from .core.database import Database
 from .core.delivery import Message, QQError, QQTransport, Sender, message_key
 from .core.diagnostics import exception_detail
-from .core.raid import dungeon
+from .core.raid import DUNGEONS, dungeon
 from .core.rendering import clean_cards
 from .core.storage import ImagePublisher, UploadError
 from .core.views import (
@@ -39,6 +39,7 @@ from .core.views import (
     duel_replay_message,
     guide_message,
     raid_battle_message,
+    raid_detail_message,
     raid_list_message,
     raid_lobby_message,
     ranking_message,
@@ -93,9 +94,8 @@ USAGE = {
     "duel": "用法：斗猪 @对方 你的小猪",
     "trade": "用法：小猪交换 @对方 你的小猪 对方的小猪",
 }
-RAID_USAGE = (
-    "用法：开启副本 编号 你的小猪，例如：开启副本 1 猪人（1 冰封猪圈 / 2 机械猪厂 / 3 猪神殿）"
-)
+RAID_NAMES = " / ".join(f"{item['key']} {item['name']}" for item in DUNGEONS)
+RAID_USAGE = f"用法：开启副本 编号 你的小猪，例如：开启副本 1 猪人（{RAID_NAMES}）"
 NAME_USAGE = {
     "duel": "斗猪 #编号 你的小猪",
     "trade": "小猪交换 #编号 你的小猪 对方的小猪",
@@ -193,7 +193,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.7.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.8.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -642,8 +642,18 @@ class PiggyPlugin(Star):
     async def _raid(self, app_id: str, group: str, user: dict, command: str, words: tuple):
         settings, uid = self.settings, user["id"]
         if command == "raid":
+            key = None
+            if words:
+                try:
+                    key = dungeon(words[0])["key"]
+                except KeyError:
+                    raise PiggyError(f"用法：猪副本 [编号]（{RAID_NAMES}）") from None
+            if settings.use_host("raid"):
+                settings.check_host()
             status = await self.db.raid_status(app_id, group, uid)
-            return raid_list_message(settings, user, status)
+            if key is None:
+                return await raid_list_message(settings, self.root, user, status)
+            return await raid_detail_message(settings, self.root, user, status, key)
         if command == "raid_leave":
             result = await self.db.leave_raid(app_id, group, uid)
             return raid_lobby_message(
@@ -746,8 +756,8 @@ class PiggyPlugin(Star):
 
     @filter.command("猪副本")
     async def raid(self, event: AstrMessageEvent):
-        """查看 3 个猪副本、9 个 boss 的机制和本群的组队情况。"""
-        await self._handle(event, "raid")
+        """查看猪副本总览和本群的组队情况；猪副本 编号 查看某个副本的 boss 机制。"""
+        await self._handle(event, "raid", command_words(event, ("猪副本",)))
 
     @filter.command("开启副本")
     async def raid_open(self, event: AstrMessageEvent):

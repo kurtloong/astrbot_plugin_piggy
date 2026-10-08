@@ -70,10 +70,10 @@
         "hint": "开启：图床图片 + Markdown + 按钮。关闭：内存渲染后直传 QQ，不带 MD 或按钮。"
       },
       "raid": {
-        "description": "猪副本战报使用图床",
+        "description": "猪副本卡片与战报使用图床",
         "type": "bool",
         "default": false,
-        "hint": "开启：图床图片 + Markdown + 继续/撤退按钮，并 @ 队长。关闭：内存渲染后直传 QQ，不带 MD 或按钮。"
+        "hint": "开启：图床图片 + Markdown + 按钮，战报附带继续/撤退按钮并 @ 队长。关闭：内存渲染后直传 QQ，不带 MD 或按钮。"
       }
     },
     "default": {

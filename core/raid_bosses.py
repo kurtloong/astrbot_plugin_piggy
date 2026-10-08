@@ -15,6 +15,8 @@ class BossMechanics:
     HP = 1.0
     ATK = 1.0
     DEF = 1.0
+    # Whether heroes must clear the boss's summoned units before hitting the boss.
+    GUARDS_FIRST = True
 
     def __init__(self, disabled: int | None = None):
         self.disabled = disabled
@@ -61,6 +63,32 @@ class BossMechanics:
 
     def dispelled(self, battle):
         pass
+
+    def foe_hit(self, battle, attacker, target, raw: float, effect: dict) -> float:
+        """Any enemy-side unit (boss or summon) is about to take `raw` from a hero."""
+        return raw
+
+    def prevent_fall(self, battle) -> bool:
+        """Return True (after restoring HP) to keep the boss standing."""
+        return False
+
+    def heal_factor(self, battle, unit) -> float:
+        return 1.0
+
+    def blocks_effect(self, battle, unit, effect: dict) -> bool:
+        return False
+
+    def force_basic(self, battle, unit) -> bool:
+        return False
+
+    def order(self, battle, units: list) -> list:
+        return units
+
+    def dot_factor(self, battle, unit) -> float:
+        return 1.0
+
+    def outgoing_factor(self, battle, attacker, target) -> float:
+        return 1.0
 
 
 class Goblin(BossMechanics):
@@ -547,6 +575,572 @@ class PigGod(BossMechanics):
             battle.note("守护神降临！两只小猪守护灵挡在了神明面前，得先打倒它们")
 
 
+class Zombie(BossMechanics):
+    pig_id = "zombie-pig"
+    MECHANICS = (
+        (
+            "尸毒",
+            "被它咬中的猪叠 1 层尸毒，每层每回合损失 3% 生命，最多 3 层；中毒期间受到的治疗减半",
+        ),
+        ("一瘸一拐", "总是最后一个行动，但每次行动后有 30% 概率再扑咬一次"),
+        ("尸变", "它亲手击倒的队员猪会变成僵尸小猪，站到敌方一起作战（生命为原来的 40%）"),
+    )
+    HP = 1.05
+    GUARDS_FIRST = False
+
+    @staticmethod
+    def poison(unit):
+        # The zombie's own skills also apply a dot called 尸毒; only count the stacking one.
+        return next((dot for dot in unit.dots if dot.get("stacks")), None)
+
+    def poisoned(self, unit) -> int:
+        dot = self.poison(unit)
+        return dot["stacks"] if dot else 0
+
+    def outgoing(self, battle, target, dealt):
+        if not self.on(0) or not target.alive:
+            return
+        dot = self.poison(target)
+        if dot is None:
+            target.dots.append({"pct": 3, "turns": 99, "label": "尸毒×1", "stacks": 1})
+        elif dot["stacks"] < 3:
+            dot["stacks"] += 1
+            dot["pct"] = 3 * dot["stacks"]
+            dot["label"] = f"尸毒×{dot['stacks']}"
+            if dot["stacks"] == 3:
+                battle.note(f"{target.label} 身上的尸毒叠满了 3 层")
+
+    def heal_factor(self, battle, unit):
+        return 0.5 if unit.side == 0 and self.poisoned(unit) else 1.0
+
+    def order(self, battle, units):
+        if not self.on(1):
+            return units
+        return [u for u in units if u is not battle.boss] + [u for u in units if u is battle.boss]
+
+    def extra_actions(self, battle):
+        return 1 if self.on(1) and battle.rng.random() < 0.3 else 0
+
+    def hero_fell(self, battle, hero):
+        if self.on(2) and battle.acting is battle.boss:
+            battle.summon_from(hero, f"僵尸·{hero.data['name']}", 0.4)
+            battle.note(f"{hero.label} 被啃了一口……尸变了！变成僵尸小猪站到了敌方")
+
+
+class TwoFacedGhost(BossMechanics):
+    pig_id = "pighub0876"
+    MECHANICS = (
+        (
+            "阴阳两面",
+            "每 2 回合切换一次：阴面时普通伤害减半、真实伤害和持续伤害翻倍；阳面时持续伤害无效、普通伤害 +20%",
+        ),
+        ("附身", "每 4 回合附身一只队员猪，它的下一次行动改为攻击一名队友"),
+        ("双面夹击", "生命低于 40% 后，每回合结束时同时打一下生命最高和最低的两只猪"),
+    )
+    HP = 0.7
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.face = "阴"
+
+    def round_start(self, battle):
+        if self.on(0) and battle.round % 2 == 1:
+            self.face = "阴" if battle.round % 4 == 1 else "阳"
+            hint = (
+                "普通攻击打不痛，用真实伤害和持续伤害"
+                if self.face == "阴"
+                else "持续伤害无效，用普通攻击"
+            )
+            battle.note(f"{battle.boss.label}翻到了{self.face}面：{hint}")
+        heroes = battle.present_heroes()
+        if self.on(1) and battle.round % 4 == 0 and len(heroes) >= 2:
+            target = battle.rng.choice(heroes)
+            target.possessed = True
+            battle.note(f"{battle.boss.label}附身到了 {target.label} 身上")
+
+    def incoming(self, battle, attacker, raw, effect):
+        if not self.on(0):
+            return raw
+        if self.face == "阴":
+            return raw * 2 if effect.get("true") else raw * 0.5
+        return raw if effect.get("true") else raw * 1.2
+
+    def dot_factor(self, battle, unit):
+        if unit is battle.boss and self.on(0):
+            return 2.0 if self.face == "阴" else 0.0
+        return 1.0
+
+    def round_end(self, battle):
+        boss = battle.boss
+        heroes = battle.present_heroes()
+        if self.on(2) and boss.alive and boss.ratio < 0.4 and heroes:
+            ends = {max(heroes, key=lambda h: h.hp), min(heroes, key=lambda h: h.hp)}
+            hits = [f"{h.label} -{round(battle.strike(boss, h, 0.8))}" for h in ends]
+            battle.note("双面夹击！" + "，".join(hits))
+
+
+class Skeleton(BossMechanics):
+    pig_id = "skeleton-pig"
+    MECHANICS = (
+        ("白骨重组", "被打倒两次都会重组站起来，分别回到 35% 和 15% 生命，每次重组后防御 +20%"),
+        ("瘦成这样", "多段攻击每一段伤害 -40%，单段攻击伤害 +25%"),
+        (
+            "红烧爆炒清蒸",
+            "每 3 回合按顺序施放：红烧（全队流血）、爆炒（全队受到 0.6 倍伤害）、清蒸（全队速度 -20%，2 回合）",
+        ),
+    )
+    HP = 0.55
+    DISHES = ("红烧", "爆炒", "清蒸")
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.lives = 2 if self.on(0) else 0
+        self.cooked = 0
+
+    def prevent_fall(self, battle):
+        if not self.lives:
+            return False
+        self.lives -= 1
+        boss = battle.boss
+        boss.hp = boss.max_hp * (0.35 if self.lives else 0.15)
+        boss.dots.clear()
+        boss.mods["def"] = boss.mods.get("def", 0) + 20
+        battle.note(
+            f"白骨重组！散落一地的骨头又拼回了 {boss.label}，生命回到 {boss.ratio:.0%}，防御 +20%"
+        )
+        return True
+
+    def incoming(self, battle, attacker, raw, effect):
+        if not self.on(1):
+            return raw
+        return raw * 0.6 if effect.get("hits", 1) > 1 else raw * 1.25
+
+    def round_start(self, battle):
+        if not self.on(2) or battle.round % 3:
+            return
+        dish = self.DISHES[self.cooked % 3]
+        self.cooked += 1
+        heroes = battle.present_heroes()
+        if dish == "红烧":
+            for hero in heroes:
+                hero.dots.append({"pct": 3, "turns": 3, "label": "红烧"})
+            battle.note("红烧！全队被浇了一身热油，持续流血 3 回合")
+        elif dish == "爆炒":
+            hits = [f"{h.label} -{round(battle.strike(battle.boss, h, 0.6))}" for h in heroes]
+            battle.note("爆炒！" + "，".join(hits))
+        else:
+            for hero in heroes:
+                hero.buffs.append({"stat": "spd", "pct": -20, "turns": 2})
+            battle.note("清蒸！全队被蒸得晕乎乎的，速度 -20% 2 回合")
+
+
+class Nezha(BossMechanics):
+    pig_id = "pighub0233"
+    MECHANICS = (
+        ("风火轮", "每回合总是第一个出手；每 2 回合留下火圈，下一回合全队灼烧 4% 生命"),
+        ("混天绫", "每 3 回合把全队的护盾和闪避次数抢到自己身上"),
+        (
+            "不服输",
+            "每被暴击一次攻击 +8%（最多 5 层）；生命低于 25% 时扔出乾坤圈，对全队造成 2 倍伤害",
+        ),
+    )
+    HP = 0.95
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.ring = False
+        self.stacks = 0
+        self.thrown = False
+
+    def order(self, battle, units):
+        if not self.on(0):
+            return units
+        return [u for u in units if u is battle.boss] + [u for u in units if u is not battle.boss]
+
+    def round_start(self, battle):
+        boss = battle.boss
+        if self.on(0):
+            if self.ring:
+                self.ring = False
+                for hero in battle.present_heroes():
+                    battle.hurt(hero, hero.max_hp * 0.04)
+                battle.note("风火轮留下的火圈烧了起来，全队灼烧 4% 生命")
+            if battle.round % 2 == 0:
+                self.ring = True
+                battle.note(f"{boss.label}踩着风火轮绕场一圈，地上留下了火圈")
+        if self.on(1) and battle.round % 3 == 0:
+            shield = evade = 0
+            for hero in battle.present_heroes():
+                shield += hero.shield
+                evade += hero.evade
+                hero.shield, hero.evade = 0, 0
+            boss.shield += shield
+            boss.evade += evade
+            if shield or evade:
+                battle.note(f"混天绫一卷，抢走了全队 {round(shield)} 护盾和 {evade} 次闪避")
+            else:
+                battle.note("混天绫扫了一圈，全队身上什么也没有")
+
+    def crit_against(self, battle, attacker):
+        if self.on(2) and self.stacks < 5:
+            self.stacks += 1
+            battle.boss.mods["atk"] = battle.boss.mods.get("atk", 0) + 8
+            battle.note(f"{battle.boss.label}不服输！攻击 +8%（{self.stacks}/5）")
+        return True
+
+    def damaged(self, battle):
+        boss = battle.boss
+        if self.on(2) and not self.thrown and boss.ratio < 0.25:
+            self.thrown = True
+            hits = [
+                f"{h.label} -{round(battle.strike(boss, h, 2.0))}" for h in battle.present_heroes()
+            ]
+            battle.note("乾坤圈全力一掷！" + "，".join(hits))
+
+
+class FishDuke(BossMechanics):
+    pig_id = "pighub0007"
+    MECHANICS = (
+        ("潮汐", "涨潮、退潮每回合交替：涨潮时全队速度 -15%、它闪避 +10；退潮时它搁浅，防御 -30%"),
+        (
+            "公爵御令",
+            "每 4 回合下一道令，持续 2 回合：禁疗令让治疗、护盾和持续回复失效，禁技令让队员只能用普攻",
+        ),
+        (
+            "龙鳞甲",
+            "身上 20 片鳞，鳞片在时受到的伤害 -20%；每挨一次打掉一片，鳞片给随机一只队员猪 3% 生命的护盾",
+        ),
+    )
+    HP = 0.6
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.tide = []
+        self.decree = ""
+        self.until = 0
+        self.scales = 20 if self.on(2) else 0
+
+    @staticmethod
+    def shift(unit, key, value):
+        unit.mods[key] = unit.mods.get(key, 0) + value
+
+    def round_start(self, battle):
+        boss = battle.boss
+        if self.on(0):
+            for unit, key, value in self.tide:
+                self.shift(unit, key, -value)
+            if battle.round % 2 == 1:
+                self.tide = [(boss, "dodge", 10)] + [(h, "spd", -15) for h in battle.alive_heroes()]
+                text = "涨潮了：全队速度 -15%，公爵在浪里游刃有余"
+            else:
+                self.tide = [(boss, "def", -30)]
+                text = f"退潮了：{boss.label}搁浅在沙滩上，防御 -30%"
+            for unit, key, value in self.tide:
+                self.shift(unit, key, value)
+            battle.note(text)
+        if self.on(1) and battle.round % 4 == 0:
+            self.decree = battle.rng.choice(("禁疗令", "禁技令"))
+            self.until = battle.round + 1
+            rule = "治疗、护盾和持续回复全部失效" if self.decree == "禁疗令" else "队员只能用普攻"
+            battle.note(f"公爵颁布{self.decree}：2 回合内{rule}")
+
+    def active(self, battle, kind) -> bool:
+        return self.decree == kind and battle.round <= self.until
+
+    def heal_factor(self, battle, unit):
+        return 0.0 if unit.side == 0 and self.active(battle, "禁疗令") else 1.0
+
+    def blocks_effect(self, battle, unit, effect):
+        return (
+            unit.side == 0
+            and self.active(battle, "禁疗令")
+            and effect["type"] in ("heal", "shield", "regen")
+        )
+
+    def force_basic(self, battle, unit):
+        return self.active(battle, "禁技令")
+
+    def incoming(self, battle, attacker, raw, effect):
+        if self.scales <= 0:
+            return raw
+        self.scales -= 1
+        heroes = battle.present_heroes()
+        if heroes:
+            hero = battle.rng.choice(heroes)
+            hero.shield += hero.max_hp * 0.03
+        if not self.scales:
+            battle.note(f"{battle.boss.label}的龙鳞全部脱落了")
+        return raw * 0.8
+
+
+class DeepSea(BossMechanics):
+    pig_id = "pighub0830"
+    MECHANICS = (
+        ("深海水压", "每回合全队损失（1 + 回合数 ÷ 4）% 生命，越往后越疼"),
+        (
+            "灯笼鱼诱光",
+            "每 3 回合诱惑攻击最高的队员猪：它的下一击对 boss 必定暴击，但 boss 的下一次攻击会对它造成双倍伤害",
+        ),
+        ("深渊暗流", "生命低于 50% 后全队受到的治疗减半，护盾每回合流失一半"),
+    )
+    HP = 0.85
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.abyss = False
+
+    def round_start(self, battle):
+        if self.on(0):
+            pct = 1 + battle.round / 4
+            for hero in battle.present_heroes():
+                battle.hurt(hero, hero.max_hp * pct / 100)
+            if battle.round % 4 == 1:
+                battle.note(f"越潜越深，水压让全队每回合损失 {pct:.1f}% 生命")
+        heroes = battle.present_heroes()
+        if self.on(1) and battle.round % 3 == 0 and heroes:
+            target = max(heroes, key=lambda h: h.stat("atk"))
+            target.lured = True
+            battle.note(f"灯笼鱼的光吸引了 {target.label}：它的下一击必定暴击，但也会成为猎物")
+
+    def damaged(self, battle):
+        if self.on(2) and not self.abyss and battle.boss.ratio < 0.5:
+            self.abyss = True
+            battle.note("马里亚纳海沟的暗流涌了上来：全队治疗减半，护盾每回合流失一半")
+
+    def heal_factor(self, battle, unit):
+        return 0.5 if self.abyss and unit.side == 0 else 1.0
+
+    def round_end(self, battle):
+        if self.abyss:
+            for hero in battle.alive_heroes():
+                hero.shield *= 0.5
+
+
+class Alien(BossMechanics):
+    pig_id = "alien-pig"
+    MECHANICS = (
+        (
+            "绑架光束",
+            "每 4 回合把一只队员猪吸进 UFO 离场 2 回合；回来时被做了实验，随机一项属性 +20% 或 -20%",
+        ),
+        ("自我怀疑光波", "每 3 回合发动一次，当回合全队伤害和治疗 -40%"),
+        (
+            "召回母舰",
+            "生命第一次低于 50% 时离场 2 回合，期间母舰每回合扫射全队、队员打不到它；回来时回复 15% 生命",
+        ),
+    )
+    HP = 1.35
+    STATS = {"atk": "攻击", "def": "防御", "spd": "速度"}
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.abducted = []
+        self.doubt = 0
+        self.called = False
+        self.docked = False
+
+    def round_start(self, battle):
+        boss = battle.boss
+        for hero in list(self.abducted):
+            if hero.away:
+                continue
+            self.abducted.remove(hero)
+            key = battle.rng.choice(tuple(self.STATS))
+            value = battle.rng.choice((20, -20))
+            hero.mods[key] = hero.mods.get(key, 0) + value
+            sign = "+" if value > 0 else ""
+            battle.note(f"{hero.label} 被放了回来，被做了实验：{self.STATS[key]}{sign}{value}%")
+        if self.docked:
+            if boss.away:
+                hits = [
+                    f"{h.label} -{round(battle.strike(boss, h, 0.6))}"
+                    for h in battle.present_heroes()
+                ]
+                battle.note("母舰扫射！" + "，".join(hits))
+            else:
+                self.docked = False
+                healed = battle.heal(boss, boss.max_hp * 0.15)
+                battle.note(f"{boss.label}从母舰回来了，回复 {healed} 生命")
+        heroes = battle.present_heroes()
+        if self.on(0) and battle.round % 4 == 0 and len(heroes) >= 2:
+            target = battle.rng.choice(heroes)
+            target.away = 2
+            self.abducted.append(target)
+            battle.note(f"绑架光束！{target.label} 被吸进了 UFO")
+        if self.on(1) and battle.round % 3 == 0:
+            self.doubt = battle.round
+            battle.note("自我怀疑光波：全队开始怀疑猪生，这回合伤害和治疗 -40%")
+
+    def outgoing_factor(self, battle, attacker, target):
+        return 0.6 if attacker.side == 0 and battle.round == self.doubt else 1.0
+
+    def heal_factor(self, battle, unit):
+        return 0.6 if unit.side == 0 and battle.round == self.doubt else 1.0
+
+    def damaged(self, battle):
+        boss = battle.boss
+        if self.on(2) and not self.called and boss.ratio < 0.5:
+            self.called = self.docked = True
+            boss.away = 2
+            battle.note(f"{boss.label}召回了母舰，躲进去不出来了")
+
+
+STAR_SKILL = {
+    "name": "星尘",
+    "text": "细碎的星光。",
+    "cd": 0,
+    "when": None,
+    "passive": False,
+    "effects": [{"type": "damage", "power": 0.7}],
+}
+
+
+class StarCluster(BossMechanics):
+    pig_id = "pighub0872"
+    MECHANICS = (
+        ("星团聚合", "开场是星核加 2 颗小星；每 5 回合，星核用自己 10% 的生命补回被打碎的小星"),
+        ("引力牵引", "打在星团任何一员身上的伤害，都平均分给所有还活着的成员"),
+        (
+            "超新星倒计时",
+            "星核生命低于 25% 后倒计时 3 回合，没打倒它就对全队造成各自最大生命 40% 的伤害",
+        ),
+    )
+    HP = 0.5
+    GUARDS_FIRST = False
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.stars = []
+        self.countdown = None
+
+    def spawn(self, battle):
+        self.stars.append(battle.summon(f"小星{len(self.stars) + 1}", 0.15, 0.35, STAR_SKILL))
+
+    def setup(self, battle):
+        if self.on(0):
+            self.spawn(battle)
+            self.spawn(battle)
+            battle.note(f"{battle.boss.label}分出了两颗小星，围着星核打转")
+
+    def round_start(self, battle):
+        boss = battle.boss
+        if not self.on(0) or battle.round % 5:
+            return
+        missing = 2 - sum(1 for star in self.stars if star.alive)
+        cost = boss.max_hp * 0.1
+        rebuilt = 0
+        for _ in range(missing):
+            if boss.hp <= cost * 1.5:
+                break
+            boss.hp -= cost
+            self.spawn(battle)
+            rebuilt += 1
+        if rebuilt:
+            battle.note(f"星团聚合：星核分出 {rebuilt} 颗新的小星")
+
+    def foe_hit(self, battle, attacker, target, raw, effect):
+        if not self.on(1):
+            return raw
+        members = [f for f in battle.foes if f.alive and not f.away]
+        if len(members) < 2 or target not in members:
+            return raw
+        share = raw / len(members)
+        for member in members:
+            if member is not target:
+                battle.hurt(member, share)
+        return share
+
+    def damaged(self, battle):
+        if self.on(2) and self.countdown is None and battle.boss.ratio < 0.25:
+            self.countdown = 3
+            battle.note("星核开始坍缩！超新星倒计时 3 回合")
+
+    def round_end(self, battle):
+        if not self.countdown:
+            return
+        self.countdown -= 1
+        if self.countdown:
+            battle.note(f"超新星倒计时 {self.countdown}……")
+            return
+        hits = [
+            f"{h.label} -{round(battle.hurt(h, h.max_hp * 0.4))}" for h in battle.present_heroes()
+        ]
+        battle.note("超新星爆发！" + "，".join(hits))
+
+
+class CosmicRing(BossMechanics):
+    pig_id = "pighub0336"
+    MECHANICS = (
+        (
+            "星环环绕",
+            "身边 3 道星环，每道完整挡下一次攻击，多段攻击每段都算一次；每 3 回合恢复 1 道",
+        ),
+        (
+            "引力场",
+            "每回合把速度最快的猪拉近，它当回合受到的伤害 +25%；把最慢的推远，它当回合造成的伤害 -25%",
+        ),
+        (
+            "陨石雨",
+            "每 4 回合落下 3 颗陨石，每颗打随机一只猪 0.8 倍伤害；被砸中两次的猪眩晕 1 回合",
+        ),
+    )
+    HP = 0.8
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.rings = 3 if self.on(0) else 0
+        self.near = self.far = None
+
+    def setup(self, battle):
+        if self.rings:
+            battle.note(f"{battle.boss.label}身边环绕着 3 道星环")
+
+    def incoming(self, battle, attacker, raw, effect):
+        if self.rings and not effect.get("true"):
+            self.rings -= 1
+            battle.void_note = f"星环挡下了这一击，还剩 {self.rings} 道"
+            return 0
+        return raw
+
+    def round_start(self, battle):
+        boss = battle.boss
+        if self.on(0) and battle.round % 3 == 0 and self.rings < 3:
+            self.rings += 1
+            battle.note(f"星环重新转了起来，现在有 {self.rings} 道")
+        heroes = battle.present_heroes()
+        self.near = self.far = None
+        if self.on(1) and len(heroes) >= 2:
+            self.near = max(heroes, key=lambda h: h.stat("spd"))
+            self.far = min(heroes, key=lambda h: h.stat("spd"))
+            if battle.round % 3 == 1:
+                battle.note(
+                    f"引力场：{self.near.label} 被拉近（受到伤害 +25%），"
+                    f"{self.far.label} 被推远（造成伤害 -25%）"
+                )
+        if self.on(2) and battle.round % 4 == 0 and heroes:
+            counts = {}
+            for _ in range(3):
+                target = battle.rng.choice(heroes)
+                battle.strike(boss, target, 0.8)
+                counts[target] = counts.get(target, 0) + 1
+            parts = []
+            for target, count in counts.items():
+                text = f"{target.label}×{count}"
+                if count >= 2 and target.alive:
+                    target.stun = max(target.stun, 1)
+                    target.stun_label = "眩晕"
+                    text += "（眩晕）"
+                parts.append(text)
+            battle.note("陨石雨！砸中了 " + "，".join(parts))
+
+    def outgoing_factor(self, battle, attacker, target):
+        if attacker is self.far:
+            return 0.75
+        if target is self.near and attacker.side == 1:
+            return 1.25
+        return 1.0
+
+
 BOSSES = {
     cls.pig_id: cls
     for cls in (
@@ -559,5 +1153,14 @@ BOSSES = {
         Demon,
         ChainedKing,
         PigGod,
+        Zombie,
+        TwoFacedGhost,
+        Skeleton,
+        Nezha,
+        FishDuke,
+        DeepSea,
+        Alien,
+        StarCluster,
+        CosmicRing,
     )
 }
