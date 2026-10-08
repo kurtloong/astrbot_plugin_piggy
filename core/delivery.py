@@ -209,6 +209,22 @@ class Sender:
             )
         return None if stop else delay
 
+    async def announce(self, target, message: Message, deadline: float | None = None):
+        """Proactive group message: no msg_id, so the group must allow bot posts."""
+        deadline = deadline if deadline is not None else time.monotonic() + 120
+        payload = {}
+        if message.local:
+            media = await self._upload_local(target, message.images[0], deadline)
+            payload.update(msg_type=7, media={"file_info": media})
+        elif message.images:
+            urls = [await self.publisher.publish(p, deadline=deadline) for p in message.images]
+            payload.update(msg_type=2, markdown={"content": message.content(urls)})
+            if message.keyboard:
+                payload["keyboard"] = message.keyboard
+        else:
+            payload.update(msg_type=0, content=message.text)
+        await self.transport.request(target, payload)
+
     async def send(
         self,
         event,

@@ -223,6 +223,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 # Keep the classic one-pig draw here; gather/chain have their own tests.
                 "draw_gather_chance": 0,
                 "draw_chain_chance": 0,
+                "wild_announce": False,
             }
         )
         self.config.save_config = Mock()
@@ -448,6 +449,42 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row[0] for row in sessions], ["daily", "bonus"])
         await self.plugin.wild_challenge(OfficialEvent("w5", text="挑战小猪 坦克猪"))
         self.assertIn("已经被", sent.await_args.args[1]["content"])
+
+    async def test_new_wild_pig_is_announced_once_without_mentions(self):
+        from dataclasses import replace
+
+        from astrbot_plugin_piggy.core.delivery import QQError
+
+        await self.plugin.initialize()
+        db = self.plugin.db
+        await db.identify("app", "member", "group-a", "")
+        await db.identify("app", "member", "group-b", "")
+        await db.run(
+            lambda c: c.execute("UPDATE group_players SET last_seen=0 WHERE group_id='group-b'")
+        )
+        self.plugin.settings = replace(self.plugin.settings, wild_announce=True)
+        self.plugin.bots = {"app": SimpleNamespace(name="bot")}
+        sent = self.plugin.transport.request
+        sent.reset_mock()
+        await self.plugin.announce_wild_once()
+        self.assertEqual(sent.await_count, 1)
+        target, payload = sent.await_args.args
+        self.assertEqual(target.get_group_id(), "group-a")
+        self.assertEqual(payload["msg_type"], 7)
+        self.assertNotIn("msg_id", payload)
+        self.assertNotIn("qqbot-at-user", str(payload))
+        upload_target = self.plugin.transport.upload_image.await_args.args[0]
+        self.assertIs(upload_target.bot, self.plugin.bots["app"])
+        # Already spawned today: nothing more to announce.
+        await self.plugin.announce_wild_once()
+        self.assertEqual(sent.await_count, 1)
+        # A group that refuses proactive posts only produces a log line.
+        await db.identify("app", "member", "group-c", "")
+        sent.side_effect = QQError(304003, 403)
+        with self.assertLogs("piggy-tests", "WARNING"):
+            await self.plugin.announce_wild_once()
+        sent.side_effect = None
+        self.assertFalse((await db.wild_pig("app", "group-c"))["spawned"])
 
     async def test_upload_failure_keeps_draw_and_next_command_displays_same_pig(self):
         from astrbot_plugin_piggy.core.storage import UploadError

@@ -116,6 +116,12 @@
     "default": 20,
     "hint": "1–100。每个群每天出现一只野猪，等级在 1 到此值之间随机。"
   },
+  "wild_announce": {
+    "description": "野猪出现时主动发消息",
+    "type": "bool",
+    "default": true,
+    "hint": "每天 0 点为最近 7 天有人玩过的群生成野猪，并主动发送野猪卡片（不 @ 任何人）。需要群主开启「允许机器人主动发言」，否则发送失败只记日志。插件重启后，需本应用先收到过一条消息才能主动发送。"
+  },
   "battle_markdown": {
     "description": "斗猪/交换使用 Markdown 与按钮",
     "type": "bool",

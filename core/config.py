@@ -155,6 +155,7 @@ class Settings:
     draw_gather_chance: int = 50
     draw_chain_chance: int = 50
     wild_level_max: int = 20
+    wild_announce: bool = True
 
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":
@@ -245,8 +246,9 @@ class Settings:
             value = getattr(obj, key)
             if type(value) not in (int, float) or not low <= value <= high:
                 raise PiggyError(f"配置 {key} 必须在 {low}–{high} 之间。")
-        if type(obj.battle_markdown) is not bool:
-            raise PiggyError("配置 battle_markdown 必须为布尔值。")
+        for key in ("battle_markdown", "wild_announce"):
+            if type(getattr(obj, key)) is not bool:
+                raise PiggyError(f"配置 {key} 必须为布尔值。")
         if obj.provider not in {"s3", "http"}:
             raise PiggyError("图床 provider 仅支持 s3 或 http。")
         if obj.upload_mode not in {"multipart", "json_base64"}:

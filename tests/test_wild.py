@@ -174,6 +174,7 @@ class DrawAndWildTests(unittest.IsolatedAsyncioTestCase):
         first = await self.db.wild_pig("app", "group", NOW, level_max=20)
         same = await self.db.wild_pig("app", "group", NOW + timedelta(hours=3), level_max=20)
         self.assertEqual(first["id"], same["id"])
+        self.assertEqual((first["spawned"], same["spawned"]), (True, False))
         self.assertTrue(1 <= first["level"] <= 20)
         other = await self.db.wild_pig("app", "elsewhere", NOW)
         self.assertNotEqual(other["id"], first["id"])
