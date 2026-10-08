@@ -390,6 +390,27 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
                 "state": "ally",
             }
         )
+    damage = [
+        (display_name(f["user"]), f["pig"]["name"], f.get("dealt", 0)) for f in battle["fighters"]
+    ]
+    if ally:
+        damage.append(("援军", ally["pig"]["name"], ally.get("dealt", 0)))
+    total = sum(dealt for _, _, dealt in damage)
+    rounds_fought = result["rounds"] if result else 0
+    dps = (
+        [
+            {
+                "owner": owner,
+                "pig": pig,
+                "dealt": dealt,
+                "per_round": dealt / rounds_fought,
+                "share": dealt / total,
+            }
+            for owner, pig, dealt in sorted(damage, key=lambda row: -row[2])
+        ]
+        if total and rounds_fought
+        else []
+    )
     events = [f"【{e['kind']}·{e['name']}】{e['text']}" for e in battle["events"]]
     if result and result["field_events"]:
         events.append("【场地事件】战斗中触发了：" + "、".join(result["field_events"]))
@@ -446,6 +467,7 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
         },
         "party": party,
         "events": events,
+        "dps": dps,
         "headline": headline,
         "log": result["log"] if result else [],
         "settlement": settlement,

@@ -590,21 +590,24 @@ class Zombie(BossMechanics):
 
     @staticmethod
     def poison(unit):
-        return next((dot for dot in unit.dots if dot["label"] == "尸毒"), None)
+        # The zombie's own skills also apply a dot called 尸毒; only count the stacking one.
+        return next((dot for dot in unit.dots if dot.get("stacks")), None)
 
     def poisoned(self, unit) -> int:
         dot = self.poison(unit)
-        return dot["pct"] // 3 if dot else 0
+        return dot["stacks"] if dot else 0
 
     def outgoing(self, battle, target, dealt):
         if not self.on(0) or not target.alive:
             return
         dot = self.poison(target)
         if dot is None:
-            target.dots.append({"pct": 3, "turns": 99, "label": "尸毒"})
-        elif dot["pct"] < 9:
-            dot["pct"] += 3
-            if dot["pct"] == 9:
+            target.dots.append({"pct": 3, "turns": 99, "label": "尸毒×1", "stacks": 1})
+        elif dot["stacks"] < 3:
+            dot["stacks"] += 1
+            dot["pct"] = 3 * dot["stacks"]
+            dot["label"] = f"尸毒×{dot['stacks']}"
+            if dot["stacks"] == 3:
                 battle.note(f"{target.label} 身上的尸毒叠满了 3 层")
 
     def heal_factor(self, battle, unit):

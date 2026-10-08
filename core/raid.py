@@ -142,6 +142,8 @@ class _RaidBattle(_Battle):
         self.field_events = []
         self.void_note = ""
         self.acting = None
+        # Damage each unit dealt to the other side, for the DPS table.
+        self.dealt = {}
         self._configure()
 
     def _configure(self):
@@ -268,6 +270,9 @@ class _RaidBattle(_Battle):
     def hurt(self, unit, amount: float, source: str = "") -> float:
         was_alive = unit.alive
         dealt = super().hurt(unit, amount)
+        attacker = self.acting
+        if attacker is not None and attacker.side != unit.side:
+            self.dealt[id(attacker)] = self.dealt.get(id(attacker), 0.0) + dealt
         if was_alive and not unit.alive and unit is self.boss and self.mech.prevent_fall(self):
             return dealt
         if was_alive and not unit.alive and unit.charm:
@@ -286,6 +291,8 @@ class _RaidBattle(_Battle):
         self.flush()
 
     def dot_amount(self, unit, dot):
+        # The tick is hurt right after this; credit it to whoever applied the dot.
+        self.acting = dot.get("source")
         amount = unit.dot_basis * dot["pct"] / 100 * self.mech.dot_factor(self, unit)
         if unit.side == 0 and self.cfg.get("dot_cut"):
             amount *= 1 - self.cfg["dot_cut"] / 100
@@ -328,6 +335,8 @@ class _RaidBattle(_Battle):
         if self.mech.blocks_effect(self, unit, effect):
             return "被禁令挡下了"
         text = super().effect(unit, enemy, effect, skill)
+        if effect["type"] == "dot" and enemy.dots:
+            enemy.dots[-1]["source"] = unit
         if effect["type"] == "cleanse":
             unit.vuln = 0
             unit.chill = 0
@@ -392,7 +401,7 @@ class _RaidBattle(_Battle):
         for self.round in range(1, MAX_RAID_ROUNDS + 1):
             if self.round == self.fury_round + 1:
                 self.say("围观的猪开始起哄，之后每回合伤害都会更高！")
-            self.cheer, self.sneezer = 1.0, None
+            self.cheer, self.sneezer, self.acting = 1.0, None, None
             for hero in self.heroes:
                 hero.blind = False
             self.mech.round_start(self)
@@ -439,6 +448,7 @@ class _RaidBattle(_Battle):
                     break
             if winner is not None:
                 break
+            self.acting = None
             self.mech.round_end(self)
             for unit in self.heroes + self.foes:
                 unit.away = max(0, unit.away - 1)
@@ -466,6 +476,7 @@ class _RaidBattle(_Battle):
                     "hp": round(max(0, h.hp)),
                     "max_hp": h.max_hp,
                     "alive": h.alive,
+                    "dealt": round(self.dealt.get(id(h), 0)),
                 }
                 for h in self.heroes
             ],

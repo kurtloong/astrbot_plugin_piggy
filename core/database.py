@@ -1173,6 +1173,7 @@ class Database:
                     "hp": state["hp"],
                     "max_hp": state["max_hp"],
                     "alive": state["alive"],
+                    "dealt": state.get("dealt", 0),
                 }
             )
         copies = 2 if rewards["mimic"] else 1
@@ -1276,6 +1277,7 @@ class Database:
                     "hp": result["heroes"][-1]["hp"],
                     "max_hp": result["heroes"][-1]["max_hp"],
                     "alive": result["heroes"][-1]["alive"],
+                    "dealt": result["heroes"][-1].get("dealt", 0),
                 }
                 if ally and result
                 else None

@@ -340,7 +340,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             poster = await raid_battle_message(Settings(), self.root, battle)
         self.assertTrue(poster.local)
         joined = "".join(labels)
-        for text in ("BOSS", "援军", "野生援军", "战斗过程", "结算"):
+        for text in ("BOSS", "援军", "野生援军", "伤害统计", "/回合", "战斗过程", "结算"):
             self.assertIn(text, joined)
         status = await self.db.raid_status("app", "group", self.users[0]["id"], NOW)
         for message in (
@@ -492,13 +492,33 @@ class RaidEngineTests(unittest.TestCase):
             fight.hurt(guard, 10_000)
         self.assertIs(fight.target_for(fight.heroes[0]), fight.boss)
 
+    def test_damage_is_credited_to_each_pig(self):
+        fight = battle("goblin-pig")
+        hero, other = fight.heroes[0], fight.heroes[1]
+        fight.acting = hero
+        fight.hurt(fight.boss, 40)
+        fight.effect(hero, fight.boss, {"type": "dot", "pct": 5, "turns": 2}, {})
+        fight.acting = None
+        fight.dot_amount(fight.boss, fight.boss.dots[-1])
+        fight.hurt(fight.boss, 10)
+        fight.acting = other
+        fight.hurt(hero, 30)
+        self.assertEqual(fight.dealt[id(hero)], 50)
+        self.assertNotIn(id(other), fight.dealt)
+        result = battle("pig_god").run()
+        dealt = [h["dealt"] for h in result["heroes"]]
+        self.assertTrue(all(isinstance(value, int) for value in dealt))
+        self.assertGreater(sum(dealt), 0)
+
     def test_zombie_poisons_and_raises_its_victims(self):
         fight = battle("zombie-pig")
         hero = fight.heroes[0]
+        hero.dots.append({"pct": 5, "turns": 3, "label": "尸毒"})
         for _ in range(4):
             fight.mech.outgoing(fight, hero, 1)
-        poison = [d for d in hero.dots if d["label"] == "尸毒"]
-        self.assertEqual([d["pct"] for d in poison], [9])
+        poison = [d for d in hero.dots if d.get("stacks")]
+        self.assertEqual([(d["pct"], d["label"]) for d in poison], [(9, "尸毒×3")])
+        self.assertEqual(hero.dots[0]["pct"], 5)
         self.assertEqual(fight.mech.heal_factor(fight, hero), 0.5)
         self.assertIs(fight.order()[-1], fight.boss)
         fight.acting = fight.boss

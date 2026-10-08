@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps, ImageStat
 
 # One sheet contains the entire initial catalog. Limits keep future expansions
 # below QQ's practical image size and the renderer's memory budget.
@@ -24,29 +24,119 @@ ACCENT = "#b85969"
 PANEL = "#f5e8da"
 BORDER = "#ebdfd1"
 TRACK = "#e8d6c6"
-FONT = Path(__file__).resolve().parents[1] / "resources" / "fonts" / "NotoSansSC.ttf.xz"
+FONT_DIR = Path(__file__).resolve().parents[1] / "resources" / "fonts"
+FONT = FONT_DIR / "NotoSansSC.ttf.xz"
+# Tried in order for characters the main font lacks: emoji, symbols, fancy math letters.
+FALLBACK_FONTS = tuple(
+    FONT_DIR / f"{name}.ttf.xz"
+    for name in ("NotoEmoji", "NotoSansSymbols", "NotoSansSymbols2", "NotoSansMath")
+)
+# Joiners, presentation selectors and skin tones have no glyph of their own.
+_INVISIBLE = frozenset({"\u200d", "\ufe0e", "\ufe0f", *map(chr, range(0x1F3FB, 0x1F400))})
 _FONT_LOCK = threading.Lock()
+_COVERAGE: dict[tuple[str, str], bool] = {}
+# A palette PNG is far smaller; cards whose art loses visible colour keep full RGB.
+PALETTE_MAX_ERROR = 1.5
 
 
-@lru_cache(maxsize=1)
-def _font_digest() -> str:
-    return hashlib.sha256(FONT.read_bytes()).hexdigest()[:16]
+@lru_cache(maxsize=8)
+def _digest(source: Path) -> str:
+    return hashlib.sha256(source.read_bytes()).hexdigest()[:16]
 
 
-def font_path(root: Path) -> Path:
-    """Expand the bundled font once into plugin data, preserving all glyphs and weights."""
-    path = root / "fonts" / f"NotoSansSC-{_font_digest()}.ttf"
+def _expand(root: Path, source: Path) -> Path:
+    """Expand a bundled font once into plugin data, preserving all glyphs and weights."""
+    stem = source.name.removesuffix(".ttf.xz")
+    path = root / "fonts" / f"{stem}-{_digest(source)}.ttf"
     with _FONT_LOCK:
         if not path.is_file():
             path.parent.mkdir(parents=True, exist_ok=True)
             temp = path.with_suffix(".tmp")
             try:
-                with lzma.open(FONT, "rb") as source, temp.open("wb") as output:
-                    shutil.copyfileobj(source, output)
+                with lzma.open(source, "rb") as packed, temp.open("wb") as output:
+                    shutil.copyfileobj(packed, output)
                 temp.replace(path)
             finally:
                 temp.unlink(missing_ok=True)
     return path
+
+
+def font_path(root: Path) -> Path:
+    return _expand(root, FONT)
+
+
+@lru_cache(maxsize=8)
+def _probe(path: str) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(path, 24)
+
+
+def _covers(path: Path, char: str) -> bool:
+    key = (str(path), char)
+    if key not in _COVERAGE:
+        face = _probe(str(path))
+        # A missing character renders as the font's .notdef box.
+        _COVERAGE[key] = bytes(face.getmask(char)) != bytes(face.getmask("\U0010ffff"))
+    return _COVERAGE[key]
+
+
+class Typeset:
+    """The main font, switching to bundled fallbacks for characters it cannot draw."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.paths = [font_path(root)]
+        self.faces = {}
+
+    def path(self, index: int) -> Path:
+        while len(self.paths) <= index:
+            self.paths.append(_expand(self.root, FALLBACK_FONTS[len(self.paths) - 1]))
+        return self.paths[index]
+
+    def face(self, size: int, bold: bool = False, index: int = 0) -> ImageFont.FreeTypeFont:
+        key = index, size, bold
+        if key not in self.faces:
+            face = ImageFont.truetype(str(self.path(index)), size)
+            try:
+                face.set_variation_by_axes([700 if bold else 400])
+            except OSError:
+                pass  # Static fallback fonts have a single weight.
+            self.faces[key] = face
+        return self.faces[key]
+
+    def pick(self, char: str) -> int | None:
+        if _covers(self.paths[0], char):
+            return 0
+        for index in range(1, len(FALLBACK_FONTS) + 1):
+            if _covers(self.path(index), char):
+                return index
+        return None
+
+    def runs(self, text: str, size: int, bold: bool = False) -> list[tuple[str, object]]:
+        runs = []
+        for char in text:
+            index = None if char in _INVISIBLE else self.pick(char)
+            if index is None:
+                continue
+            if runs and runs[-1][0] == index:
+                runs[-1][1].append(char)
+            else:
+                runs.append((index, [char]))
+        return [("".join(chars), self.face(size, bold, index)) for index, chars in runs]
+
+    def length(self, draw, text: str, size: int, bold: bool = False) -> float:
+        return sum(draw.textlength(part, font=face) for part, face in self.runs(text, size, bold))
+
+    def draw(self, draw, xy, text: str, size: int, fill, bold: bool = False):
+        runs = self.runs(text, size, bold)
+        main = self.face(size, bold)
+        if len(runs) == 1 and runs[0][1] is main:
+            draw.text(xy, runs[0][0], font=main, fill=fill)
+            return
+        x, y = xy
+        baseline = y + main.getmetrics()[0]
+        for part, face in runs:
+            draw.text((x, baseline), part, font=face, fill=fill, anchor="ls")
+            x += draw.textlength(part, font=face)
 
 
 @dataclass(frozen=True)
@@ -75,27 +165,18 @@ def render_collection(
     height = top + rows * row_step + 78
     image = Image.new("RGB", (WIDTH, height), BG)
     draw = ImageDraw.Draw(image)
-    fonts = {}
-    font_file = font_path(root)
-
-    def font(size, bold=False):
-        key = size, bold
-        if key not in fonts:
-            face = ImageFont.truetype(str(font_file), size)
-            face.set_variation_by_axes([700 if bold else 400])
-            fonts[key] = face
-        return fonts[key]
+    typeset = Typeset(root)
+    font = typeset.face
 
     def text(value, x, y, size=24, color=TEXT, bold=False, width=None, center=False):
-        face = font(size, bold)
         value = str(value)
-        if width is not None and draw.textlength(value, font=face) > width:
-            while value and draw.textlength(value + "…", font=face) > width:
+        if width is not None and typeset.length(draw, value, size, bold) > width:
+            while value and typeset.length(draw, value + "…", size, bold) > width:
                 value = value[:-1]
             value += "…"
         if center:
-            x -= draw.textlength(value, font=face) / 2
-        draw.text((x, y), value, font=face, fill=color)
+            x -= typeset.length(draw, value, size, bold) / 2
+        typeset.draw(draw, (x, y), value, size, color, bold)
 
     text("PIGGY  /  COLLECTION", 56, 34, 18, ACCENT, True)
     text("小猪图鉴" if atlas else "我的猪圈", 54, 74, 56, bold=True)
@@ -184,7 +265,11 @@ def render_collection(
 
 def finish(image: Image.Image) -> Card:
     with image, io.BytesIO() as output:
-        image.save(output, "PNG")
+        palette = image.quantize(256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+        with palette.convert("RGB") as restored, ImageChops.difference(image, restored) as diff:
+            error = sum(ImageStat.Stat(diff).mean) / 3
+        (palette if error <= PALETTE_MAX_ERROR else image).save(output, "PNG")
+        palette.close()
         return Card(output.getvalue(), image.width, image.height)
 
 
@@ -194,31 +279,28 @@ class Canvas:
     def __init__(self, root: Path, width: int, height: int):
         self.image = Image.new("RGB", (width, height), BG)
         self.draw = ImageDraw.Draw(self.image)
-        self.fonts = {}
-        self.font_file = font_path(root)
+        self.typeset = Typeset(root)
 
     def font(self, size, bold=False):
-        if (size, bold) not in self.fonts:
-            face = ImageFont.truetype(str(self.font_file), size)
-            face.set_variation_by_axes([700 if bold else 400])
-            self.fonts[size, bold] = face
-        return self.fonts[size, bold]
+        return self.typeset.face(size, bold)
+
+    def measure(self, text, size, bold=False) -> float:
+        return self.typeset.length(self.draw, str(text), size, bold)
 
     def text(self, text, x, y, size=26, color=TEXT, bold=False, width=None):
         text = str(text)
-        face = self.font(size, bold)
-        if width is not None and self.draw.textlength(text, font=face) > width:
-            while text and self.draw.textlength(text + "…", font=face) > width:
+        if width is not None and self.measure(text, size, bold) > width:
+            while text and self.measure(text + "…", size, bold) > width:
                 text = text[:-1]
             text += "…"
-        self.draw.text((x, y), text, font=face, fill=color)
+        self.typeset.draw(self.draw, (x, y), text, size, color, bold)
 
     def wrap(self, text, size, width):
         lines = []
         for paragraph in str(text).split("\n"):
             line = ""
             for char in paragraph:
-                if line and self.draw.textlength(line + char, font=self.font(size)) > width:
+                if line and self.measure(line + char, size) > width:
                     lines.append(line)
                     line = ""
                 line += char
@@ -297,14 +379,13 @@ def render_today(
                 )
                 canvas.text("NEW", x + 26, y + 20, 17, "#ffffff", True)
             label = item["pig"]["name"]
-            face = canvas.font(23, True)
-            if canvas.draw.textlength(label, font=face) > 198:
-                while label and canvas.draw.textlength(label + "…", font=face) > 198:
+            if canvas.measure(label, 23, True) > 198:
+                while label and canvas.measure(label + "…", 23, True) > 198:
                     label = label[:-1]
                 label += "…"
             canvas.text(
                 label,
-                x + 112 - canvas.draw.textlength(label, font=face) / 2,
+                x + 112 - canvas.measure(label, 23, True) / 2,
                 y + 168,
                 23,
                 bold=True,
@@ -605,7 +686,9 @@ def render_raid_poster(root: Path, poster: dict) -> Card:
     events_top = party_bottom + 30
     events_bottom = events_top + (70 + len(events) * 34 if events else 0)
     headline_top = events_bottom + (30 if events else 0)
-    log_top = headline_top + 110
+    dps = poster.get("dps") or []
+    dps_top = headline_top + 110
+    log_top = dps_top + (70 + len(dps) * 48 + 30 if dps else 0)
     settle_top = log_top + 70 + len(log) * log_step + 40
     next_top = settle_top + 70 + len(settlement) * 38 + 30
     height = next_top + 40 + len(next_lines) * 40 + 130
@@ -701,6 +784,25 @@ def render_raid_poster(root: Path, poster: dict) -> Card:
         (56, headline_top, 1024, headline_top + 80), radius=26, fill=PANEL
     )
     canvas.text(poster["headline"], 86, headline_top + 18, 32, ACCENT, True, width=908)
+
+    if dps:
+        canvas.text("伤害统计", 58, dps_top, 28, bold=True)
+        canvas.text("总伤害 · 每回合伤害（DPS）· 占比", 200, dps_top + 8, 20, SUB)
+        best = max(row["dealt"] for row in dps) or 1
+        for index, row in enumerate(dps):
+            y = dps_top + 60 + index * 48
+            top = index == 0
+            canvas.text(f"{row['owner']}·{row['pig']}", 70, y, 22, TEXT, top, width=340)
+            _hp_bar(canvas, 424, y + 9, 300, row["dealt"], best, ACCENT if top else SUB)
+            canvas.text(
+                f"{row['dealt']} · {row['per_round']:.0f}/回合 · {row['share']:.0%}",
+                740,
+                y,
+                21,
+                ACCENT if top else TEXT,
+                top,
+                width=280,
+            )
 
     canvas.text("战斗过程", 58, log_top, 28, bold=True)
     for index, (tag, line, first, entry) in enumerate(log):
@@ -946,7 +1048,7 @@ def render_ranking(root: Path, boards: dict, avatars: dict[str, bytes]) -> Card:
             canvas.text(name, x + 176, y + 24, 25, bold=True, width=308)
             value = f"{player[kind]} {unit}"
             size = 30 if len(value) <= 7 else 23
-            text_width = canvas.draw.textlength(value, font=canvas.font(size, True))
+            text_width = canvas.measure(value, size, True)
             canvas.text(
                 value, max(x + 521, x + 662 - text_width), y + 23, size, color, True, width=144
             )

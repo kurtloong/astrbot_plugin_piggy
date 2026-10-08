@@ -348,7 +348,7 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
         for pig in progress["entries"]:
             self.assertNotIn(pig["name"], labels)
         self.assertIn("已解锁 1 / 2", labels)
-        with Image.open(io.BytesIO(message.images[0])) as img:
+        with Image.open(io.BytesIO(message.images[0])) as card, card.convert("RGB") as img:
             self.assertEqual(img.width, 1080)
             for i, pig in enumerate(progress["entries"]):
                 r, g, b = img.getpixel((113 + 122 * i, 439))

@@ -212,7 +212,7 @@
 
 ## 💛 致谢
 
-初始猪库与图片来自 [MegSopern/astrbot_plugin_rollpig](https://github.com/MegSopern/astrbot_plugin_rollpig/tree/42490b1b88367260c137c1147b05a3c052f22d33)，感谢前辈们留下的一群小猪~ 后续补充的 882 只小猪来自 [1780605301/astrbot_plugin_rollpig](https://github.com/1780605301/astrbot_plugin_rollpig)（MIT，作者 Bear_lele / momola），已去掉与原有小猪重复的 62 条，图片压缩为 WebP，属性和技能为本插件按名字重新设计。 <br>项目代码遵循 [MIT 许可证](LICENSE)；随包字体 [Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc) 遵循 `resources/fonts/OFL.txt` 中的 SIL Open Font License。
+初始猪库与图片来自 [MegSopern/astrbot_plugin_rollpig](https://github.com/MegSopern/astrbot_plugin_rollpig/tree/42490b1b88367260c137c1147b05a3c052f22d33)，感谢前辈们留下的一群小猪~ 后续补充的 882 只小猪来自 [1780605301/astrbot_plugin_rollpig](https://github.com/1780605301/astrbot_plugin_rollpig)（MIT，作者 Bear_lele / momola），已去掉与原有小猪重复的 62 条，图片压缩为 WebP，属性和技能为本插件按名字重新设计。 <br>项目代码遵循 [MIT 许可证](LICENSE)；随包字体 [Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc)，以及用于 emoji 和特殊符号的后备字体 [Noto Emoji](https://github.com/google/fonts/tree/main/ofl/notoemoji)、[Noto Sans Symbols](https://github.com/google/fonts/tree/main/ofl/notosanssymbols)、[Noto Sans Symbols 2](https://github.com/google/fonts/tree/main/ofl/notosanssymbols2)、[Noto Sans Math](https://github.com/google/fonts/tree/main/ofl/notosansmath)，均遵循 `resources/fonts/OFL.txt` 中的 SIL Open Font License。
 
 ---
 
