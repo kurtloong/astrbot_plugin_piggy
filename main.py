@@ -52,6 +52,8 @@ from .core.views import (
 MAX_INFLIGHT = 12
 ANNOUNCE_INTERVAL = 600
 ANNOUNCE_ACTIVE_DAYS = 7
+# Bound at import so a patched asyncio.sleep can never turn the loop into a busy spin.
+_sleep = asyncio.sleep
 REQUEST_TIMEOUT = 240
 MENTION_TAG = re.compile(r"<@!?[^>]*>|<qqbot-at-user[^>]*>")
 MENTION_ID = re.compile(
@@ -178,7 +180,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.6.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.6.1")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -236,7 +238,8 @@ class PiggyPlugin(Star):
             self.ready = True
             self.backup_task = asyncio.create_task(self._backups())
             self.cleanup_task = asyncio.create_task(self._cleanup())
-            self.announce_task = asyncio.create_task(self._announce_wild())
+            if self.settings.wild_announce:
+                self.announce_task = asyncio.create_task(self._announce_wild())
 
     async def _backups(self):
         while True:
@@ -273,7 +276,7 @@ class PiggyPlugin(Star):
             # Wake shortly after midnight (UTC+8), and at least every few minutes for
             # groups whose bot only becomes known after a restart.
             now = time.time() + 8 * 3600
-            await asyncio.sleep(min(ANNOUNCE_INTERVAL, 86400 - now % 86400 + 5))
+            await _sleep(min(ANNOUNCE_INTERVAL, 86400 - now % 86400 + 5))
 
     async def announce_wild_once(self):
         """Spawn today's wild pig in recently active groups and post it without @."""
