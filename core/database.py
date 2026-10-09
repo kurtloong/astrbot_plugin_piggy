@@ -1880,6 +1880,52 @@ class Database:
 
         return await self.run(grant)
 
+    async def raid_sample(self, dungeon_key, stage: int, level: int, seed: int) -> dict:
+        """A throwaway fight with random catalog pigs, shaped like a raid stage for the replay.
+
+        Nothing is written: no raid, no rewards, no losses.
+        """
+        info = dungeon(dungeon_key)
+        slot_id = info["bosses"][stage - 1]
+
+        def sample(conn):
+            enabled = [
+                dict(r) for r in conn.execute("SELECT * FROM pigs WHERE enabled=1 ORDER BY id")
+            ]
+            boss = conn.execute(
+                "SELECT * FROM pigs WHERE id=? AND enabled=1", (slot_id,)
+            ).fetchone()
+            return enabled, dict(boss) if boss else None
+
+        enabled, boss_pig = await self.run(sample)
+        if len(enabled) < PARTY_SIZE:
+            raise PiggyError(f"猪库启用的小猪不足 {PARTY_SIZE} 只，无法模拟副本。")
+        rng = random.Random(seed)
+        boss_pig = boss_pig or rng.choice(enabled)
+        heroes = []
+        for seat, pig in enumerate(rng.sample(enabled, PARTY_SIZE)):
+            hero = fighter(pig, entry_for(pig["battle"]), level, f"{seat + 1}号{pig['name']}")
+            hero["seat"] = seat
+            heroes.append(hero)
+        boss = boss_fighter(
+            boss_pig, entry_for(boss_pig["battle"]), level, stage, slot_id, boss_pig["name"]
+        )
+        result = await asyncio.to_thread(simulate_raid, heroes, boss, slot_id, new_config(), seed)
+        return {
+            "raid": {"dungeon": info},
+            "stage": stage,
+            "result": result,
+            "fighters": [
+                {"seat": h["seat"], "dealt": h["dealt"]}
+                for h in result["heroes"]
+                if h["seat"] is not None
+            ],
+            "ally": None,
+            "boss": {"label": boss_pig["name"]},
+            "events": [],
+            "won": result["won"],
+        }
+
     async def duel_rankings(
         self, app_id: str, group_id: str, user_id: int, min_games: int = 3, limit: int = 10
     ) -> dict:
