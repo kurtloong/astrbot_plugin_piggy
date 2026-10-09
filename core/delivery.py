@@ -140,8 +140,10 @@ class Message:
     keyboard: dict | None = None
     local: bool = False
     markdown: bool = False
-    # Builds MP4 bytes (or None) in a worker thread; sent as a best-effort second reply.
+    # Builds MP4 bytes (or None) in a worker thread; sent best-effort before the main reply.
     video: Callable[[], bytes | None] | None = field(default=None, compare=False, repr=False)
+    # Plain text sent first of all, so the group knows a slow reply is on its way.
+    notice: str = ""
 
     def parts(self) -> list[str]:
         """Split long text by lines; QQ allows a few passive replies per message."""
@@ -265,6 +267,7 @@ class Sender:
             return
         sequence = receipt["sequence"]
         deadline = deadline if deadline is not None else time.monotonic() + 240
+        sequence = await self._preface(event, key, message, sequence, deadline)
         urls = []
         media = None
         if message.local:
@@ -336,11 +339,33 @@ class Sender:
                 break
             if final:
                 await self.db.delivery_update(key, sequence, True)
-                if message.video is not None:
-                    await self._send_video(event, message.video, sequence + 1, deadline)
                 return
             sequence += 1
             await self.db.delivery_update(key, sequence, False)
+
+    async def _preface(self, event, key: str, message: Message, sequence: int, deadline: float):
+        """Send the notice, then the replay video, ahead of the main reply; neither can block it."""
+        if message.notice:
+            try:
+                await self.transport.request(
+                    event,
+                    {
+                        "msg_id": event.message_obj.message_id,
+                        "msg_seq": sequence,
+                        "msg_type": 0,
+                        "content": message.notice,
+                    },
+                )
+            except QQError as exc:
+                if self.logger is not None and exc.code not in DEDUPE_ERRORS:
+                    self.logger.warning("[piggy] Notice not sent: %s", exc)
+            sequence += 1
+            await self.db.delivery_update(key, sequence, False)
+        if message.video is not None:
+            await self._send_video(event, message.video, sequence, deadline)
+            sequence += 1
+            await self.db.delivery_update(key, sequence, False)
+        return sequence
 
     async def _render_video(self, build, deadline: float) -> bytes:
         async with self.video_lock:

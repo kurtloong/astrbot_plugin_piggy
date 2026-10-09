@@ -493,7 +493,14 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
         buttons=buttons,
         mention=raid["leader_user"] if status == "waiting" and settings.use_host("raid") else None,
     )
-    return replace(message, video=raid_video_job(settings, root, battle))
+    video = raid_video_job(settings, root, battle)
+    notice = (
+        f"副本进行中……「{info['name']}」第 {battle['stage']}/{stages} 关对阵 {boss['label']}，"
+        "正在生成战斗回放，视频和战报稍后发出。"
+        if video
+        else ""
+    )
+    return replace(message, video=video, notice=notice)
 
 
 def raid_video_job(settings: Settings, root: Path, battle: dict):

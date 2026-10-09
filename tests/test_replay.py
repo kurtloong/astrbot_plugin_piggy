@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -280,15 +281,27 @@ class VideoDeliveryTests(unittest.IsolatedAsyncioTestCase):
     def message(self, build):
         return Message("", (b"png",), local=True, video=build)
 
-    async def test_video_follows_the_poster_once(self):
+    async def test_video_comes_before_the_poster_once(self):
         transport = FakeTransport()
         sender = Sender(Settings(), self.db, None, transport)
         await sender.send(self.event, "app", self.message(lambda: b"mp4"))
         self.assertEqual([p["msg_seq"] for p in transport.payloads], [100, 101])
-        self.assertEqual(transport.payloads[1]["media"], {"file_info": "video-info"})
+        self.assertEqual(transport.payloads[0]["media"], {"file_info": "video-info"})
+        self.assertEqual(transport.payloads[1]["media"], {"file_info": "image-info"})
         self.assertEqual(transport.videos, [b"mp4"])
         await sender.send(self.event, "app", self.message(lambda: b"mp4"))
         self.assertEqual(len(transport.payloads), 2)
+
+    async def test_notice_goes_first_then_video_then_poster(self):
+        transport = FakeTransport()
+        sender = Sender(Settings(), self.db, None, transport)
+        message = replace(self.message(lambda: b"mp4"), notice="副本进行中……")
+        await sender.send(self.event, "app", message)
+        self.assertEqual([p["msg_seq"] for p in transport.payloads], [100, 101, 102])
+        notice, clip, poster = transport.payloads
+        self.assertEqual((notice["msg_type"], notice["content"]), (0, "副本进行中……"))
+        self.assertEqual(clip["media"], {"file_info": "video-info"})
+        self.assertEqual(poster["media"], {"file_info": "image-info"})
 
     async def test_video_failures_never_break_the_poster(self):
         def broken():
