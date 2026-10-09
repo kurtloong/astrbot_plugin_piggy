@@ -168,6 +168,18 @@ class Message:
         return result
 
 
+def video_failure(exc: Exception, elapsed: float, timeout: float) -> str:
+    """Why one stage of the replay video failed, in words an admin can act on."""
+    if isinstance(exc, QQError) and not exc.code and not exc.status:
+        return f"{elapsed:.1f} 秒后仍没有收到 QQ 答复（超时或断线；当前请求超时 {timeout:g} 秒）"
+    if isinstance(exc, QQError):
+        detail = f"QQ 返回 HTTP {exc.status}、错误码 {exc.code}"
+        return f"{detail}：{exc.reason}" if exc.reason else detail
+    if isinstance(exc, TimeoutError):
+        return f"{elapsed:.1f} 秒内没有完成"
+    return f"{type(exc).__name__}：{exc}"
+
+
 def message_key(event, app_id: str) -> str:
     raw = f"{app_id}:{event.get_group_id()}:{event.message_obj.message_id}"
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -330,32 +342,74 @@ class Sender:
             sequence += 1
             await self.db.delivery_update(key, sequence, False)
 
+    async def _render_video(self, build, deadline: float) -> bytes:
+        async with self.video_lock:
+            return await asyncio.wait_for(
+                asyncio.to_thread(build), max(1.0, deadline - time.monotonic())
+            )
+
+    async def _post_video(self, event, media: str, sequence: int):
+        await self.transport.request(
+            event,
+            {
+                "msg_id": event.message_obj.message_id,
+                "msg_seq": sequence,
+                "msg_type": 7,
+                "media": {"file_info": media},
+            },
+        )
+
     async def _send_video(self, event, build, sequence: int, deadline: float):
         """Render, upload and send the replay; failures only reach the log."""
+        stage, started = "render", time.monotonic()
         try:
-            async with self.video_lock:
-                data = await asyncio.wait_for(
-                    asyncio.to_thread(build), max(1.0, deadline - time.monotonic())
-                )
+            data = await self._render_video(build, deadline)
             if not data:
                 return
+            stage, started = "upload", time.monotonic()
             media = await self.transport.upload_video(event, data)
-            await self.transport.request(
-                event,
-                {
-                    "msg_id": event.message_obj.message_id,
-                    "msg_seq": sequence,
-                    "msg_type": 7,
-                    "media": {"file_info": media},
-                },
-            )
+            stage, started = "send", time.monotonic()
+            await self._post_video(event, media, sequence)
         except Exception as exc:
             if self.logger is not None:
                 self.logger.warning(
-                    "[piggy] Raid replay video skipped (%s): %s",
+                    "[piggy] Raid replay video skipped at %s after %.1fs (%s): %s",
+                    stage,
+                    time.monotonic() - started,
                     type(exc).__name__,
                     safe_detail(str(exc), self.settings),
                 )
+
+    async def check_video(self, event, build, sequence: int, deadline: float) -> list[str]:
+        """Run the replay pipeline once and describe how each stage went."""
+        timeout = self.settings.request_timeout
+        started = time.monotonic()
+        try:
+            data = await self._render_video(build, deadline)
+        except Exception as exc:
+            return [f"渲染：失败，{video_failure(exc, time.monotonic() - started, timeout)}"]
+        if not data:
+            return ["渲染：失败，没有生成任何画面"]
+        lines = [
+            f"渲染：成功，{time.monotonic() - started:.1f} 秒，视频 {len(data) / 2**20:.1f} MB"
+        ]
+        started = time.monotonic()
+        try:
+            media = await self.transport.upload_video(event, data)
+        except Exception as exc:
+            return lines + [
+                f"上传：失败，{video_failure(exc, time.monotonic() - started, timeout)}"
+            ]
+        lines.append(f"上传：成功，{time.monotonic() - started:.1f} 秒")
+        started = time.monotonic()
+        try:
+            await self._post_video(event, media, sequence)
+        except Exception as exc:
+            return lines + [
+                f"发送：失败，{video_failure(exc, time.monotonic() - started, timeout)}"
+            ]
+        lines.append(f"发送：成功，{time.monotonic() - started:.1f} 秒")
+        return lines
 
     async def _upload_local(self, event, data: bytes, deadline: float) -> str:
         for attempt in range(self.settings.upload_retry_count + 1):
