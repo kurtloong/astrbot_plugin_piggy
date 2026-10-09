@@ -2,9 +2,11 @@ import asyncio
 import math
 import re
 import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+from . import replay, video
 from .battle import STAT_NAMES, STATS, describe_skill, entry_for, fighter, level_for
 from .config import PiggyError, Settings
 from .database import EAST_ASIA
@@ -24,6 +26,8 @@ from .rendering import (
     render_today,
     render_wild,
 )
+
+VIDEO_FPS = 15
 
 
 def md(text: str) -> str:
@@ -480,7 +484,7 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
         if status == "waiting"
         else [("猪副本", "猪副本"), ("今日小猪", "今日小猪")]
     )
-    return card_message(
+    message = card_message(
         settings,
         raid["leader_user"],
         card,
@@ -489,6 +493,22 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
         buttons=buttons,
         mention=raid["leader_user"] if status == "waiting" and settings.use_host("raid") else None,
     )
+    return replace(message, video=raid_video_job(settings, root, battle))
+
+
+def raid_video_job(settings: Settings, root: Path, battle: dict):
+    """A thread-safe builder for this stage's MP4 replay, or None when it cannot be made."""
+    data = replay.replay_data(battle)
+    if not settings.raid_video or data is None or not video.available():
+        return None
+    seconds = settings.raid_video_seconds
+
+    def build() -> bytes:
+        return video.render(
+            lambda: replay.frames(root, data, seconds, VIDEO_FPS), VIDEO_FPS, seconds
+        )
+
+    return build
 
 
 async def collection_message(

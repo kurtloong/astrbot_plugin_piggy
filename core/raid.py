@@ -54,6 +54,11 @@ DUNGEONS = (
     },
 )
 
+# Effect types the replay animates on their own (damage and heals have their own cues).
+STATUS_CUES = frozenset(
+    {"shield", "stun", "dot", "buff", "thorns", "regen", "evade", "cleanse", "dispel", "copy"}
+)
+
 GUARD_SKILL = {
     "name": "守护之光",
     "text": "替神明挡下一切。",
@@ -123,6 +128,36 @@ class _RaidUnit(_Unit):
         return max(1.0 if key != "def" else 0.0, value * (1 + max(-90, bonus) / 100))
 
 
+def _statuses(unit) -> list:
+    """Badges for the replay: [glyph, kind], kind being bad, good or control."""
+    badges = []
+    if unit.stun:
+        badges.append([(unit.stun_label or "晕")[0], "control"])
+    for dot in unit.dots:
+        badges.append([dot.get("label", "毒")[0], "bad"])
+    if any(b["pct"] < 0 for b in unit.buffs if b.get("tag") != "stench"):
+        badges.append(["↓", "bad"])
+    stench = sum(1 for b in unit.buffs if b.get("tag") == "stench")
+    if stench:
+        badges.append([f"臭{stench}", "bad"])
+    if any(b["pct"] > 0 for b in unit.buffs):
+        badges.append(["↑", "good"])
+    flags = (
+        (unit.thorns, "刺", "good"),
+        (unit.regens, "愈", "good"),
+        (unit.evade, "闪", "good"),
+        (unit.chill, f"寒{unit.chill}", "bad"),
+        (unit.vuln, "易", "bad"),
+        (unit.possessed, "附", "control"),
+        (unit.lured or unit.marked, "饵", "control"),
+        (unit.glitch, "错", "control"),
+        (unit.blind, "盲", "bad"),
+        (unit.charm, "符", "good"),
+    )
+    badges += [[glyph, kind] for active, glyph, kind in flags if active]
+    return badges[:6]
+
+
 class _RaidBattle(_Battle):
     def __init__(self, heroes: list[dict], boss: dict, slot_id: str, cfg: dict, seed: int):
         self.rng = random.Random(seed)
@@ -144,7 +179,23 @@ class _RaidBattle(_Battle):
         self.acting = None
         # Damage each unit dealt to the other side, for the DPS table.
         self.dealt = {}
+        # Replay data: every unit that ever took the field, and one step per log line
+        # with the cues (who hit whom, which mechanic fired) and everyone's state after it.
+        self.everyone = []
+        self.timeline = []
+        self.cues = []
+        self._crit = False
+        self._dot = ""
+        for unit in self.heroes + [self.boss]:
+            self._enlist(unit, "boss" if unit is self.boss else "hero")
         self._configure()
+
+    def _enlist(self, unit, kind: str):
+        unit.uid = len(self.everyone)
+        unit.kind = "ally" if kind == "hero" and unit.seat is None else kind
+        self.everyone.append(unit)
+        if self.round or self.log:
+            self.cue("summon", dst=unit.uid)
 
     def _configure(self):
         cfg, boss = self.cfg, self.boss
@@ -168,13 +219,40 @@ class _RaidBattle(_Battle):
 
     # ----- helpers used by boss mechanics and field events -----
 
-    def note(self, text: str):
-        self.notes.append(text)
+    def note(self, text: str, mech: int | None = None, field: str = ""):
+        self.notes.append((text, mech, field))
+
+    def cue(self, kind: str, **data):
+        self.cues.append({"t": kind, **data})
+
+    def say(self, text: str):
+        super().say(text)
+        self.timeline.append(
+            {"round": self.round, "text": text, "cues": self.cues, "state": self.snapshot()}
+        )
+        self.cues = []
+
+    def snapshot(self) -> list:
+        """[hp, shield, stunned, away, statuses] for every unit, indexed by uid."""
+        return [
+            [round(max(0.0, u.hp)), round(u.shield), bool(u.stun), bool(u.away), _statuses(u)]
+            for u in self.everyone
+        ]
 
     def flush(self):
-        for text in self.notes + self.falls:
-            self.say(text)
+        notes, falls = self.notes, self.falls
         self.notes, self.falls = [], []
+        for text, mech, field in notes:
+            if mech is not None:
+                self.cue("mech", index=mech, name=self.mech.MECHANICS[mech][0])
+            if field:
+                self.cue("field", name=field)
+            self.say(text)
+        for text, uid in falls:
+            self.cue("fall", dst=uid)
+            self.say(text)
+        if self.notes or self.falls:
+            self.flush()
 
     def alive_heroes(self) -> list:
         return [h for h in self.heroes if h.alive]
@@ -196,6 +274,7 @@ class _RaidBattle(_Battle):
         raw *= 60 / (60 + target.stat("def"))
         raw *= 1 + target.vuln / 100
         acting, self.acting = self.acting, attacker
+        self._crit = crit
         try:
             return self.hurt(target, max(1.0, raw))
         finally:
@@ -216,6 +295,7 @@ class _RaidBattle(_Battle):
         }
         unit = _RaidUnit(data, 1)
         self.foes.append(unit)
+        self._enlist(unit, "minion")
         return unit
 
     def summon_from(self, hero, label: str, hp_pct: float):
@@ -233,6 +313,7 @@ class _RaidBattle(_Battle):
         }
         unit = _RaidUnit(data, 1)
         self.foes.append(unit)
+        self._enlist(unit, "minion")
         return unit
 
     # ----- engine overrides -----
@@ -273,6 +354,16 @@ class _RaidBattle(_Battle):
         attacker = self.acting
         if attacker is not None and attacker.side != unit.side:
             self.dealt[id(attacker)] = self.dealt.get(id(attacker), 0.0) + dealt
+        if dealt > 0:
+            self.cue(
+                "hit",
+                src=attacker.uid if attacker is not None else None,
+                dst=unit.uid,
+                amt=round(dealt),
+                crit=self._crit,
+                dot=self._dot,
+            )
+        self._crit, self._dot = False, ""
         if was_alive and not unit.alive and unit is self.boss and self.mech.prevent_fall(self):
             return dealt
         if was_alive and not unit.alive and unit.charm:
@@ -282,7 +373,7 @@ class _RaidBattle(_Battle):
         if unit is self.boss and unit.alive:
             self.mech.damaged(self)
         if was_alive and not unit.alive:
-            self.falls.append(f"{unit.label} 倒下了")
+            self.falls.append((f"{unit.label} 倒下了", unit.uid))
             if unit.side == 0 and unit.seat is not None:
                 self.mech.hero_fell(self, unit)
         return dealt
@@ -293,15 +384,28 @@ class _RaidBattle(_Battle):
     def dot_amount(self, unit, dot):
         # The tick is hurt right after this; credit it to whoever applied the dot.
         self.acting = dot.get("source")
+        self._dot = dot.get("label", "持续伤害")
         amount = unit.dot_basis * dot["pct"] / 100 * self.mech.dot_factor(self, unit)
         if unit.side == 0 and self.cfg.get("dot_cut"):
             amount *= 1 - self.cfg["dot_cut"] / 100
         return amount
 
     def heal(self, unit, amount: float) -> int:
-        return super().heal(unit, amount * self.mech.heal_factor(self, unit))
+        healed = super().heal(unit, amount * self.mech.heal_factor(self, unit))
+        if healed > 0:
+            self.cue("heal", dst=unit.uid, amt=healed)
+        return healed
+
+    def check_revive(self, unit):
+        if unit.hp <= 0 and unit.revive:
+            self.cue("revive", dst=unit.uid)
+        super().check_revive(unit)
 
     def crit_roll(self, unit, enemy) -> bool:
+        self._crit = self._judge_crit(unit, enemy)
+        return self._crit
+
+    def _judge_crit(self, unit, enemy) -> bool:
         crit = super().crit_roll(unit, enemy)
         if unit.lured and enemy is self.boss:
             unit.lured, unit.marked = False, True
@@ -309,6 +413,24 @@ class _RaidBattle(_Battle):
         if crit and enemy is self.boss:
             return self.mech.crit_against(self, unit)
         return crit
+
+    def apply(self, unit, enemy, effects, skill):
+        self.cue(
+            "skill",
+            src=unit.uid,
+            dst=enemy.uid,
+            name=skill["name"],
+            text=skill.get("text", ""),
+            style=unit.data.get("style", ""),
+        )
+        super().apply(unit, enemy, effects, skill)
+
+    def damage(self, unit, enemy, effect):
+        before = len(self.cues)
+        text = super().damage(unit, enemy, effect)
+        if not any(c["t"] == "hit" and c["dst"] == enemy.uid for c in self.cues[before:]):
+            self.cue("miss", src=unit.uid, dst=enemy.uid, void=bool(self.void_note))
+        return text
 
     def pierce(self, unit, enemy, effect):
         value = super().pierce(unit, enemy, effect)
@@ -333,10 +455,20 @@ class _RaidBattle(_Battle):
 
     def effect(self, unit, enemy, effect, skill):
         if self.mech.blocks_effect(self, unit, effect):
+            self.cue("blocked", dst=unit.uid)
             return "被禁令挡下了"
         text = super().effect(unit, enemy, effect, skill)
-        if effect["type"] == "dot" and enemy.dots:
+        kind = effect["type"]
+        if kind == "dot" and enemy.dots:
             enemy.dots[-1]["source"] = unit
+        if kind in STATUS_CUES and text:
+            if kind == "stun":
+                target = unit if effect.get("target") == "self" else enemy
+            elif kind == "buff":
+                target = enemy if effect.get("target") == "enemy" else unit
+            else:
+                target = enemy if kind in ("dot", "dispel") else unit
+            self.cue(kind, src=unit.uid, dst=target.uid, up=effect.get("pct", 0) >= 0)
         if effect["type"] == "cleanse":
             unit.vuln = 0
             unit.chill = 0
@@ -482,6 +614,22 @@ class _RaidBattle(_Battle):
             ],
             "boss": {"hp": round(max(0, self.boss.hp)), "max_hp": self.boss.max_hp},
             "field_events": self.field_events,
+            "roster": [
+                {
+                    "uid": u.uid,
+                    "label": u.label,
+                    "name": u.data.get("name", u.label),
+                    "asset": u.data.get("asset", ""),
+                    "side": u.side,
+                    "seat": u.seat,
+                    "kind": u.kind,
+                    "max_hp": u.max_hp,
+                    "level": u.data.get("level", 1),
+                    "style": u.data.get("style", ""),
+                }
+                for u in self.everyone
+            ],
+            "timeline": self.timeline,
         }
 
 

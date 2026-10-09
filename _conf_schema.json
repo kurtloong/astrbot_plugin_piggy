@@ -129,6 +129,18 @@
     "default": true,
     "hint": "每天 0 点为最近 7 天有人玩过的群生成野猪，并主动发送野猪卡片（不 @ 任何人）。需要群主开启「允许机器人主动发言」，否则发送失败只记日志。插件重启后，需本应用先收到过一条消息才能主动发送。"
   },
+  "raid_video": {
+    "description": "发送副本回放视频",
+    "type": "bool",
+    "default": true,
+    "hint": "每打完一关，在图片战报之后再发一段 MP4 加速回放。需要安装 PyAV（requirements.txt 已包含）；生成或上传失败只记日志，不影响图片战报。"
+  },
+  "raid_video_seconds": {
+    "description": "副本回放视频最长秒数",
+    "type": "int",
+    "default": 60,
+    "hint": "20–90。整场战斗按此时长加速播放，越短节奏越快。"
+  },
   "battle_markdown": {
     "description": "斗猪/交换使用 Markdown 与按钮",
     "type": "bool",

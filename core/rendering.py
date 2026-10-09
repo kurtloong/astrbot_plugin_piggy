@@ -126,16 +126,27 @@ class Typeset:
     def length(self, draw, text: str, size: int, bold: bool = False) -> float:
         return sum(draw.textlength(part, font=face) for part, face in self.runs(text, size, bold))
 
-    def draw(self, draw, xy, text: str, size: int, fill, bold: bool = False):
+    def draw(
+        self,
+        draw,
+        xy,
+        text: str,
+        size: int,
+        fill,
+        bold: bool = False,
+        stroke: int = 0,
+        outline=None,
+    ):
         runs = self.runs(text, size, bold)
         main = self.face(size, bold)
+        edge = {"stroke_width": stroke, "stroke_fill": outline} if stroke else {}
         if len(runs) == 1 and runs[0][1] is main:
-            draw.text(xy, runs[0][0], font=main, fill=fill)
+            draw.text(xy, runs[0][0], font=main, fill=fill, **edge)
             return
         x, y = xy
         baseline = y + main.getmetrics()[0]
         for part, face in runs:
-            draw.text((x, baseline), part, font=face, fill=fill, anchor="ls")
+            draw.text((x, baseline), part, font=face, fill=fill, anchor="ls", **edge)
             x += draw.textlength(part, font=face)
 
 
