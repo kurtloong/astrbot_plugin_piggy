@@ -24,6 +24,10 @@ class BossMechanics:
     def on(self, index: int) -> bool:
         return index != self.disabled
 
+    def say(self, battle, index: int, text: str):
+        """A mechanic's log line; the replay shows that mechanic's own effect with it."""
+        battle.note(text, mech=index)
+
     def setup(self, battle):
         pass
 
@@ -117,21 +121,23 @@ class Goblin(BossMechanics):
                 if targets:
                     target = min(targets, key=lambda h: h.ratio)
                     dealt = battle.strike(boss, target, 1.2, crit=True)
-                    battle.note(
-                        f"{boss.label}从角落里窜出来偷袭 {target.label}，暴击造成 {round(dealt)} 伤害"
+                    self.say(
+                        battle,
+                        0,
+                        f"{boss.label}从角落里窜出来偷袭 {target.label}，暴击造成 {round(dealt)} 伤害",
                     )
             elif battle.round % 3 == 0:
                 self.lurking = True
                 boss.stun = max(boss.stun, 1)
                 boss.stun_label = "躲在角落"
-                battle.note(f"{boss.label}钻回了角落，这回合谁也打不到它")
+                self.say(battle, 0, f"{boss.label}钻回了角落，这回合谁也打不到它")
         if self.on(1):
             for hero in battle.alive_heroes():
                 stacks = sum(1 for b in hero.buffs if b.get("tag") == "stench")
                 if stacks < 6:
                     hero.buffs.append({"stat": "spd", "pct": -5, "turns": 99, "tag": "stench"})
             if battle.round == 1:
-                battle.note("邋遢光环弥漫开来：一股说不清的味道，全队每回合速度 -5%")
+                self.say(battle, 1, "邋遢光环弥漫开来：一股说不清的味道，全队每回合速度 -5%")
 
     def incoming(self, battle, attacker, raw, effect):
         if self.lurking:
@@ -148,7 +154,9 @@ class Goblin(BossMechanics):
             boss.stun = max(boss.stun, 2)
             boss.stun_label = "摆烂躺平"
             boss.regens.append({"pct": 8, "turns": 2})
-            battle.note(f"{boss.label}开始摆烂：躺在角落什么都不管，慢慢回血，但浑身都是破绽")
+            self.say(
+                battle, 2, f"{boss.label}开始摆烂：躺在角落什么都不管，慢慢回血，但浑身都是破绽"
+            )
 
 
 class Frozen(BossMechanics):
@@ -167,7 +175,9 @@ class Frozen(BossMechanics):
     def setup(self, battle):
         if self.on(1):
             self.shell = battle.boss.max_hp * 0.25
-            battle.note(f"{battle.boss.label}裹着一层 {round(self.shell)} 点的冰块外壳：生人勿近")
+            self.say(
+                battle, 1, f"{battle.boss.label}裹着一层 {round(self.shell)} 点的冰块外壳：生人勿近"
+            )
 
     def crit_against(self, battle, attacker):
         return self.shell <= 0
@@ -189,11 +199,13 @@ class Frozen(BossMechanics):
         if self.on(2):
             boss.mods["def"] = boss.mods.get("def", 0) - 30
             boss.mods["atk"] = boss.mods.get("atk", 0) + 20
-            battle.note(
-                f"冰块外壳碎了……外表冷硬，内心却渴望温暖。{boss.label}融化了：防御 -30%，攻击 +20%"
+            self.say(
+                battle,
+                2,
+                f"冰块外壳碎了……外表冷硬，内心却渴望温暖。{boss.label}融化了：防御 -30%，攻击 +20%",
             )
         else:
-            battle.note("冰块外壳碎了")
+            self.say(battle, 1, "冰块外壳碎了")
 
     def outgoing(self, battle, target, dealt):
         if not self.on(0) or not target.alive:
@@ -204,11 +216,11 @@ class Frozen(BossMechanics):
         target.chill = 0
         if target.frost_ward:
             target.frost_ward = False
-            battle.note(f"篝火的余温护住了 {target.label}，没有被冻住")
+            self.say(battle, 0, f"篝火的余温护住了 {target.label}，没有被冻住")
             return
         target.stun = max(target.stun, 1)
         target.stun_label = "冻结"
-        battle.note(f"寒气叠满 3 层，{target.label} 被冻成了冰块")
+        self.say(battle, 0, f"寒气叠满 3 层，{target.label} 被冻成了冰块")
 
 
 class Everest(BossMechanics):
@@ -227,13 +239,13 @@ class Everest(BossMechanics):
             for hero in battle.alive_heroes():
                 hero.mods["spd"] = hero.mods.get("spd", 0) - 4
             if battle.round == 1:
-                battle.note("海拔越来越高，空气越来越稀薄，全队每回合都会慢一点")
+                self.say(battle, 0, "海拔越来越高，空气越来越稀薄，全队每回合都会慢一点")
             if battle.round >= 12:
                 lost = [
                     round(battle.hurt(hero, hero.max_hp * 0.04)) for hero in battle.alive_heroes()
                 ]
                 if lost:
-                    battle.note(f"高处不胜寒，全队缺氧，各损失约 {max(lost)} 生命")
+                    self.say(battle, 0, f"高处不胜寒，全队缺氧，各损失约 {max(lost)} 生命")
         if self.on(2) and battle.round in (5, 10, 15):
             parts = []
             for hero in battle.alive_heroes():
@@ -245,7 +257,7 @@ class Everest(BossMechanics):
                     text += "（臣服）"
                 parts.append(text)
             if parts:
-                battle.note("雪峰压顶，雪崩来了！" + "，".join(parts))
+                self.say(battle, 2, "雪峰压顶，雪崩来了！" + "，".join(parts))
 
     def incoming(self, battle, attacker, raw, effect):
         if self.on(1):
@@ -277,13 +289,13 @@ class Error404(BossMechanics):
         if self.on(0):
             self.hidden = battle.rng.random() < 0.5
             if self.hidden:
-                battle.note(f"{boss.label}进入未被观测状态：没猪能确定它是否存在")
+                self.say(battle, 0, f"{boss.label}进入未被观测状态：没猪能确定它是否存在")
         if self.on(1) and battle.round % 4 == 0:
             targets = battle.alive_heroes()
             if targets:
                 target = battle.rng.choice(targets)
                 target.glitch = True
-                battle.note(f"页面不存在：{target.label} 的下一次行动返回了 404")
+                self.say(battle, 1, f"页面不存在：{target.label} 的下一次行动返回了 404")
 
     def incoming(self, battle, attacker, raw, effect):
         if (
@@ -301,7 +313,7 @@ class Error404(BossMechanics):
             self.rolled = True
             boss.hp = boss.max_hp * 0.6
             boss.dots.clear()
-            battle.note(f"缓存回滚！{boss.label}疯狂刷新，生命回到 60%，持续伤害也被清掉了")
+            self.say(battle, 2, f"缓存回滚！{boss.label}疯狂刷新，生命回到 60%，持续伤害也被清掉了")
 
 
 class Mechanical(BossMechanics):
@@ -327,7 +339,7 @@ class Mechanical(BossMechanics):
             if targets:
                 self.locked = max(targets, key=lambda h: h.hp)
                 self.lock_round = battle.round
-                battle.note(f"红色光学眼锁定了 {self.locked.label}，运算精准")
+                self.say(battle, 0, f"红色光学眼锁定了 {self.locked.label}，运算精准")
 
     def before_act(self, battle):
         boss = battle.boss
@@ -354,7 +366,7 @@ class Mechanical(BossMechanics):
                 self.hits = 0
                 self.overheat = 2
                 battle.boss.zeroed.add("def")
-                battle.note("金属外壳过热冒烟了！防御归零 2 回合")
+                self.say(battle, 1, "金属外壳过热冒烟了！防御归零 2 回合")
         return raw
 
     def round_end(self, battle):
@@ -364,7 +376,7 @@ class Mechanical(BossMechanics):
             self.overheat -= 1
             if not self.overheat:
                 battle.boss.zeroed.discard("def")
-                battle.note("金属外壳冷却完毕，防御恢复")
+                self.say(battle, 1, "金属外壳冷却完毕，防御恢复")
 
 
 class Cyberpunk(BossMechanics):
@@ -387,25 +399,27 @@ class Cyberpunk(BossMechanics):
             self.evolved += 4
             boss.mods["atk"] = boss.mods.get("atk", 0) + 4
             if self.evolved in (4, 20, 40, 60):
-                battle.note(f"义体改造进行中：{boss.label}的攻击已累计 +{self.evolved}%")
+                self.say(battle, 1, f"义体改造进行中：{boss.label}的攻击已累计 +{self.evolved}%")
         if self.on(0) and battle.round % 3 == 0:
             for hero in battle.alive_heroes():
                 hero.buffs = [b for b in hero.buffs if b["pct"] < 0]
                 hero.shield = 0
                 hero.thorns.clear()
                 hero.evade = 0
-            battle.note("黑客入侵！全队的增益、护盾和反弹都被删掉了")
+            self.say(battle, 0, "黑客入侵！全队的增益、护盾和反弹都被删掉了")
 
     def dispelled(self, battle):
         if self.evolved:
             battle.boss.mods["atk"] = battle.boss.mods.get("atk", 0) - self.evolved
-            battle.note(f"驱散生效，{battle.boss.label}累计 +{self.evolved}% 的义体进化被清零")
+            self.say(
+                battle, 1, f"驱散生效，{battle.boss.label}累计 +{self.evolved}% 的义体进化被清零"
+            )
             self.evolved = 0
 
     def damaged(self, battle):
         if self.on(2) and not self.overclock and battle.boss.ratio < 0.4:
             self.overclock = True
-            battle.note(f"{battle.boss.label}处理器超频运行！之后每回合行动 2 次")
+            self.say(battle, 2, f"{battle.boss.label}处理器超频运行！之后每回合行动 2 次")
 
     def extra_actions(self, battle):
         return 1 if self.overclock else 0
@@ -414,7 +428,7 @@ class Cyberpunk(BossMechanics):
         boss = battle.boss
         if self.overclock and boss.alive:
             lost = battle.hurt(boss, boss.max_hp * 0.04)
-            battle.note(f"超频过热，{boss.label}损失 {round(lost)} 生命")
+            self.say(battle, 2, f"超频过热，{boss.label}损失 {round(lost)} 生命")
 
 
 class Demon(BossMechanics):
@@ -443,7 +457,7 @@ class Demon(BossMechanics):
                 hero.vuln += 20
             parts.append(f"{hero.label}「{curse}」")
         if parts:
-            battle.note("满肚子坏点子：" + "，".join(parts))
+            self.say(battle, 0, "满肚子坏点子：" + "，".join(parts))
 
     def round_start(self, battle):
         heroes = battle.alive_heroes()
@@ -451,14 +465,16 @@ class Demon(BossMechanics):
             a, b = battle.rng.sample(heroes, 2)
             ra, rb = a.ratio, b.ratio
             a.hp, b.hp = a.max_hp * rb, b.max_hp * ra
-            battle.note(f"恶作剧！{a.label} 和 {b.label} 的生命被对调了（{ra:.0%} ⇄ {rb:.0%}）")
+            self.say(
+                battle, 1, f"恶作剧！{a.label} 和 {b.label} 的生命被对调了（{ra:.0%} ⇄ {rb:.0%}）"
+            )
 
     def hero_fell(self, battle, hero):
         boss = battle.boss
         if self.on(2) and boss.alive:
             healed = battle.heal(boss, boss.max_hp * 0.15)
             boss.mods["atk"] = boss.mods.get("atk", 0) + 10
-            battle.note(f"{boss.label}露出得逞的坏笑，回复 {healed} 生命，攻击 +10%")
+            self.say(battle, 2, f"{boss.label}露出得逞的坏笑，回复 {healed} 生命，攻击 +10%")
 
 
 class ChainedKing(BossMechanics):
@@ -484,7 +500,7 @@ class ChainedKing(BossMechanics):
             boss = battle.boss
             boss.mods["atk"] = boss.mods.get("atk", 0) - 30
             boss.mods["spd"] = boss.mods.get("spd", 0) - 30
-            battle.note(f"{boss.label}被 3 条锁链束缚着：欲戴王冠，必承其重")
+            self.say(battle, 0, f"{boss.label}被 3 条锁链束缚着：欲戴王冠，必承其重")
 
     def damaged(self, battle):
         boss = battle.boss
@@ -496,7 +512,11 @@ class ChainedKing(BossMechanics):
                 f"{hero.label} -{round(battle.strike(boss, hero, 0.7))}"
                 for hero in battle.alive_heroes()
             ]
-            battle.note(f"锁链崩断一条（剩 {self.chains} 条），冲击波扫过全队：" + "，".join(hits))
+            self.say(
+                battle,
+                0,
+                f"锁链崩断一条（剩 {self.chains} 条），冲击波扫过全队：" + "，".join(hits),
+            )
             if not self.chains:
                 self.king_returns(battle)
         if not self.on(0) and not self.returned and boss.ratio <= 0.25:
@@ -508,7 +528,7 @@ class ChainedKing(BossMechanics):
         self.returned = True
         boss = battle.boss
         healed = battle.heal(boss, boss.max_hp * 0.15)
-        battle.note(f"挣断锁链，王者归来！{boss.label}恢复全部属性，回复 {healed} 生命")
+        self.say(battle, 1, f"挣断锁链，王者归来！{boss.label}恢复全部属性，回复 {healed} 生命")
 
     def round_start(self, battle):
         heroes = battle.alive_heroes()
@@ -516,7 +536,7 @@ class ChainedKing(BossMechanics):
             target = min(heroes, key=lambda h: h.stat("spd"))
             target.stun = max(target.stun, 1)
             target.stun_label = "臣服"
-            battle.note(f"王者威压：{target.label} 被震慑得跪了下来")
+            self.say(battle, 2, f"王者威压：{target.label} 被震慑得跪了下来")
 
 
 class PigGod(BossMechanics):
@@ -540,7 +560,7 @@ class PigGod(BossMechanics):
 
     def crit_against(self, battle, attacker):
         if self.on(0) and battle.rng.random() < 0.3:
-            battle.note(f"好运加持：{battle.boss.label}靠运气抵消了一次暴击")
+            self.say(battle, 0, f"好运加持：{battle.boss.label}靠运气抵消了一次暴击")
             return False
         return True
 
@@ -555,7 +575,7 @@ class PigGod(BossMechanics):
             if targets:
                 self.blind_round = battle.round + 1
                 self.prophecy = battle.rng.choice(targets)
-                battle.note(f"神谕：下回合全队无处可躲，{self.prophecy.label} 将首当其冲")
+                self.say(battle, 1, f"神谕：下回合全队无处可躲，{self.prophecy.label} 将首当其冲")
 
     def pick_target(self, battle, candidates):
         if (
@@ -572,7 +592,7 @@ class PigGod(BossMechanics):
             self.summoned = True
             for index in (1, 2):
                 battle.summon(f"小猪守护灵{index}", 0.15, 0.5)
-            battle.note("守护神降临！两只小猪守护灵挡在了神明面前，得先打倒它们")
+            self.say(battle, 2, "守护神降临！两只小猪守护灵挡在了神明面前，得先打倒它们")
 
 
 class Zombie(BossMechanics):
@@ -608,7 +628,7 @@ class Zombie(BossMechanics):
             dot["pct"] = 3 * dot["stacks"]
             dot["label"] = f"尸毒×{dot['stacks']}"
             if dot["stacks"] == 3:
-                battle.note(f"{target.label} 身上的尸毒叠满了 3 层")
+                self.say(battle, 0, f"{target.label} 身上的尸毒叠满了 3 层")
 
     def heal_factor(self, battle, unit):
         return 0.5 if unit.side == 0 and self.poisoned(unit) else 1.0
@@ -624,7 +644,7 @@ class Zombie(BossMechanics):
     def hero_fell(self, battle, hero):
         if self.on(2) and battle.acting is battle.boss:
             battle.summon_from(hero, f"僵尸·{hero.data['name']}", 0.4)
-            battle.note(f"{hero.label} 被啃了一口……尸变了！变成僵尸小猪站到了敌方")
+            self.say(battle, 2, f"{hero.label} 被啃了一口……尸变了！变成僵尸小猪站到了敌方")
 
 
 class TwoFacedGhost(BossMechanics):
@@ -651,12 +671,12 @@ class TwoFacedGhost(BossMechanics):
                 if self.face == "阴"
                 else "持续伤害无效，用普通攻击"
             )
-            battle.note(f"{battle.boss.label}翻到了{self.face}面：{hint}")
+            self.say(battle, 0, f"{battle.boss.label}翻到了{self.face}面：{hint}")
         heroes = battle.present_heroes()
         if self.on(1) and battle.round % 4 == 0 and len(heroes) >= 2:
             target = battle.rng.choice(heroes)
             target.possessed = True
-            battle.note(f"{battle.boss.label}附身到了 {target.label} 身上")
+            self.say(battle, 1, f"{battle.boss.label}附身到了 {target.label} 身上")
 
     def incoming(self, battle, attacker, raw, effect):
         if not self.on(0):
@@ -674,9 +694,10 @@ class TwoFacedGhost(BossMechanics):
         boss = battle.boss
         heroes = battle.present_heroes()
         if self.on(2) and boss.alive and boss.ratio < 0.4 and heroes:
-            ends = {max(heroes, key=lambda h: h.hp), min(heroes, key=lambda h: h.hp)}
+            high, low = max(heroes, key=lambda h: h.hp), min(heroes, key=lambda h: h.hp)
+            ends = [high] if high is low else [high, low]
             hits = [f"{h.label} -{round(battle.strike(boss, h, 0.8))}" for h in ends]
-            battle.note("双面夹击！" + "，".join(hits))
+            self.say(battle, 2, "双面夹击！" + "，".join(hits))
 
 
 class Skeleton(BossMechanics):
@@ -705,8 +726,10 @@ class Skeleton(BossMechanics):
         boss.hp = boss.max_hp * (0.35 if self.lives else 0.15)
         boss.dots.clear()
         boss.mods["def"] = boss.mods.get("def", 0) + 20
-        battle.note(
-            f"白骨重组！散落一地的骨头又拼回了 {boss.label}，生命回到 {boss.ratio:.0%}，防御 +20%"
+        self.say(
+            battle,
+            0,
+            f"白骨重组！散落一地的骨头又拼回了 {boss.label}，生命回到 {boss.ratio:.0%}，防御 +20%",
         )
         return True
 
@@ -724,14 +747,14 @@ class Skeleton(BossMechanics):
         if dish == "红烧":
             for hero in heroes:
                 hero.dots.append({"pct": 3, "turns": 3, "label": "红烧"})
-            battle.note("红烧！全队被浇了一身热油，持续流血 3 回合")
+            self.say(battle, 2, "红烧！全队被浇了一身热油，持续流血 3 回合")
         elif dish == "爆炒":
             hits = [f"{h.label} -{round(battle.strike(battle.boss, h, 0.6))}" for h in heroes]
-            battle.note("爆炒！" + "，".join(hits))
+            self.say(battle, 2, "爆炒！" + "，".join(hits))
         else:
             for hero in heroes:
                 hero.buffs.append({"stat": "spd", "pct": -20, "turns": 2})
-            battle.note("清蒸！全队被蒸得晕乎乎的，速度 -20% 2 回合")
+            self.say(battle, 2, "清蒸！全队被蒸得晕乎乎的，速度 -20% 2 回合")
 
 
 class Nezha(BossMechanics):
@@ -764,10 +787,10 @@ class Nezha(BossMechanics):
                 self.ring = False
                 for hero in battle.present_heroes():
                     battle.hurt(hero, hero.max_hp * 0.04)
-                battle.note("风火轮留下的火圈烧了起来，全队灼烧 4% 生命")
+                self.say(battle, 0, "风火轮留下的火圈烧了起来，全队灼烧 4% 生命")
             if battle.round % 2 == 0:
                 self.ring = True
-                battle.note(f"{boss.label}踩着风火轮绕场一圈，地上留下了火圈")
+                self.say(battle, 0, f"{boss.label}踩着风火轮绕场一圈，地上留下了火圈")
         if self.on(1) and battle.round % 3 == 0:
             shield = evade = 0
             for hero in battle.present_heroes():
@@ -777,15 +800,15 @@ class Nezha(BossMechanics):
             boss.shield += shield
             boss.evade += evade
             if shield or evade:
-                battle.note(f"混天绫一卷，抢走了全队 {round(shield)} 护盾和 {evade} 次闪避")
+                self.say(battle, 1, f"混天绫一卷，抢走了全队 {round(shield)} 护盾和 {evade} 次闪避")
             else:
-                battle.note("混天绫扫了一圈，全队身上什么也没有")
+                self.say(battle, 1, "混天绫扫了一圈，全队身上什么也没有")
 
     def crit_against(self, battle, attacker):
         if self.on(2) and self.stacks < 5:
             self.stacks += 1
             battle.boss.mods["atk"] = battle.boss.mods.get("atk", 0) + 8
-            battle.note(f"{battle.boss.label}不服输！攻击 +8%（{self.stacks}/5）")
+            self.say(battle, 2, f"{battle.boss.label}不服输！攻击 +8%（{self.stacks}/5）")
         return True
 
     def damaged(self, battle):
@@ -795,7 +818,7 @@ class Nezha(BossMechanics):
             hits = [
                 f"{h.label} -{round(battle.strike(boss, h, 2.0))}" for h in battle.present_heroes()
             ]
-            battle.note("乾坤圈全力一掷！" + "，".join(hits))
+            self.say(battle, 2, "乾坤圈全力一掷！" + "，".join(hits))
 
 
 class FishDuke(BossMechanics):
@@ -837,12 +860,12 @@ class FishDuke(BossMechanics):
                 text = f"退潮了：{boss.label}搁浅在沙滩上，防御 -30%"
             for unit, key, value in self.tide:
                 self.shift(unit, key, value)
-            battle.note(text)
+            self.say(battle, 0, text)
         if self.on(1) and battle.round % 4 == 0:
             self.decree = battle.rng.choice(("禁疗令", "禁技令"))
             self.until = battle.round + 1
             rule = "治疗、护盾和持续回复全部失效" if self.decree == "禁疗令" else "队员只能用普攻"
-            battle.note(f"公爵颁布{self.decree}：2 回合内{rule}")
+            self.say(battle, 1, f"公爵颁布{self.decree}：2 回合内{rule}")
 
     def active(self, battle, kind) -> bool:
         return self.decree == kind and battle.round <= self.until
@@ -869,7 +892,7 @@ class FishDuke(BossMechanics):
             hero = battle.rng.choice(heroes)
             hero.shield += hero.max_hp * 0.03
         if not self.scales:
-            battle.note(f"{battle.boss.label}的龙鳞全部脱落了")
+            self.say(battle, 2, f"{battle.boss.label}的龙鳞全部脱落了")
         return raw * 0.8
 
 
@@ -895,17 +918,19 @@ class DeepSea(BossMechanics):
             for hero in battle.present_heroes():
                 battle.hurt(hero, hero.max_hp * pct / 100)
             if battle.round % 4 == 1:
-                battle.note(f"越潜越深，水压让全队每回合损失 {pct:.1f}% 生命")
+                self.say(battle, 0, f"越潜越深，水压让全队每回合损失 {pct:.1f}% 生命")
         heroes = battle.present_heroes()
         if self.on(1) and battle.round % 3 == 0 and heroes:
             target = max(heroes, key=lambda h: h.stat("atk"))
             target.lured = True
-            battle.note(f"灯笼鱼的光吸引了 {target.label}：它的下一击必定暴击，但也会成为猎物")
+            self.say(
+                battle, 1, f"灯笼鱼的光吸引了 {target.label}：它的下一击必定暴击，但也会成为猎物"
+            )
 
     def damaged(self, battle):
         if self.on(2) and not self.abyss and battle.boss.ratio < 0.5:
             self.abyss = True
-            battle.note("马里亚纳海沟的暗流涌了上来：全队治疗减半，护盾每回合流失一半")
+            self.say(battle, 2, "马里亚纳海沟的暗流涌了上来：全队治疗减半，护盾每回合流失一半")
 
     def heal_factor(self, battle, unit):
         return 0.5 if self.abyss and unit.side == 0 else 1.0
@@ -949,27 +974,29 @@ class Alien(BossMechanics):
             value = battle.rng.choice((20, -20))
             hero.mods[key] = hero.mods.get(key, 0) + value
             sign = "+" if value > 0 else ""
-            battle.note(f"{hero.label} 被放了回来，被做了实验：{self.STATS[key]}{sign}{value}%")
+            self.say(
+                battle, 0, f"{hero.label} 被放了回来，被做了实验：{self.STATS[key]}{sign}{value}%"
+            )
         if self.docked:
             if boss.away:
                 hits = [
                     f"{h.label} -{round(battle.strike(boss, h, 0.6))}"
                     for h in battle.present_heroes()
                 ]
-                battle.note("母舰扫射！" + "，".join(hits))
+                self.say(battle, 2, "母舰扫射！" + "，".join(hits))
             else:
                 self.docked = False
                 healed = battle.heal(boss, boss.max_hp * 0.15)
-                battle.note(f"{boss.label}从母舰回来了，回复 {healed} 生命")
+                self.say(battle, 2, f"{boss.label}从母舰回来了，回复 {healed} 生命")
         heroes = battle.present_heroes()
         if self.on(0) and battle.round % 4 == 0 and len(heroes) >= 2:
             target = battle.rng.choice(heroes)
             target.away = 2
             self.abducted.append(target)
-            battle.note(f"绑架光束！{target.label} 被吸进了 UFO")
+            self.say(battle, 0, f"绑架光束！{target.label} 被吸进了 UFO")
         if self.on(1) and battle.round % 3 == 0:
             self.doubt = battle.round
-            battle.note("自我怀疑光波：全队开始怀疑猪生，这回合伤害和治疗 -40%")
+            self.say(battle, 1, "自我怀疑光波：全队开始怀疑猪生，这回合伤害和治疗 -40%")
 
     def outgoing_factor(self, battle, attacker, target):
         return 0.6 if attacker.side == 0 and battle.round == self.doubt else 1.0
@@ -982,7 +1009,7 @@ class Alien(BossMechanics):
         if self.on(2) and not self.called and boss.ratio < 0.5:
             self.called = self.docked = True
             boss.away = 2
-            battle.note(f"{boss.label}召回了母舰，躲进去不出来了")
+            self.say(battle, 2, f"{boss.label}召回了母舰，躲进去不出来了")
 
 
 STAR_SKILL = {
@@ -1020,7 +1047,7 @@ class StarCluster(BossMechanics):
         if self.on(0):
             self.spawn(battle)
             self.spawn(battle)
-            battle.note(f"{battle.boss.label}分出了两颗小星，围着星核打转")
+            self.say(battle, 0, f"{battle.boss.label}分出了两颗小星，围着星核打转")
 
     def round_start(self, battle):
         boss = battle.boss
@@ -1036,7 +1063,7 @@ class StarCluster(BossMechanics):
             self.spawn(battle)
             rebuilt += 1
         if rebuilt:
-            battle.note(f"星团聚合：星核分出 {rebuilt} 颗新的小星")
+            self.say(battle, 0, f"星团聚合：星核分出 {rebuilt} 颗新的小星")
 
     def foe_hit(self, battle, attacker, target, raw, effect):
         if not self.on(1):
@@ -1053,19 +1080,19 @@ class StarCluster(BossMechanics):
     def damaged(self, battle):
         if self.on(2) and self.countdown is None and battle.boss.ratio < 0.25:
             self.countdown = 3
-            battle.note("星核开始坍缩！超新星倒计时 3 回合")
+            self.say(battle, 2, "星核开始坍缩！超新星倒计时 3 回合")
 
     def round_end(self, battle):
         if not self.countdown:
             return
         self.countdown -= 1
         if self.countdown:
-            battle.note(f"超新星倒计时 {self.countdown}……")
+            self.say(battle, 2, f"超新星倒计时 {self.countdown}……")
             return
         hits = [
             f"{h.label} -{round(battle.hurt(h, h.max_hp * 0.4))}" for h in battle.present_heroes()
         ]
-        battle.note("超新星爆发！" + "，".join(hits))
+        self.say(battle, 2, "超新星爆发！" + "，".join(hits))
 
 
 class CosmicRing(BossMechanics):
@@ -1093,7 +1120,7 @@ class CosmicRing(BossMechanics):
 
     def setup(self, battle):
         if self.rings:
-            battle.note(f"{battle.boss.label}身边环绕着 3 道星环")
+            self.say(battle, 0, f"{battle.boss.label}身边环绕着 3 道星环")
 
     def incoming(self, battle, attacker, raw, effect):
         if self.rings and not effect.get("true"):
@@ -1106,16 +1133,18 @@ class CosmicRing(BossMechanics):
         boss = battle.boss
         if self.on(0) and battle.round % 3 == 0 and self.rings < 3:
             self.rings += 1
-            battle.note(f"星环重新转了起来，现在有 {self.rings} 道")
+            self.say(battle, 0, f"星环重新转了起来，现在有 {self.rings} 道")
         heroes = battle.present_heroes()
         self.near = self.far = None
         if self.on(1) and len(heroes) >= 2:
             self.near = max(heroes, key=lambda h: h.stat("spd"))
             self.far = min(heroes, key=lambda h: h.stat("spd"))
             if battle.round % 3 == 1:
-                battle.note(
+                self.say(
+                    battle,
+                    1,
                     f"引力场：{self.near.label} 被拉近（受到伤害 +25%），"
-                    f"{self.far.label} 被推远（造成伤害 -25%）"
+                    f"{self.far.label} 被推远（造成伤害 -25%）",
                 )
         if self.on(2) and battle.round % 4 == 0 and heroes:
             counts = {}
@@ -1131,7 +1160,7 @@ class CosmicRing(BossMechanics):
                     target.stun_label = "眩晕"
                     text += "（眩晕）"
                 parts.append(text)
-            battle.note("陨石雨！砸中了 " + "，".join(parts))
+            self.say(battle, 2, "陨石雨！砸中了 " + "，".join(parts))
 
     def outgoing_factor(self, battle, attacker, target):
         if attacker is self.far:

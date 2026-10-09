@@ -2,7 +2,8 @@ import asyncio
 import base64
 import hashlib
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
 
@@ -60,10 +61,18 @@ class QQTransport:
     async def upload_image(self, event, data: bytes) -> str:
         if not 0 < len(data) <= 10 * 1024 * 1024:
             raise PiggyError("渲染图片为空或超过 10 MB，请减少单页内容。")
+        return await self._upload(event, data, 1)
+
+    async def upload_video(self, event, data: bytes) -> str:
+        if not 0 < len(data) <= 10 * 1024 * 1024:
+            raise PiggyError("回放视频为空或超过 10 MB。")
+        return await self._upload(event, data, 2)
+
+    async def _upload(self, event, data: bytes, file_type: int) -> str:
         result = await self._request(
             event,
             {
-                "file_type": 1,
+                "file_type": file_type,
                 "file_data": base64.b64encode(data).decode("ascii"),
                 "srv_send_msg": False,
             },
@@ -131,6 +140,8 @@ class Message:
     keyboard: dict | None = None
     local: bool = False
     markdown: bool = False
+    # Builds MP4 bytes (or None) in a worker thread; sent as a best-effort second reply.
+    video: Callable[[], bytes | None] | None = field(default=None, compare=False, repr=False)
 
     def parts(self) -> list[str]:
         """Split long text by lines; QQ allows a few passive replies per message."""
@@ -173,6 +184,8 @@ class Sender:
             transport,
         )
         self.logger = logger
+        # Video encoding is CPU heavy; render one replay at a time.
+        self.video_lock = asyncio.Lock()
 
     def _retry_delay(
         self,
@@ -311,9 +324,38 @@ class Sender:
                 break
             if final:
                 await self.db.delivery_update(key, sequence, True)
+                if message.video is not None:
+                    await self._send_video(event, message.video, sequence + 1, deadline)
                 return
             sequence += 1
             await self.db.delivery_update(key, sequence, False)
+
+    async def _send_video(self, event, build, sequence: int, deadline: float):
+        """Render, upload and send the replay; failures only reach the log."""
+        try:
+            async with self.video_lock:
+                data = await asyncio.wait_for(
+                    asyncio.to_thread(build), max(1.0, deadline - time.monotonic())
+                )
+            if not data:
+                return
+            media = await self.transport.upload_video(event, data)
+            await self.transport.request(
+                event,
+                {
+                    "msg_id": event.message_obj.message_id,
+                    "msg_seq": sequence,
+                    "msg_type": 7,
+                    "media": {"file_info": media},
+                },
+            )
+        except Exception as exc:
+            if self.logger is not None:
+                self.logger.warning(
+                    "[piggy] Raid replay video skipped (%s): %s",
+                    type(exc).__name__,
+                    safe_detail(str(exc), self.settings),
+                )
 
     async def _upload_local(self, event, data: bytes, deadline: float) -> str:
         for attempt in range(self.settings.upload_retry_count + 1):

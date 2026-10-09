@@ -117,6 +117,7 @@
 - **组队**：发送 `开启副本 编号 你的小猪` 发起，你就是队长；群友发送 `加入副本 他的小猪` 加入。必须正好 4 人才出发，第 4 人加入时自动开打第一关，这条加入指令的回复就是第一关的战报。组队 10 分钟内没满员会自动取消，不扣次数。开打后不能中途加入，有人倒下也不补人。同一个群同一时间只有一支队伍，一个玩家也只能在一支队伍里。超时取消不会主动在群里通知，要等下一次有人发副本相关指令时才会提示。
 - **团战**：4 只队员猪同时上场，与 boss 按速度轮流出手，最多 25 回合，回合用完 boss 没倒下就算失败。boss 与队伍的平均等级同级，后面的关卡生命和攻击更高。每关开打前会抽 1–2 个进场事件，战斗中还可能触发场地事件。
 - **继续还是撤退**：每打赢一关，队长 10 分钟内发送 `继续副本` 或 `撤退副本`，不决定就自动撤退。存活的猪带着剩余血量进入下一关，出发前先回复 30% 生命，路上还可能遇到关间事件。
+- **回放视频**：每关的图片战报之后，还会再发一段 MP4 加速回放（默认最长 60 秒）。18 关各有专属场景插画，boss 和队员站在场景里，每次出手都有技能名和特效：特效按技能的效果类型（伤害、暴击、治疗、护盾、眩晕等）和技能名里的元素（火、冰、雷、毒、光、暗、水、星）生成，18 个 boss 的 54 个机制各有专属的切入动画和场景（比如召回母舰会有巨型 UFO 从天而降），卡片上还会显示增益、减益、持续伤害和控制效果的状态图标。视频需要 PyAV（已写进 `requirements.txt`，自带 ffmpeg，约 30 MB）；没装或生成、上传失败时只发图片战报，并在日志里记一条。
 - **奖励与惩罚**：和小猪挑战一致。每打赢一关，每位队员各得 1 只 boss 猪，本群所有玩家当天各得 1 次再抽；战斗中倒下的猪，主人失去 1 只，本副本内也不能再上场，全员倒下就算团灭。撤退时已经得到的奖励都保留。等待期间如果出战的猪被斗猪输掉或换走了，这名队员下一关只能缺席。
 - **boss 机制**：18 个 boss 各有 3 个专属机制，`猪副本 编号` 会列出完整说明。如果管理员停用了某个 boss 猪，会由一只随机小猪“附身”顶上，机制不变。
 
@@ -146,6 +147,8 @@
 | `draw_chain_chance`（小猪连抽概率） | `50` | 0–90，单位 %；每抽到一只猪，按此概率继续抽一只新猪 |
 | `wild_level_max`（野生小猪最高等级） | `20` | 1–100；每日野猪的等级在 1 到此值之间随机 |
 | `wild_announce`（野猪出现时主动发消息） | 开启 | 每天 0 点为最近活跃的群生成野猪并主动发送野猪卡片，不 @ 任何人 |
+| `raid_video`（发送副本回放视频） | 开启 | 每关图片战报之后再发一段 MP4 回放；需要 PyAV |
+| `raid_video_seconds`（副本回放视频最长秒数） | `60` | 20–90；整场战斗按此时长加速播放 |
 | 今日小猪使用图床 | 开启 | 通过图床发送，附带快捷按钮；关闭后直接发送图片 |
 | 小猪图鉴 / 我的猪圈 / 小猪排行 / 小猪商店 / 斗猪海报与记录 / 野猪卡片与挑战海报 / 猪副本卡片与战报使用图床 | 关闭 | 可分别开启；开启后通过图床发送并附带快捷按钮 |
 | `command_prefix`（快捷指令唤醒词） | 留空 | 使用自定义唤醒词时，填与 AstrBot 相同的内容 |
@@ -212,7 +215,7 @@
 
 ## 💛 致谢
 
-初始猪库与图片来自 [MegSopern/astrbot_plugin_rollpig](https://github.com/MegSopern/astrbot_plugin_rollpig/tree/42490b1b88367260c137c1147b05a3c052f22d33)，感谢前辈们留下的一群小猪~ 后续补充的 882 只小猪来自 [1780605301/astrbot_plugin_rollpig](https://github.com/1780605301/astrbot_plugin_rollpig)（MIT，作者 Bear_lele / momola），已去掉与原有小猪重复的 62 条，图片压缩为 WebP，属性和技能为本插件按名字重新设计。 <br>项目代码遵循 [MIT 许可证](LICENSE)；随包字体 [Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc)，以及用于 emoji 和特殊符号的后备字体 [Noto Emoji](https://github.com/google/fonts/tree/main/ofl/notoemoji)、[Noto Sans Symbols](https://github.com/google/fonts/tree/main/ofl/notosanssymbols)、[Noto Sans Symbols 2](https://github.com/google/fonts/tree/main/ofl/notosanssymbols2)、[Noto Sans Math](https://github.com/google/fonts/tree/main/ofl/notosansmath)，均遵循 `resources/fonts/OFL.txt` 中的 SIL Open Font License。
+初始猪库与图片来自 [MegSopern/astrbot_plugin_rollpig](https://github.com/MegSopern/astrbot_plugin_rollpig/tree/42490b1b88367260c137c1147b05a3c052f22d33)，感谢前辈们留下的一群小猪~ 后续补充的 882 只小猪来自 [1780605301/astrbot_plugin_rollpig](https://github.com/1780605301/astrbot_plugin_rollpig)（MIT，作者 Bear_lele / momola），已去掉与原有小猪重复的 62 条，图片压缩为 WebP，属性和技能为本插件按名字重新设计。 <br>项目代码遵循 [MIT 许可证](LICENSE)；副本回放的 18 张场景插画（`resources/raid_backgrounds/`）由 AI 生成，随插件一同以 MIT 许可提供。随包字体 [Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc)，以及用于 emoji 和特殊符号的后备字体 [Noto Emoji](https://github.com/google/fonts/tree/main/ofl/notoemoji)、[Noto Sans Symbols](https://github.com/google/fonts/tree/main/ofl/notosanssymbols)、[Noto Sans Symbols 2](https://github.com/google/fonts/tree/main/ofl/notosanssymbols2)、[Noto Sans Math](https://github.com/google/fonts/tree/main/ofl/notosansmath)，均遵循 `resources/fonts/OFL.txt` 中的 SIL Open Font License。
 
 ---
 

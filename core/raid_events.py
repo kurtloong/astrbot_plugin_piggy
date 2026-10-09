@@ -373,5 +373,5 @@ def field_event(battle):
         text = f"{hero.label} 打了个大喷嚏，精神一振，本回合行动两次"
     else:
         return
-    battle.note(f"【场地事件·{event['name']}】{text}")
+    battle.note(f"【场地事件·{event['name']}】{text}", field=event["id"])
     battle.field_events.append(event["name"])
