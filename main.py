@@ -1,8 +1,10 @@
 import asyncio
 import contextlib
+import random
 import re
 import sqlite3
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -42,6 +44,7 @@ from .core.views import (
     raid_detail_message,
     raid_list_message,
     raid_lobby_message,
+    raid_video_job,
     ranking_message,
     request_message,
     requests_message,
@@ -101,6 +104,10 @@ USAGE = {
 GRANT_MAX = 999
 RAID_NAMES = " / ".join(f"{item['key']} {item['name']}" for item in DUNGEONS)
 RAID_USAGE = f"用法：开启副本 编号 你的小猪，例如：开启副本 1 猪人（{RAID_NAMES}）"
+VIDEO_TEST_USAGE = f"用法：小猪视频测试 [副本编号] [关卡 1-3]（{RAID_NAMES}）"
+VIDEO_TEST_LEVEL = 10
+# The test video replies to the command before the text report, which starts at sequence 100.
+VIDEO_TEST_SEQUENCE = 90
 NAME_USAGE = {
     "duel": "斗猪 #编号 你的小猪",
     "trade": "小猪交换 #编号 你的小猪 对方的小猪",
@@ -455,6 +462,8 @@ class PiggyPlugin(Star):
                 message = Message("备份已保存到插件数据目录 backups，包含数据库、猪库及历史素材。")
             elif command in BATTLE_COMMANDS:
                 message = await self._battle(event, app_id, user, command, args)
+            elif command == "video_test":
+                message = await self._video_test(event, args, deadline)
             else:
                 self.settings.check_host()
                 progress = await self.db.collection(user["id"])
@@ -673,6 +682,24 @@ class PiggyPlugin(Star):
         return Message(
             f"已给 {name} 发放 {amount} 只{pig['name']}，现有 {change['count_after']} 只（{level}）。"
         )
+
+    async def _video_test(self, event, words: tuple, deadline: float) -> Message:
+        try:
+            info = dungeon(words[0] if words else DUNGEONS[-1]["key"])
+            stage = int(words[1]) if len(words) > 1 else 1
+        except (KeyError, ValueError):
+            raise PiggyError(VIDEO_TEST_USAGE) from None
+        if not 1 <= stage <= len(info["bosses"]):
+            raise PiggyError(VIDEO_TEST_USAGE)
+        battle = await self.db.raid_sample(
+            info["key"], stage, VIDEO_TEST_LEVEL, random.randrange(2**32)
+        )
+        build = raid_video_job(replace(self.settings, raid_video=True), self.root, battle)
+        if build is None:
+            raise PiggyError("没有安装 PyAV，无法生成回放视频。")
+        lines = await self.sender.check_video(event, build, VIDEO_TEST_SEQUENCE, deadline)
+        title = f"回放视频测试 · {info['name']} 第 {stage} 关（模拟战斗，不影响任何数据）"
+        return Message("\n".join((title, *lines)))
 
     async def _raid(self, app_id: str, group: str, user: dict, command: str, words: tuple):
         settings, uid = self.settings, user["id"]
@@ -896,6 +923,12 @@ class PiggyPlugin(Star):
     async def diagnose(self, event: AstrMessageEvent):
         """仅管理员：绕过缓存上传测试猪图，发送消息并检查 QQ 图片转存链路。"""
         await self._handle(event, "diagnose")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("小猪视频测试")
+    async def video_test(self, event: AstrMessageEvent):
+        """仅管理员：模拟一场副本战斗并发送回放视频，报告渲染、上传、发送各步结果。"""
+        await self._handle(event, "video_test", command_words(event, ("小猪视频测试",)))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("发小猪")

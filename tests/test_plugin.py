@@ -489,6 +489,43 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.grant_draw(OfficialEvent("b4", text=f"发再抽 #{bob['id']} 两次"))
         self.assertIn("用法：发再抽 @对方 数量", last())
 
+    async def test_admin_video_test_reports_each_stage(self):
+        from astrbot_plugin_piggy.core.delivery import QQError
+
+        await self.plugin.initialize()
+        self.assertTrue(self.plugin.video_test.admin_only)
+        sent = self.plugin.transport.request
+        self.plugin.transport.upload_video = AsyncMock(return_value="qq-video-info")
+        built = []
+
+        def job(settings, root, battle):
+            built.append((settings.raid_video, battle))
+            return lambda: b"mp4"
+
+        with patch.object(self.module, "raid_video_job", job):
+            await self.plugin.video_test(OfficialEvent("v1", text="小猪视频测试 7 3"))
+            video, report = (call.args[1] for call in sent.await_args_list[-2:])
+            self.assertEqual((video["msg_type"], video["msg_seq"]), (7, 90))
+            self.assertEqual(video["media"], {"file_info": "qq-video-info"})
+            self.assertIn("熔岩猪窑 第 3 关", report["content"])
+            for stage in ("渲染：成功", "上传：成功", "发送：成功"):
+                self.assertIn(stage, report["content"])
+            enabled, battle = built[-1]
+            self.assertTrue(enabled)
+            self.assertEqual(battle["raid"]["dungeon"]["bosses"][2], "pighub0116")
+            self.assertTrue(battle["result"]["timeline"])
+
+            self.plugin.transport.upload_video.side_effect = QQError(0, 0, uncertain=True)
+            await self.plugin.video_test(OfficialEvent("v2", text="小猪视频测试"))
+            report = sent.await_args.args[1]["content"]
+            self.assertIn("熔岩猪窑 第 1 关", report)
+            self.assertIn("上传：失败", report)
+            self.assertIn("没有收到 QQ 答复", report)
+            self.assertNotIn("发送：", report)
+
+            await self.plugin.video_test(OfficialEvent("v3", text="小猪视频测试 9"))
+            self.assertIn("用法：小猪视频测试", sent.await_args.args[1]["content"])
+
     async def test_new_wild_pig_is_announced_once_without_mentions(self):
         from dataclasses import replace
 
