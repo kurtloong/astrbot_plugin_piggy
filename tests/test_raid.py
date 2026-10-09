@@ -339,6 +339,12 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(ImageDraw.ImageDraw, "text", record):
             poster = await raid_battle_message(Settings(), self.root, battle)
         self.assertTrue(poster.local)
+        if poster.video is not None:
+            self.assertIn("副本进行中", poster.notice)
+            self.assertIn("第 1/3 关", poster.notice)
+        quiet = await raid_battle_message(Settings(raid_video=False), self.root, battle)
+        self.assertIsNone(quiet.video)
+        self.assertEqual(quiet.notice, "")
         joined = "".join(labels)
         for text in ("BOSS", "援军", "野生援军", "伤害统计", "/回合", "战斗过程", "结算"):
             self.assertIn(text, joined)
