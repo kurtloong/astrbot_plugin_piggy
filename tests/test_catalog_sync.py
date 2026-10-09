@@ -119,6 +119,46 @@ class CatalogSyncTests(unittest.TestCase):
         self.assertEqual(self.battle()["a"]["stats"]["hp"], 122)
         self.assertEqual(self.battle()["b"]["stats"]["hp"], 200)
 
+    def test_unmodified_text_follows_bundle_but_admin_edits_stay(self):
+        initialize_catalog(self.data, self.resources)
+        local = {pig["id"]: pig for pig in self.catalog()}
+
+        def text_of(pig):
+            return {
+                "name": pig["name"],
+                "description": pig["description"],
+                "analysis": pig["analysis"],
+            }
+
+        history = {
+            "a": [_digest(text_of(local["a"]))],
+            "c": [_digest(text_of(local["c"]))],
+        }
+        local["a"]["name"] = "管理员改名"
+        local["b"]["description"] = "管理员改简介"
+        (self.data / "catalog" / "pigs.json").write_text(
+            json.dumps(list(local.values()), ensure_ascii=False), "utf-8"
+        )
+        (self.resources / "text_history.json").write_text(json.dumps(history), "utf-8")
+        # Bundled copy for "c" still matches history; rename it in the bundle.
+        definitions = json.loads((self.resources / "pigs.json").read_text("utf-8"))
+        for pig in definitions:
+            if pig["id"] == "c":
+                pig["name"] = "新名字猪"
+                pig["description"] = "新简介"
+                pig["analysis"] = "新性格"
+            if pig["id"] == "a":
+                pig["name"] = "随包也改了"
+        (self.resources / "pigs.json").write_text(json.dumps(definitions), "utf-8")
+
+        result = sync_bundled_catalog(self.data, self.resources)
+        pigs = {pig["id"]: pig for pig in self.catalog()}
+        self.assertEqual(result["text"], 1)
+        self.assertEqual(pigs["a"]["name"], "管理员改名")
+        self.assertEqual(pigs["b"]["description"], "管理员改简介")
+        self.assertEqual(pigs["c"]["name"], "新名字猪")
+        self.assertEqual(pigs["c"]["description"], "新简介")
+
 
 if __name__ == "__main__":
     unittest.main()
