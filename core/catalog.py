@@ -54,13 +54,15 @@ def sync_bundled_catalog(data_dir: Path, resources: Path) -> dict:
 
     `.bundled_ids` remembers what was offered before, so admin edits are never
     overwritten and pigs an admin deleted are not brought back. Battle entries
-    still identical to a shipped version are refreshed to the current numbers.
+    and pig text still identical to a shipped version are refreshed to the
+    current bundled values.
     """
     target = data_dir / "catalog"
     manifest = target / "pigs.json"
     if not manifest.exists():
-        return {"pigs": 0, "battle": 0}
+        return {"pigs": 0, "battle": 0, "text": 0}
     bundled = json.loads((resources / "pigs.json").read_text("utf-8"))
+    bundled_by_id = {pig["id"]: pig for pig in bundled}
     bundled_battle = json.loads((resources / "battle.json").read_text("utf-8"))["pigs"]
     marker = target / ".bundled_ids"
     data = json.loads(manifest.read_text("utf-8"))
@@ -107,15 +109,38 @@ def sync_bundled_catalog(data_dir: Path, resources: Path) -> dict:
         battle["pigs"].update(missing_battle)
         battle["pigs"].update(updated)
         _write_json(battle_path, battle)
+    text_history = _text_history(resources)
+    shipped_text = seen.get("text_digests", {})
+    text_updated = 0
+    for pig in data:
+        bundled_pig = bundled_by_id.get(pig["id"])
+        if not bundled_pig:
+            continue
+        local = _text_fields(pig)
+        remote = _text_fields(bundled_pig)
+        if local == remote:
+            continue
+        if _digest(local) in {*text_history.get(pig["id"], ()), shipped_text.get(pig["id"])}:
+            pig.update(remote)
+            text_updated += 1
+    if text_updated:
+        _write_json(manifest, data)
     _write_json(
         marker,
         {
             "pigs": sorted(seen_pigs | {pig["id"] for pig in bundled}),
             "battle": sorted(seen_battle | set(bundled_battle)),
             "battle_digests": {pig_id: _digest(e) for pig_id, e in bundled_battle.items()},
+            "text_digests": {
+                pig_id: _digest(_text_fields(pig)) for pig_id, pig in bundled_by_id.items()
+            },
         },
     )
-    return {"pigs": len(added), "battle": len(missing_battle) + len(updated)}
+    return {
+        "pigs": len(added),
+        "battle": len(missing_battle) + len(updated),
+        "text": text_updated,
+    }
 
 
 def _digest(entry) -> str:
@@ -123,8 +148,21 @@ def _digest(entry) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+def _text_fields(pig: dict) -> dict:
+    return {
+        "name": pig["name"],
+        "description": pig["description"],
+        "analysis": pig["analysis"],
+    }
+
+
 def _battle_history(resources: Path) -> dict:
     path = resources / "battle_history.json"
+    return json.loads(path.read_text("utf-8")) if path.exists() else {}
+
+
+def _text_history(resources: Path) -> dict:
+    path = resources / "text_history.json"
     return json.loads(path.read_text("utf-8")) if path.exists() else {}
 
 
