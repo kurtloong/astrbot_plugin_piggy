@@ -1841,6 +1841,45 @@ class Database:
 
         return await self.run(exchange)
 
+    async def grant_pig(
+        self, user_id: int, pig_id: str, count: int, *, level_cap: int = 20
+    ) -> dict:
+        stamp = time.time()
+
+        def grant(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            pig = dict(conn.execute("SELECT * FROM pigs WHERE id=?", (pig_id,)).fetchone())
+            if not pig["enabled"]:
+                raise PiggyError(f"「{pig['name']}」已经下架，不能发放。")
+            before = _owned(conn, user_id, pig_id)
+            conn.execute(
+                """
+                INSERT INTO collections VALUES(?,?,?,?,?) ON CONFLICT(user_id,pig_id)
+                DO UPDATE SET count=count+excluded.count,last_at=excluded.last_at
+                """,
+                (user_id, pig_id, count, stamp, stamp),
+            )
+            return _level_change(pig, before, before + count, level_cap)
+
+        return await self.run(grant)
+
+    async def grant_draws(
+        self, app_id: str, group_id: str, user_id: int, count: int, now: datetime | None = None
+    ) -> int:
+        day = (now or datetime.now(timezone.utc)).astimezone(EAST_ASIA).date().isoformat()
+
+        def grant(conn):
+            conn.execute(
+                """
+                INSERT INTO draw_bonus VALUES(?,?,?,?,?) ON CONFLICT(app_id,group_id,user_id,day)
+                DO UPDATE SET count=count+excluded.count
+                """,
+                (app_id, group_id, user_id, day, count),
+            )
+            return self._bonus_left(conn, app_id, group_id, user_id, day)
+
+        return await self.run(grant)
+
     async def duel_rankings(
         self, app_id: str, group_id: str, user_id: int, min_games: int = 3, limit: int = 10
     ) -> dict:

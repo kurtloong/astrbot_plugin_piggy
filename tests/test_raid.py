@@ -370,7 +370,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         for item in DUNGEONS:
             self.assertIn(item["name"], joined)
         self.assertIn("三重锁链", joined)
-        self.assertIn("6/6", joined)
+        self.assertIn(f"{len(DUNGEONS)}/{len(DUNGEONS)}", joined)
         labels.clear()
         with patch.object(ImageDraw.ImageDraw, "text", record):
             await raid_detail_message(Settings(), self.root, self.users[0], status, 4)

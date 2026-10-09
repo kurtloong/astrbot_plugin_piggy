@@ -24,9 +24,13 @@ class BossMechanics:
     def on(self, index: int) -> bool:
         return index != self.disabled
 
-    def say(self, battle, index: int, text: str):
-        """A mechanic's log line; the replay shows that mechanic's own effect with it."""
-        battle.note(text, mech=index)
+    def say(self, battle, index: int, text: str, targets=(), tag: str = ""):
+        """A mechanic's log line; the replay shows that mechanic's own effect with it.
+
+        `targets` are the units the effect lands on and `tag` picks a variant of the
+        scene (e.g. a take-off that succeeds or crashes).
+        """
+        battle.note(text, mech=index, targets=targets, tag=tag)
 
     def setup(self, battle):
         pass
@@ -93,6 +97,12 @@ class BossMechanics:
 
     def outgoing_factor(self, battle, attacker, target) -> float:
         return 1.0
+
+    def boss_struck(self, battle, attacker, dealt: float):
+        """A hero just dealt `dealt` damage to the boss."""
+
+    def supported(self, battle, unit, kind: str):
+        """A hero just successfully healed (`heal`) or cleansed (`cleanse`)."""
 
 
 class Goblin(BossMechanics):
@@ -1170,6 +1180,362 @@ class CosmicRing(BossMechanics):
         return 1.0
 
 
+class Campfire(BossMechanics):
+    pig_id = "pighub0315"
+    MECHANICS = (
+        (
+            "围炉传火",
+            "队员对它造成的伤害会变成余烬；它下一次出手时，对目标额外造成余烬 22% 的真实伤害，然后清空",
+        ),
+        (
+            "人多更暖",
+            "场上存活队员越多窑火越旺：4/3/2/1 只时它攻击 +22%/+8%/0%/-15%",
+        ),
+        (
+            "烤位轮值",
+            "每回合按座位轮流当烤位：强制点名该座且受伤 +20%，回合结束烤位回 10% 生命，左右邻座各回 5%",
+        ),
+    )
+    HP = 1.65
+    ATK = 0.88
+    HEAT = {4: 22, 3: 8, 2: 0, 1: -15}
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.embers = 0.0
+        self.heat = 0
+        self.roast = 0
+
+    def round_start(self, battle):
+        if self.on(1):
+            alive = len(battle.alive_heroes())
+            want = self.HEAT.get(alive, -25)
+            if want != self.heat:
+                battle.boss.mods["atk"] = battle.boss.mods.get("atk", 0) - self.heat + want
+                self.heat = want
+                sign = "+" if want > 0 else ""
+                self.say(
+                    battle,
+                    1,
+                    f"窑火旁还有 {alive} 只猪：人多更暖，{battle.boss.label}攻击 {sign}{want}%",
+                    tag=f"{sign}{want}%",
+                )
+        if self.on(2):
+            self.roast = (battle.round - 1) % 4
+            hero = next((h for h in battle.alive_heroes() if h.seat == self.roast), None)
+            if hero:
+                self.say(
+                    battle,
+                    2,
+                    f"烤位轮到座位 {self.roast}：{hero.label} 请上烤架",
+                    targets=[hero],
+                )
+            else:
+                self.say(battle, 2, f"烤位轮到座位 {self.roast}，可那位已经不在了")
+
+    def boss_struck(self, battle, attacker, dealt):
+        if self.on(0) and dealt > 0:
+            self.embers += dealt
+
+    def outgoing(self, battle, target, dealt):
+        if not self.on(0) or self.embers <= 0 or not target.alive:
+            return
+        bonus = battle.hurt(target, self.embers * 0.22)
+        bank = round(self.embers)
+        self.embers = 0.0
+        if bonus > 0:
+            self.say(
+                battle,
+                0,
+                f"围炉传火！余烬 {bank} 燎向 {target.label}，额外真实伤害 {round(bonus)}",
+                targets=[target],
+                tag=str(round(bonus)),
+            )
+
+    def pick_target(self, battle, candidates):
+        if self.on(2):
+            for hero in candidates:
+                if hero.seat == self.roast:
+                    return hero
+        return battle.rng.choice(candidates)
+
+    def outgoing_factor(self, battle, attacker, target):
+        if self.on(2) and attacker is battle.boss and target.seat == self.roast:
+            return 1.2
+        return 1.0
+
+    def round_end(self, battle):
+        if not self.on(2):
+            return
+        by_seat = {h.seat: h for h in battle.alive_heroes() if h.seat is not None}
+        roast = by_seat.get(self.roast)
+        if roast:
+            healed = battle.heal(roast, roast.max_hp * 0.10)
+            if healed:
+                battle.note(f"烤位上的 {roast.label} 回了 {healed} 生命")
+        for seat in (self.roast - 1, self.roast + 1):
+            neighbor = by_seat.get(seat)
+            if neighbor:
+                healed = battle.heal(neighbor, neighbor.max_hp * 0.05)
+                if healed:
+                    battle.note(f"邻座 {neighbor.label} 被余温暖到，回了 {healed} 生命")
+
+
+class RedHot(BossMechanics):
+    pig_id = "pighub0710"
+    MECHANICS = (
+        (
+            "越劝越火",
+            "队员每次成功治疗或驱散，它攻击永久 +4%（最多 6 层）；越安慰它越红温",
+        ),
+        (
+            "对线点名",
+            "每回合锁定上回合伤害最高的队员：本回合只打它且伤害 ×1.3；若已倒下则改打生命最高者",
+        ),
+        (
+            "已读不回",
+            "每回合对它的第一次伤害无效；若整回合没有人打中它，它因憋着自损 6% 最大生命并失去 1 层越劝越火",
+        ),
+    )
+    HP = 1.2
+    ATK = 1.0
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.stacks = 0
+        self.lock = None
+        self.round_damage = {}
+        self.read = False
+        self.landed = False
+
+    def supported(self, battle, unit, kind):
+        if not self.on(0) or self.stacks >= 6:
+            return
+        self.stacks += 1
+        battle.boss.mods["atk"] = battle.boss.mods.get("atk", 0) + 4
+        verb = "治疗" if kind == "heal" else "驱散"
+        self.say(
+            battle,
+            0,
+            f"{unit.label} 的{verb}反而把它劝火了！攻击 +4%（{self.stacks}/6）",
+            targets=[unit],
+            tag=str(self.stacks),
+        )
+
+    def round_start(self, battle):
+        self.read = False
+        self.landed = False
+        if self.on(1):
+            if self.round_damage:
+                seat = max(self.round_damage, key=self.round_damage.get)
+                self.lock = next((h for h in battle.heroes if h.seat == seat), None)
+            else:
+                self.lock = None
+            self.round_damage = {}
+            target = self._lock_target(battle)
+            if target:
+                self.say(
+                    battle,
+                    1,
+                    f"对线点名：{battle.boss.label} 锁死了 {target.label}",
+                    targets=[target],
+                )
+
+    def _lock_target(self, battle):
+        if self.lock and self.lock.alive and not self.lock.away:
+            return self.lock
+        heroes = battle.present_heroes()
+        return max(heroes, key=lambda h: h.hp) if heroes else None
+
+    def pick_target(self, battle, candidates):
+        if self.on(1):
+            target = self._lock_target(battle)
+            if target in candidates:
+                return target
+        return battle.rng.choice(candidates)
+
+    def outgoing_factor(self, battle, attacker, target):
+        if self.on(1) and attacker is battle.boss and target is self._lock_target(battle):
+            return 1.3
+        return 1.0
+
+    def incoming(self, battle, attacker, raw, effect):
+        if self.on(2) and not self.read:
+            self.read = True
+            battle.void_note = "已读不回"
+            self.say(
+                battle,
+                2,
+                f"{battle.boss.label} 已读不回，把这一下划掉了",
+                targets=[attacker] if attacker.side == 0 else (),
+                tag="read",
+            )
+            return 0
+        return raw
+
+    def boss_struck(self, battle, attacker, dealt):
+        self.landed = True
+        if attacker.seat is not None:
+            self.round_damage[attacker.seat] = self.round_damage.get(attacker.seat, 0.0) + dealt
+
+    def round_end(self, battle):
+        if not self.on(2) or self.landed or not battle.boss.alive:
+            return
+        lost = battle.hurt(battle.boss, battle.boss.max_hp * 0.06)
+        if self.stacks > 0 and self.on(0):
+            self.stacks -= 1
+            battle.boss.mods["atk"] = battle.boss.mods.get("atk", 0) - 4
+            self.say(
+                battle,
+                2,
+                f"没人回它消息，{battle.boss.label} 憋坏了，自损 {round(lost)} 生命，火气 -1 层",
+                tag="burst",
+            )
+        else:
+            self.say(
+                battle,
+                2,
+                f"没人回它消息，{battle.boss.label} 憋坏了，自损 {round(lost)} 生命",
+                tag="burst",
+            )
+
+
+class DragonPig(BossMechanics):
+    pig_id = "pighub0116"
+    MECHANICS = (
+        (
+            "祥瑞错位",
+            "每 2 回合结束：随机把一只队员身上的 1 个增益或全部护盾转移到自己身上",
+        ),
+        (
+            "短腿起飞",
+            "每 4 回合刨蹄蓄力 1 回合（防御 -30%）：蓄力期受伤 ≥12% 最大生命则肚子着地（自损 5% + 全队 1.05 倍），否则升空 1 回合，落地全队 0.75 倍并回 10% 生命",
+        ),
+        (
+            "龙息扫座",
+            "每 3 回合以随机一只队员的座位为中心，灼烧该座及相邻座位（最多 3 只）",
+        ),
+    )
+    HP = 0.78
+    ATK = 1.2
+
+    def __init__(self, disabled=None):
+        super().__init__(disabled)
+        self.charging = False
+        self.charge_damage = 0.0
+        self.flying = False
+
+    def round_start(self, battle):
+        boss = battle.boss
+        if self.flying and not boss.away:
+            hits = [
+                f"{h.label} -{round(battle.strike(boss, h, 0.75))}" for h in battle.present_heroes()
+            ]
+            healed = battle.heal(boss, boss.max_hp * 0.10)
+            self.say(
+                battle,
+                1,
+                f"{boss.label}歪斜落地！" + "，".join(hits) + f"，回复 {healed} 生命",
+                targets=battle.present_heroes(),
+                tag="land",
+            )
+            self.flying = False
+        if self.charging:
+            self.charging = False
+            boss.mods["def"] = boss.mods.get("def", 0) + 30
+            threshold = boss.max_hp * 0.12
+            if self.charge_damage >= threshold:
+                lost = battle.hurt(boss, boss.max_hp * 0.05)
+                hits = [
+                    f"{h.label} -{round(battle.strike(boss, h, 1.05))}"
+                    for h in battle.present_heroes()
+                ]
+                self.say(
+                    battle,
+                    1,
+                    f"短腿起飞失败！{boss.label} 肚子着地自损 {round(lost)}，" + "，".join(hits),
+                    targets=battle.present_heroes(),
+                    tag="crash",
+                )
+            else:
+                boss.away = 1
+                self.flying = True
+                self.say(
+                    battle,
+                    1,
+                    f"{boss.label} 居然飞起来了（歪歪扭扭），这回合打不到它",
+                    tag="fly",
+                )
+            self.charge_damage = 0.0
+        if self.on(1) and battle.round % 4 == 0 and boss.alive and not boss.away:
+            self.charging = True
+            self.charge_damage = 0.0
+            boss.mods["def"] = boss.mods.get("def", 0) - 30
+            self.say(
+                battle,
+                1,
+                f"{boss.label} 开始刨蹄蓄力，防御 -30%——现在打它能把它摔下来",
+                tag="charge",
+            )
+        if self.on(2) and battle.round % 3 == 0:
+            heroes = [h for h in battle.present_heroes() if h.seat is not None]
+            if not heroes:
+                return
+            center = battle.rng.choice(heroes)
+            seats = {center.seat, center.seat - 1, center.seat + 1}
+            targets = [h for h in heroes if h.seat in seats]
+            parts = []
+            for hero in targets:
+                dealt = battle.strike(boss, hero, 0.95)
+                hero.dots.append({"pct": 3, "turns": 2, "label": "龙息灼烧", "source": boss})
+                parts.append(f"{hero.label} -{round(dealt)}")
+            self.say(
+                battle,
+                2,
+                f"龙息扫座！以座位 {center.seat} 为中心烧到了 " + "，".join(parts),
+                targets=targets,
+            )
+
+    def boss_struck(self, battle, attacker, dealt):
+        if self.charging:
+            self.charge_damage += dealt
+
+    def round_end(self, battle):
+        if not self.on(0) or not battle.boss.alive or battle.round % 2:
+            return
+        candidates = [
+            h
+            for h in battle.alive_heroes()
+            if h.shield > 0 or any(b.get("pct", 0) > 0 for b in h.buffs)
+        ]
+        if not candidates:
+            return
+        hero = battle.rng.choice(candidates)
+        buffs = [b for b in hero.buffs if b.get("pct", 0) > 0]
+        if buffs and (hero.shield <= 0 or battle.rng.random() < 0.5):
+            buff = battle.rng.choice(buffs)
+            hero.buffs.remove(buff)
+            battle.boss.buffs.append(dict(buff))
+            self.say(
+                battle,
+                0,
+                f"祥瑞错位：{hero.label} 的增益飞到了 {battle.boss.label} 头上",
+                targets=[hero],
+                tag="buff",
+            )
+        elif hero.shield > 0:
+            amount = hero.shield
+            battle.boss.shield += amount
+            hero.shield = 0
+            self.say(
+                battle,
+                0,
+                f"祥瑞错位：{hero.label} 的 {round(amount)} 护盾赐给了 {battle.boss.label}",
+                targets=[hero],
+                tag="shield",
+            )
+
+
 BOSSES = {
     cls.pig_id: cls
     for cls in (
@@ -1191,5 +1557,8 @@ BOSSES = {
         Alien,
         StarCluster,
         CosmicRing,
+        Campfire,
+        RedHot,
+        DragonPig,
     )
 }
