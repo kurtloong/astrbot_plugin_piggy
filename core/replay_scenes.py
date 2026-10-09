@@ -43,7 +43,10 @@ class Context(NamedTuple):
     boss: tuple
     team: list
     size: tuple
-    text: Callable  # text(word, centre, size, fill, bold)
+    text: Callable  # text(word, centre, size, fill, bold, stroke)
+    # Centres of the units the mechanic landed on, and the variant it fired as.
+    targets: list = []
+    tag: str = ""
 
 
 @dataclass(frozen=True)
@@ -1258,6 +1261,919 @@ def meteor_shower(draw, t, c):
             burst(draw, (x, y), min(1.0, (t * 1.5 - i * 0.18 - 1) * 3), (255, 150, 60), 110, 12)
 
 
+# ----- kiln dungeon (熔岩猪窑): props -----
+
+LAVA = (255, 80, 30)
+EMBER = (255, 150, 50)
+CORE = (255, 236, 160)
+CHAR = (45, 26, 20)
+STEAM = (235, 230, 225)
+
+
+def span(t, start, end):
+    """0 before `start`, 1 after `end`, linear in between."""
+    return max(0.0, min(1.0, (t - start) / (end - start)))
+
+
+def lerp(a, b, k):
+    return (a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k)
+
+
+def slam(c, word, center, t, start, size, color=WHITE, end=1.0):
+    """A big word that slams in at `start` and fades out towards `end`."""
+    if t < start:
+        return
+    k = ease(min(1.0, (t - start) / 0.16))
+    alpha = min(1.0, (t - start) * 8) * min(1.0, max(0.0, (end - t) / 0.12 + 0.001))
+    c.text(word, center, int(size * (1.7 - 0.7 * k)), fade(color, alpha), True, 6)
+
+
+def tongue(draw, base, height, width, t, seed=0, alpha=1.0, lean=0.0):
+    """One flickering flame tongue: red rim, orange body, pale core."""
+    x, y = base
+    phase = random.Random(seed).uniform(0, 6.3)
+    height *= 0.88 + 0.12 * math.sin(t * 26 + phase)
+    for color, k in ((LAVA, 1.0), (EMBER, 0.72), (CORE, 0.42)):
+        h, w = height * k, width * k
+        left, right = [], []
+        for i in range(10):
+            s = i / 9
+            sway = (0.3 * math.sin(t * 17 + phase + s * 3.4) + lean) * w * s * 1.5
+            half = w * (1 - s) ** 0.8 * (0.72 + 0.28 * math.sin(math.pi * min(1.0, s * 1.7)))
+            left.append((x - half + sway, y - h * s))
+            right.append((x + half + sway, y - h * s))
+        bottom = [
+            (x + w * 0.72 * math.cos(a / 6 * math.pi), y + w * 0.3 * math.sin(a / 6 * math.pi))
+            for a in range(7)
+        ]
+        draw.polygon(left + right[::-1] + bottom, fill=fade(color, alpha * 0.9))
+
+
+def blaze(draw, center, spread, height, t, seed=0, count=7, alpha=1.0):
+    """A patch of tongues across an oval, tallest in the middle."""
+    x, y = center
+    rng = random.Random(seed)
+    for i in range(count):
+        k = (i + 0.5) / count * 2 - 1
+        h = height * (1 - 0.55 * abs(k)) * rng.uniform(0.75, 1.05)
+        tongue(
+            draw,
+            (x + k * spread, y + rng.uniform(-6, 6)),
+            h,
+            h * 0.28,
+            t,
+            seed * 13 + i,
+            alpha,
+            lean=k * 0.15,
+        )
+
+
+def embers(draw, box, t, seed=0, count=24, color=EMBER, alpha=1.0):
+    """Glowing sparks drifting upward through `box`."""
+    x0, y0, x1, y1 = box
+    rng = random.Random(seed)
+    for _ in range(count):
+        x, speed, phase = rng.uniform(x0, x1), rng.uniform(0.6, 1.4), rng.random()
+        p = (t * speed + phase) % 1
+        cx = x + 16 * math.sin(p * 9 + phase * 6)
+        cy = y1 - (y1 - y0) * p
+        r = 2 + 3.5 * (1 - p)
+        a = alpha * min(1.0, p * 5) * (1 - p)
+        draw.line((cx, cy, cx - 3, cy + 12), fill=fade(color, a * 0.6), width=2)
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=fade(CORE if r > 4 else color, a))
+
+
+def heat_vignette(draw, size, strength, color=LAVA):
+    w, h = size
+    for i in range(6):
+        inset = i * 34
+        draw.rectangle(
+            (inset, inset, w - inset, h - inset),
+            outline=fade(color, strength * (1 - i / 6) ** 1.6),
+            width=34,
+        )
+
+
+def haze(draw, size, top, bottom, t, alpha=0.35, color=EMBER):
+    w, _ = size
+    for i in range(9):
+        y = bottom - (bottom - top) * ((i / 9 + t * 0.6) % 1)
+        points = [(x, y + 7 * math.sin(x / 38 + t * 14 + i)) for x in range(0, w + 40, 40)]
+        draw.line(
+            points, fill=fade(color, alpha * (1 - abs(y - (top + bottom) / 2) / 400)), width=3
+        )
+
+
+def shockring(draw, center, radius, alpha, color=EMBER, flat=0.32, width=12):
+    x, y = center
+    box = (x - radius, y - radius * flat, x + radius, y + radius * flat)
+    draw.ellipse(box, outline=fade(color, alpha), width=width)
+    draw.ellipse(box, outline=fade(CORE, alpha * 0.8), width=max(2, width // 3))
+
+
+def cracks(draw, center, length, k, seed=0, count=8, color=LAVA):
+    """Glowing fissures splitting the floor outward from `center`."""
+    x, y = center
+    rng = random.Random(seed)
+    for i in range(count):
+        angle = 2 * math.pi * i / count + rng.uniform(-0.3, 0.3)
+        points, px, py = [(x, y)], x, y
+        steps = 6
+        for s in range(1, steps + 1):
+            reach = length * k * s / steps
+            a = angle + rng.uniform(-0.35, 0.35)
+            px, py = x + reach * math.cos(a), y + reach * 0.36 * math.sin(a)
+            points.append((px, py))
+        draw.line(points, fill=fade(CHAR, 0.9), width=10)
+        draw.line(points, fill=fade(color, 0.95), width=5)
+        draw.line(points, fill=fade(CORE, 0.8), width=2)
+
+
+def firewood(draw, center, length, angle, color=(115, 64, 32)):
+    x, y = center
+    dx, dy = length / 2 * math.cos(angle), length / 2 * math.sin(angle)
+    draw.line((x - dx, y - dy, x + dx, y + dy), fill=fade(color, 1), width=24)
+    for ex, ey in ((x - dx, y - dy), (x + dx, y + dy)):
+        draw.ellipse((ex - 12, ey - 12, ex + 12, ey + 12), fill=fade((190, 140, 90), 1))
+        draw.ellipse((ex - 6, ey - 6, ex + 6, ey + 6), outline=fade(color, 1), width=2)
+
+
+def bonfire(draw, center, height, t, seed=0, alpha=1.0):
+    x, y = center
+    draw.ellipse((x - 120, y - 18, x + 120, y + 30), fill=fade(CHAR, 0.55 * alpha))
+    for angle in (-0.35, 0.35, 0.0):
+        firewood(draw, (x, y + 4), 190, angle)
+    blaze(draw, (x, y), 70, height, t, seed, count=6, alpha=alpha)
+
+
+def grate(draw, center, width, heat):
+    """A grill grate glowing from dull iron to red-hot as `heat` rises."""
+    x, y = center
+    color = (
+        int(90 + 165 * heat),
+        int(90 - 10 * heat),
+        int(100 - 70 * heat),
+    )
+    half, depth = width / 2, 26
+    draw.polygon(
+        (
+            (x - half, y - depth),
+            (x + half, y - depth),
+            (x + half + 26, y + depth),
+            (x - half - 26, y + depth),
+        ),
+        outline=fade(color, 1),
+        width=6,
+    )
+    for i in range(9):
+        k = i / 8
+        top = x - half + width * k
+        draw.line((top, y - depth, top + (k - 0.5) * 52, y + depth), fill=fade(color, 1), width=5)
+
+
+def anger(draw, center, size, alpha=1.0, color=(255, 55, 55)):
+    """The cartoon throbbing-vein mark."""
+    x, y = center
+    for qx, qy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+        cx, cy = x + qx * size * 0.62, y + qy * size * 0.62
+        r = size * 0.55
+        a = math.degrees(math.atan2(-qy, -qx))
+        draw.arc(
+            (cx - r, cy - r, cx + r, cy + r),
+            a - 48,
+            a + 48,
+            fill=fade(color, alpha),
+            width=max(4, int(size * 0.2)),
+        )
+
+
+def chat_bubble(draw, box, tail, fill=WHITE, alpha=1.0, outline=(60, 60, 70)):
+    draw.polygon(
+        (tail, (box[0] + 30, box[3] - 4), (box[0] + 62, box[3] - 4)), fill=fade(fill, alpha)
+    )
+    draw.rounded_rectangle(
+        box, radius=22, fill=fade(fill, alpha), outline=fade(outline, alpha), width=3
+    )
+
+
+def ticks(draw, pos, size, color, alpha=1.0):
+    x, y = pos
+    for dx in (0, size * 0.5):
+        draw.line(
+            (
+                (x + dx, y),
+                (x + dx + size * 0.3, y + size * 0.3),
+                (x + dx + size * 0.8, y - size * 0.4),
+            ),
+            fill=fade(color, alpha),
+            width=4,
+        )
+
+
+def lucky_cloud(draw, center, size, alpha=1.0, color=(255, 214, 110)):
+    """祥云: a puffy golden cloud with curled ends."""
+    x, y = center
+    s = size
+    edge = (205, 140, 45)
+    draw.ellipse((x - s * 1.25, y - s * 0.3, x + s * 1.25, y + s * 0.42), fill=fade(color, alpha))
+    for dx, dy, r in ((-0.62, -0.18, 0.42), (0.0, -0.38, 0.58), (0.62, -0.16, 0.44)):
+        cx, cy = x + dx * s, y + dy * s
+        draw.ellipse((cx - r * s, cy - r * s, cx + r * s, cy + r * s), fill=fade(color, alpha))
+        draw.arc(
+            (cx - r * s * 0.55, cy - r * s * 0.55, cx + r * s * 0.55, cy + r * s * 0.55),
+            150,
+            420,
+            fill=fade(edge, alpha),
+            width=4,
+        )
+    tail = [
+        (x + s * 1.2 + s * 0.35 * k * math.cos(k * 5), y + s * 0.1 + s * 0.3 * k * math.sin(k * 5))
+        for k in (i / 10 for i in range(11))
+    ]
+    draw.line(tail, fill=fade(color, alpha), width=int(s * 0.16))
+
+
+def fire_cone(draw, origin, aim, t, spread=0.32, seed=0):
+    """A roaring cone of breath fire from `origin` towards `aim`."""
+    ox, oy = origin
+    angle = math.atan2(aim[1] - oy, aim[0] - ox)
+    length = math.hypot(aim[0] - ox, aim[1] - oy) + 60
+    rng = random.Random(seed + int(t * 20))
+    for color, k, a in ((LAVA, 1.0, 0.75), (EMBER, 0.7, 0.85), (CORE, 0.38, 0.9)):
+        edge_l, edge_r = [], []
+        for i in range(11):
+            s = i / 10
+            reach = length * s
+            wobble = rng.uniform(-0.05, 0.05)
+            half = spread * k * (0.25 + 0.75 * s) + wobble
+            edge_l.append(
+                (ox + reach * math.cos(angle - half), oy + reach * math.sin(angle - half))
+            )
+            edge_r.append(
+                (ox + reach * math.cos(angle + half), oy + reach * math.sin(angle + half))
+            )
+        draw.polygon(edge_l + edge_r[::-1], fill=fade(color, a))
+    for i in range(8):
+        s = (t * 2.5 + i / 8) % 1
+        cx, cy = ox + length * s * math.cos(angle), oy + length * s * math.sin(angle)
+        r = 14 + 34 * s
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=fade(CORE, 0.25 * (1 - s)))
+
+
+def spotlight(draw, size, center, radius, alpha, color=(10, 5, 12)):
+    """Darken everything except a soft circle around `center`."""
+    w, h = size
+    x, y = center
+    outer = radius * 1.5
+    for box in (
+        (0, 0, w, y - outer),
+        (0, y + outer, w, h),
+        (0, y - outer, x - outer, y + outer),
+        (x + outer, y - outer, w, y + outer),
+    ):
+        if box[2] > box[0] and box[3] > box[1]:
+            draw.rectangle(box, fill=fade(color, alpha))
+    draw.ellipse(
+        (x - outer, y - outer, x + outer, y + outer),
+        outline=fade(color, alpha),
+        width=int(outer - radius),
+    )
+    for i in range(4):
+        r = radius - i * 8
+        draw.ellipse(
+            (x - r, y - r, x + r, y + r), outline=fade(color, alpha * (0.5 - i * 0.12)), width=8
+        )
+
+
+def kiln_air(draw, t, c, strength=0.3):
+    """Shared kiln atmosphere: hot edges and sparks rising through the frame."""
+    heat_vignette(draw, c.size, strength * 0.7 * (0.6 + 0.4 * pulse(t)))
+    embers(draw, (0, 300, c.size[0], c.size[1]), t, seed=7, count=26, alpha=0.9)
+
+
+def main_target(c, fallback=None):
+    if c.targets:
+        return c.targets[0]
+    if c.team:
+        return c.team[0]
+    return fallback or (c.boss[0], c.boss[1] + 420)
+
+
+# ----- kiln dungeon (熔岩猪窑): scenes -----
+
+
+def ember_pass(draw, t, c):
+    """围炉传火: the party's hits gather as embers on the boss, then hurl back at one pig."""
+    kiln_air(draw, t, c)
+    bx, by = c.boss
+    orb = (bx, by - 30)
+    target = main_target(c)
+    gather = span(t, 0.0, 0.5)
+    for i, (x, y) in enumerate(c.team or [target]):
+        for j in range(8):
+            p = gather * 1.35 - j * 0.08
+            if not 0 < p < 1:
+                continue
+            k = ease(p)
+            mx = x + (orb[0] - x) * k + 70 * math.sin(k * math.pi) * (1 if i % 2 else -1)
+            my = y + (orb[1] - y) * k - 160 * math.sin(k * math.pi)
+            r = 6 + 6 * (1 - k)
+            draw.ellipse(
+                (mx - r * 2.2, my - r * 2.2, mx + r * 2.2, my + r * 2.2), fill=fade(EMBER, 0.35)
+            )
+            draw.ellipse((mx - r, my - r, mx + r, my + r), fill=fade(CORE, 0.95))
+    throw = span(t, 0.5, 0.78)
+    if throw <= 0:
+        r = 26 + 64 * ease(gather)
+        for k, color, a in ((1.7, LAVA, 0.3), (1.0, EMBER, 0.9), (0.55, CORE, 1.0)):
+            draw.ellipse(
+                (orb[0] - r * k, orb[1] - r * k, orb[0] + r * k, orb[1] + r * k),
+                fill=fade(color, a),
+            )
+        for i in range(10):
+            a = t * 9 + i * 0.63
+            px, py = orb[0] + r * 1.4 * math.cos(a), orb[1] + r * 0.6 * math.sin(a)
+            draw.ellipse((px - 6, py - 6, px + 6, py + 6), fill=fade(CORE, 1))
+        c.text("余烬", (orb[0], orb[1] - r - 46), 40, fade(CORE, min(1.0, t * 4)), True, 5)
+    elif throw < 1:
+        k = ease(throw)
+        head = lerp(orb, target, k)
+        head = (head[0], head[1] - 180 * math.sin(math.pi * k))
+        for i in range(9):
+            back = max(0.0, k - i * 0.05)
+            tx, ty = lerp(orb, target, back)
+            ty -= 180 * math.sin(math.pi * back)
+            r = 46 - i * 4
+            draw.ellipse(
+                (tx - r, ty - r, tx + r, ty + r), fill=fade(EMBER if i else CORE, 0.8 - i * 0.08)
+            )
+        tongue(draw, (head[0], head[1] + 30), 130, 50, t, 3, lean=-0.4)
+    hit = span(t, 0.76, 1.0)
+    if hit > 0:
+        x, y = target
+        shockring(draw, (x, y + 70), 60 + 200 * ease(hit), 1 - hit)
+        blaze(draw, (x, y + 70), 90, 220 * pulse(min(1.0, hit * 1.4)), t, 5, alpha=1 - hit * 0.5)
+        sparks(draw, target, hit, CORE, seed=4, count=24)
+        slam(c, f"真伤 -{c.tag}" if c.tag else "真伤", (x, y - 170), t, 0.78, 50, CORE)
+
+
+def crowd_heat(draw, t, c):
+    """人多更暖: every pig standing round the fire feeds it; the boss grows hotter."""
+    count = len(c.team)
+    heat = count / 4
+    kiln_air(draw, t, c, 0.2 + 0.25 * heat)
+    haze(draw, c.size, 560, 1180, t, 0.25 + 0.3 * heat)
+    bx, by = c.boss
+    fire = (bx, by + 190)
+    grow = ease(span(t, 0.0, 0.6))
+    for i, (x, y) in enumerate(c.team):
+        start = (x, y + 40)
+        points = []
+        for s in range(13):
+            k = s / 12
+            px, py = lerp(start, fire, k)
+            points.append((px + 14 * math.sin(k * 12 + t * 20 + i), py))
+        draw.line(points, fill=fade(EMBER, 0.65 * grow), width=7)
+        draw.line(points, fill=fade(CORE, 0.5 * grow), width=2)
+        p = (t * 1.8 + i * 0.25) % 1
+        dx, dy = lerp(start, fire, p)
+        draw.ellipse((dx - 9, dy - 9, dx + 9, dy + 9), fill=fade(CORE, grow))
+        tongue(draw, (x, y - 110), 70 * grow, 22, t, 20 + i)
+        slam(c, "+1", (x + 46, y - 150), t, 0.18 + i * 0.08, 30, CORE, 0.95)
+    bonfire(draw, fire, 70 + 130 * heat * grow, t, seed=2)
+    thermometer(draw, (650, 620), heat * grow, LAVA)
+    slam(c, f"×{count}", (bx - 210, by - 120), t, 0.35, 72, CORE)
+    if c.tag:
+        slam(c, f"攻击 {c.tag}", (bx, by - 210), t, 0.5, 46, (255, 120, 80))
+
+
+def roast_seat(draw, t, c):
+    """烤位轮值: a spit and red-hot grate drop over today's seat; neighbours warm up."""
+    kiln_air(draw, t, c, 0.22)
+    x, y = main_target(c)
+    drop = ease(span(t, 0.0, 0.35))
+    heat = span(t, 0.2, 0.7)
+    draw.polygon(
+        ((x - 50, 0), (x + 50, 0), (x + 150, y + 100), (x - 150, y + 100)),
+        fill=fade(EMBER, 0.16 + 0.1 * pulse(t)),
+    )
+    blaze(draw, (x, y + 118), 120, 70 + 70 * heat, t, seed=11, count=7, alpha=0.4 + 0.6 * heat)
+    grate(draw, (x, y + 92), 220, heat)
+    top = y - 120 - 260 * (1 - drop)
+    for side in (-1, 1):
+        px = x + side * 128
+        draw.line((px, y + 92, px, top), fill=fade((70, 60, 60), 1), width=12)
+    draw.line((x - 150, top, x + 150, top), fill=fade((160, 160, 170), 1), width=8)
+    crank = t * 14
+    hx, hy = x + 150, top
+    draw.line(
+        (hx, hy, hx + 34 * math.cos(crank), hy + 34 * math.sin(crank)),
+        fill=fade((160, 160, 170), 1),
+        width=6,
+    )
+    smoke(draw, (x, top - 40), (t * 1.4) % 1, (120, 100, 95), seed=3)
+    plate_y = top - 64
+    draw.rounded_rectangle(
+        (x - 78, plate_y - 30, x + 78, plate_y + 30),
+        radius=14,
+        fill=fade(LAVA, drop),
+        outline=fade(CORE, drop),
+        width=3,
+    )
+    c.text("烤位", (x, plate_y), 38, fade(WHITE, drop), True, 4)
+    team = sorted(c.team, key=lambda p: p[0])
+    if (x, y) in team:
+        index = team.index((x, y))
+        for n in (index - 1, index + 1):
+            if 0 <= n < len(team):
+                nx, ny = team[n]
+                for k in range(3):
+                    p = (t * 1.3 + k / 3) % 1
+                    curl = [
+                        (nx - 24 + k * 24 + 10 * math.sin(p * 8 + s), ny - 60 - p * 120 - s * 10)
+                        for s in range(5)
+                    ]
+                    draw.line(curl, fill=fade(STEAM, 0.7 * (1 - p)), width=5)
+                rising(draw, (nx, ny), (t * 1.5) % 1, GREEN, seed=n)
+                arrows(
+                    draw,
+                    (nx + (1 if n > index else -1) * 30, ny - 150),
+                    span(t, 0.4, 1.0),
+                    True,
+                    GREEN,
+                )
+
+
+def green_cross(draw, center, size, color, alpha=1.0):
+    x, y = center
+    arm = size * 0.32
+    draw.rectangle((x - arm, y - size, x + arm, y + size), fill=fade(color, alpha))
+    draw.rectangle((x - size, y - arm, x + size, y + arm), fill=fade(color, alpha))
+
+
+def anti_heal(draw, t, c):
+    """越劝越火: the healer's comfort flies over, catches fire and feeds the boss's head."""
+    bx, by = c.boss
+    head = (bx, by - 130)
+    healer = main_target(c, (bx - 220, by + 420))
+    kiln_air(draw, t, c, 0.18 + 0.3 * span(t, 0.4, 1.0))
+    hx, hy = healer
+    talk = span(t, 0.0, 0.25)
+    burn = span(t, 0.22, 0.5)
+    if t < 0.62:
+        box = (hx - 92, hy - 236, hx + 92, hy - 170)
+        chat_bubble(draw, box, (hx - 10, hy - 140), WHITE, talk * (1 - span(t, 0.45, 0.62)))
+        c.text("别气啦~", (hx, hy - 203), 30, fade((60, 160, 90), talk * (1 - burn)), True)
+        if burn > 0:
+            blaze(draw, (hx, hy - 170), 80, 90 * burn, t, seed=9, count=5, alpha=burn)
+    fly = span(t, 0.12, 0.62)
+    for i in range(6):
+        p = fly * 1.4 - i * 0.07
+        if not 0 < p < 1:
+            continue
+        k = ease(p)
+        mx, my = lerp((hx + (i - 2.5) * 22, hy - 80), head, k)
+        my -= 150 * math.sin(math.pi * k)
+        if k < 0.55:
+            color = (
+                int(GREEN[0] + (LAVA[0] - GREEN[0]) * k / 0.55),
+                int(GREEN[1] + (EMBER[1] - GREEN[1]) * k / 0.55),
+                int(GREEN[2] + (LAVA[2] - GREEN[2]) * k / 0.55),
+            )
+            glow(draw, (mx, my), 0.5, color, 50)
+            green_cross(draw, (mx, my), 30, color)
+            green_cross(draw, (mx, my), 14, WHITE, 0.8)
+        else:
+            tongue(draw, (mx, my + 20), 70, 26, t, 30 + i, lean=-0.3)
+    rage = span(t, 0.5, 0.9)
+    if rage > 0:
+        for i, dx in enumerate((-60, 0, 60)):
+            tongue(
+                draw,
+                (head[0] + dx, head[1] + 10),
+                (120 + 70 * (i == 1)) * ease(rage),
+                40,
+                t,
+                40 + i,
+                lean=dx / 300,
+            )
+        for i, (dx, dy) in enumerate(((-150, -40), (150, -70))):
+            anger(draw, (head[0] + dx, head[1] + dy), 40 + 10 * math.sin(t * 30 + i), rage)
+        for side in (-1, 1):
+            p = (t * 2.2) % 1
+            sx = head[0] + side * (100 + 60 * p)
+            draw.ellipse(
+                (
+                    sx - 22 - 20 * p,
+                    head[1] - 40 - 50 * p - 22,
+                    sx + 22 + 20 * p,
+                    head[1] - 40 - 50 * p + 22,
+                ),
+                fill=fade(STEAM, 0.7 * (1 - p) * rage),
+            )
+        label = f"火气 {c.tag}/6" if c.tag else "火气 ↑"
+        slam(c, label, (bx, by - 300), t, 0.55, 54, (255, 110, 80))
+
+
+def flame_lock(draw, t, c):
+    """对线点名: lights out on everyone else, a red line and crosshair pin one pig."""
+    bx, by = c.boss
+    x, y = main_target(c)
+    dim = min(1.0, t * 4) * (1 - span(t, 0.9, 1.0))
+    spotlight(draw, c.size, (x, y - 10), 140, 0.62 * dim)
+    draw.ellipse((bx - 170, by - 170, bx + 170, by + 170), outline=fade(LAVA, 0.6 * dim), width=10)
+    reach = ease(span(t, 0.1, 0.4))
+    eye = (bx, by - 40)
+    rng = random.Random(int(t * 18))
+    points = [eye]
+    for i in range(1, 9):
+        px, py = lerp(eye, (x, y), i / 9 * reach)
+        points.append((px + rng.uniform(-18, 18), py + rng.uniform(-10, 10)))
+    points.append(lerp(eye, (x, y), reach))
+    draw.line(points, fill=fade(LAVA, 0.9), width=16)
+    draw.line(points, fill=fade(CORE, 1.0), width=5)
+    lock = ease(span(t, 0.25, 0.6))
+    r = 190 - 100 * lock
+    spin = t * 3
+    draw.ellipse((x - r, y - r, x + r, y + r), outline=fade(LAVA, 1), width=6)
+    for i in range(4):
+        a = spin + i * math.pi / 2
+        draw.line(
+            (
+                x + (r - 30) * math.cos(a),
+                y + (r - 30) * math.sin(a),
+                x + (r + 34) * math.cos(a),
+                y + (r + 34) * math.sin(a),
+            ),
+            fill=fade(CORE, 1),
+            width=7,
+        )
+    mid = lerp(eye, (x, y), 0.5)
+    if reach >= 1:
+        badge = ease(span(t, 0.4, 0.55))
+        draw.ellipse(
+            (mid[0] - 50 * badge, mid[1] - 50 * badge, mid[0] + 50 * badge, mid[1] + 50 * badge),
+            fill=fade(LAVA, 1),
+            outline=fade(CORE, 1),
+            width=5,
+        )
+        c.text("VS", mid, int(44 * badge) + 1, fade(WHITE, badge), True, 4)
+    box = (bx + 70, by - 230, bx + 270, by - 160)
+    chat_bubble(draw, box, (bx + 60, by - 120), (255, 240, 235), span(t, 0.3, 0.45))
+    c.text("就你了", (bx + 170, by - 195), 32, fade(LAVA, span(t, 0.3, 0.45)), True)
+    slam(c, "对线", (x, y - 190), t, 0.55, 64, CORE)
+
+
+def read_receipt(draw, t, c):
+    """已读不回: the hit lands as an unanswered chat; ignored too long, the boss bursts."""
+    bx, by = c.boss
+    if c.tag == "burst":
+        kiln_air(draw, t, c, 0.25 + 0.4 * span(t, 0.5, 1.0))
+        cx, cy = bx, by - 230
+        build = span(t, 0.0, 0.55)
+        draw.pieslice(
+            (cx - 110, cy - 110, cx + 110, cy + 110),
+            180,
+            360,
+            fill=fade((30, 26, 34), 0.9),
+            outline=fade(WHITE, 0.9),
+            width=5,
+        )
+        for i, color in enumerate(((90, 200, 120), (250, 210, 80), (240, 70, 60))):
+            draw.arc(
+                (cx - 92, cy - 92, cx + 92, cy + 92),
+                180 + i * 60,
+                240 + i * 60,
+                fill=fade(color, 1),
+                width=16,
+            )
+        needle = math.pi + math.pi * min(1.0, ease(build) * 1.05) + 0.08 * math.sin(t * 60) * build
+        draw.line(
+            (cx, cy, cx + 86 * math.cos(needle), cy + 86 * math.sin(needle)),
+            fill=fade(WHITE, 1),
+            width=7,
+        )
+        draw.ellipse((cx - 12, cy - 12, cx + 12, cy + 12), fill=fade(WHITE, 1))
+        for side in (-1, 1):
+            for k in range(3):
+                p = (t * 2.4 + k / 3) % 1
+                sx = bx + side * (90 + 120 * p)
+                sy = by - 120 - 70 * p
+                r = 18 + 30 * p
+                draw.ellipse((sx - r, sy - r, sx + r, sy + r), fill=fade(STEAM, 0.75 * (1 - p)))
+        anger(draw, (bx - 140, by - 110), 40 + 8 * math.sin(t * 40), build)
+        anger(draw, (bx + 150, by - 60), 34 + 8 * math.sin(t * 40 + 1), build)
+        pop = span(t, 0.55, 1.0)
+        if pop > 0:
+            shockring(draw, (bx, by), 80 + 380 * ease(pop), 1 - pop, LAVA, flat=0.8, width=18)
+            blaze(draw, (bx, by + 120), 160, 260 * pulse(pop), t, seed=21, count=8)
+            shatter(draw, (cx, cy), pop, CORE, seed=5)
+            flash(draw, c.size, min(1.0, pop * 1.6), (255, 120, 80), 0.25)
+            slam(c, "憋炸了", (bx, by + 240), t, 0.58, 70, CORE)
+        return
+    kiln_air(draw, t, c, 0.16)
+    hitter = main_target(c, (bx - 200, by + 420))
+    rise = ease(span(t, 0.0, 0.25))
+    left, top = 190, 130 + 40 * (1 - rise)
+    right, bottom = 530, 390 + 40 * (1 - rise)
+    draw.rounded_rectangle(
+        (left - 10, top - 10, right + 10, bottom + 10), radius=36, fill=fade((20, 20, 26), rise)
+    )
+    draw.rounded_rectangle((left, top, right, bottom), radius=28, fill=fade((236, 236, 240), rise))
+    draw.rectangle((left, top + 16, right, top + 56), fill=fade((210, 70, 60), rise))
+    c.text("红温猪", ((left + right) / 2, top + 36), 26, fade(WHITE, rise), True)
+    lines = (("在吗？", 0.15), ("看招！", 0.3), ("回一下嘛", 0.45))
+    for i, (word, start) in enumerate(lines):
+        k = ease(span(t, start, start + 0.12))
+        y = top + 100 + i * 72
+        x0 = left + 22 - 60 * (1 - k)
+        box = (x0, y - 28, x0 + 190, y + 28)
+        draw.rounded_rectangle(box, radius=20, fill=fade((120, 210, 120), k))
+        c.text(word, (x0 + 95, y), 28, fade((20, 60, 20), k), True)
+        mark = span(t, start + 0.1, start + 0.2)
+        c.text("已读", (x0 + 240, y + 14), 20, fade((140, 140, 150), mark), True)
+        ticks(draw, (x0 + 200, y + 10), 20, (90, 150, 230), mark)
+    swipe = span(t, 0.55, 0.75)
+    if swipe > 0:
+        mid = lerp(hitter, (bx, by), 0.65)
+        c.text("伤害", mid, 44, fade(WHITE, 1 - span(t, 0.85, 1.0)), True, 4)
+        length = 90 * ease(swipe)
+        draw.line(
+            (mid[0] - length, mid[1] - length * 0.5, mid[0] + length, mid[1] + length * 0.5),
+            fill=fade(RED, 1),
+            width=12,
+        )
+        draw.line(
+            (mid[0] - length, mid[1] + length * 0.5, mid[0] + length, mid[1] - length * 0.5),
+            fill=fade(RED, 1),
+            width=12,
+        )
+    slam(c, "已读不回", (bx, by + 200), t, 0.6, 58, (210, 210, 220))
+
+
+def blessing(draw, center, kind, alpha=1.0):
+    """The stolen gift: a shield bubble or a green buff orb."""
+    x, y = center
+    if kind == "shield":
+        draw.ellipse(
+            (x - 46, y - 46, x + 46, y + 46),
+            fill=fade(BLUE, 0.35 * alpha),
+            outline=fade((200, 230, 255), alpha),
+            width=6,
+        )
+        draw.polygon(
+            (
+                (x, y - 26),
+                (x + 22, y - 14),
+                (x + 18, y + 14),
+                (x, y + 28),
+                (x - 18, y + 14),
+                (x - 22, y - 14),
+            ),
+            fill=fade((200, 230, 255), alpha),
+        )
+    else:
+        draw.ellipse(
+            (x - 44, y - 44, x + 44, y + 44),
+            fill=fade(GREEN, 0.4 * alpha),
+            outline=fade((210, 255, 210), alpha),
+            width=6,
+        )
+        arrows(draw, (x, y + 18), 0.0, True, (230, 255, 230))
+
+
+def misbless(draw, t, c):
+    """祥瑞错位: a golden cloud scoops a pig's buff or shield and crowns the boss with it."""
+    kiln_air(draw, t, c, 0.15)
+    bx, by = c.boss
+    vx, vy = main_target(c)
+    gift_home = (vx, vy - 150)
+    crown_at = (bx, by - 210)
+    kind = c.tag or "buff"
+    swoop = ease(span(t, 0.0, 0.3))
+    carry = ease(span(t, 0.3, 0.72))
+    if carry <= 0:
+        cloud = lerp((-160, vy - 420), (gift_home[0], gift_home[1] - 70), swoop)
+        gift = gift_home
+    else:
+        cloud = lerp((gift_home[0], gift_home[1] - 70), (crown_at[0], crown_at[1] - 70), carry)
+        cloud = (cloud[0], cloud[1] - 200 * math.sin(math.pi * carry))
+        gift = (cloud[0], cloud[1] + 70)
+    for i in range(14):
+        back = max(0.0, (carry if carry > 0 else swoop) - i * 0.04)
+        if carry > 0:
+            px, py = lerp((gift_home[0], gift_home[1] - 70), (crown_at[0], crown_at[1] - 70), back)
+            py -= 200 * math.sin(math.pi * back)
+        else:
+            px, py = lerp((-160, vy - 420), (gift_home[0], gift_home[1] - 70), back)
+        star(draw, (px + 60, py + 10), 12 - i * 0.6, fade(GOLD, 0.9 - i * 0.06))
+    land = span(t, 0.72, 1.0)
+    if land > 0:
+        gift = crown_at
+        rays(draw, crown_at, land, GOLD, 18, 220)
+        shockring(draw, (bx, by + 150), 80 + 160 * ease(land), 1 - land, GOLD)
+    blessing(draw, gift, kind)
+    lucky_cloud(draw, cloud, 92, 1 - span(t, 0.85, 1.0))
+    if carry > 0:
+        for i in range(3):
+            c.text(
+                "？",
+                (vx - 50 + i * 50, vy - 120 - 18 * math.sin(t * 12 + i)),
+                40,
+                fade(WHITE, 1 - land),
+                True,
+                4,
+            )
+    slam(c, "赐错了！", (bx, by + 230), t, 0.74, 60, GOLD)
+
+
+def short_takeoff(draw, t, c):
+    """短腿起飞: paw at the ground, then either wobble into the sky or belly-flop."""
+    bx, by = c.boss
+    feet = (bx, by + 150)
+    if c.tag == "fly":
+        kiln_air(draw, t, c, 0.15)
+        light_beam(draw, (bx, -40), (bx, feet[1]), 40, 190, t, GOLD)
+        for i in range(12):
+            p = (t * 2 + i / 12) % 1
+            x = bx - 230 + i * 42
+            draw.line(
+                (x, feet[1] - p * 700, x, feet[1] - p * 700 - 70),
+                fill=fade(WHITE, 0.6 * (1 - p)),
+                width=4,
+            )
+        trail = [
+            (bx + 80 * math.sin(k * 14) * (1 - k), by - 40 - 620 * k)
+            for k in (i / 30 * ease(t) for i in range(31))
+        ]
+        draw.line(trail, fill=fade(CORE, 0.9), width=10)
+        shadow = 160 * (1 - 0.7 * ease(t))
+        draw.ellipse(
+            (bx - shadow, feet[1] - shadow * 0.2, bx + shadow, feet[1] + shadow * 0.2),
+            fill=fade(CHAR, 0.6),
+        )
+        slam(c, "飞……飞起来了？", (bx, by - 260), t, 0.3, 50, GOLD)
+        return
+    if c.tag == "crash":
+        kiln_air(draw, t, c, 0.3)
+        fall = ease(span(t, 0.0, 0.42))
+        belly_y = -220 + (feet[1] - 20 + 220) * fall
+        shadow = 60 + 140 * fall
+        draw.ellipse(
+            (bx - shadow, feet[1] - shadow * 0.22, bx + shadow, feet[1] + shadow * 0.22),
+            fill=fade(CHAR, 0.7),
+        )
+        draw.ellipse(
+            (bx - 200, belly_y - 110, bx + 200, belly_y + 50),
+            fill=fade((255, 175, 170), 1),
+            outline=fade((150, 80, 80), 1),
+            width=6,
+        )
+        draw.arc(
+            (bx - 18, belly_y - 40, bx + 18, belly_y - 10),
+            20,
+            160,
+            fill=fade((150, 80, 80), 1),
+            width=5,
+        )
+        for dx in (-130, 130):
+            draw.ellipse(
+                (bx + dx - 30, belly_y + 20, bx + dx + 30, belly_y + 70),
+                fill=fade((255, 175, 170), 1),
+                outline=fade((150, 80, 80), 1),
+                width=4,
+            )
+        boom = span(t, 0.42, 1.0)
+        if boom > 0:
+            cracks(draw, feet, 420, ease(boom), seed=6, count=10)
+            shockring(draw, feet, 80 + 520 * ease(boom), 1 - boom, EMBER, width=18)
+            rng = random.Random(4)
+            for _ in range(14):
+                a = rng.uniform(math.pi * 1.05, math.pi * 1.95)
+                d = rng.uniform(120, 320) * ease(boom)
+                rx = bx + d * math.cos(a) * 1.6
+                ry = feet[1] + d * math.sin(a) + 400 * boom**2
+                s = rng.uniform(8, 18)
+                draw.polygon(
+                    ((rx, ry - s), (rx + s, ry), (rx, ry + s * 0.8), (rx - s * 0.9, ry)),
+                    fill=fade((90, 60, 50), 1 - boom * 0.5),
+                )
+            for i, hero in enumerate(c.targets or c.team):
+                burst(draw, hero, span(t, 0.48 + i * 0.04, 0.85), LAVA, 100, 12)
+            flash(draw, c.size, min(1.0, boom * 1.8), (255, 200, 150), 0.3)
+            slam(c, "啪叽！", (bx, by - 230), t, 0.44, 84, CORE)
+        return
+    if c.tag == "land":
+        kiln_air(draw, t, c, 0.25)
+        drop = ease(span(t, 0.0, 0.35))
+        shadow = 50 + 150 * drop
+        draw.ellipse(
+            (bx - shadow, feet[1] - shadow * 0.22, bx + shadow, feet[1] + shadow * 0.22),
+            fill=fade(CHAR, 0.7),
+        )
+        meteor(draw, (bx + 120, -200), feet, drop, EMBER)
+        splash = span(t, 0.35, 1.0)
+        if splash > 0:
+            shockring(draw, feet, 60 + 420 * ease(splash), 1 - splash, LAVA, width=16)
+            blaze(draw, feet, 150, 200 * pulse(splash), t, seed=31, count=7)
+            for i, hero in enumerate(c.targets or c.team):
+                k = ease(span(t, 0.38 + i * 0.05, 0.75 + i * 0.05))
+                px, py = lerp(feet, hero, k)
+                py -= 220 * math.sin(math.pi * k)
+                draw.ellipse((px - 18, py - 18, px + 18, py + 18), fill=fade(LAVA, 1))
+                draw.ellipse((px - 9, py - 9, px + 9, py + 9), fill=fade(CORE, 1))
+                if k >= 1:
+                    blaze(draw, (hero[0], hero[1] + 70), 50, 110, t, seed=40 + i, count=4)
+            slam(c, "落地！", (bx, by - 230), t, 0.4, 64, CORE)
+        return
+    kiln_air(draw, t, c, 0.2)
+    rng = random.Random(int(t * 10))
+    for i in range(10):
+        side = -1 if (int(t * 12) + i) % 2 else 1
+        p = (t * 3 + i / 10) % 1
+        dx = side * (60 + 200 * p)
+        r = 22 + 40 * p
+        draw.ellipse(
+            (
+                bx + dx - r,
+                feet[1] - 10 - 30 * p - r * 0.6,
+                bx + dx + r,
+                feet[1] - 10 - 30 * p + r * 0.6,
+            ),
+            fill=fade((150, 110, 80), 0.75 * (1 - p)),
+        )
+    for i in range(5):
+        y = feet[1] + 18 + i * 8
+        draw.line(
+            (bx - 120 + rng.uniform(-10, 10), y, bx + 120 + rng.uniform(-10, 10), y),
+            fill=fade(CORE, 0.6),
+            width=3,
+        )
+    charge = ease(span(t, 0.0, 0.9))
+    draw.arc(
+        (bx - 180, by - 180, bx + 180, by + 180),
+        -90,
+        -90 + 360 * charge,
+        fill=fade(GOLD, 1),
+        width=14,
+    )
+    draw.arc(
+        (bx - 180, by - 180, bx + 180, by + 180),
+        -90,
+        -90 + 360 * charge,
+        fill=fade(CORE, 1),
+        width=4,
+    )
+    c.text("防御 ↓", (bx + 200, by - 160), 36, fade((255, 120, 120), span(t, 0.2, 0.35)), True, 4)
+    for x, y in c.team:
+        k = (t * 2) % 1
+        draw.polygon(
+            ((x, y - 140 - 30 * k), (x - 22, y - 110 - 30 * k), (x + 22, y - 110 - 30 * k)),
+            fill=fade(CORE, 0.9),
+        )
+    slam(c, "打断它！", (bx, by + 260), t, 0.35, 56, CORE)
+
+
+def seat_breath(draw, t, c):
+    """龙息扫座: one roaring breath sweeps along a row of seats and scorches them."""
+    bx, by = c.boss
+    mouth = (bx, by + 10)
+    hits = sorted(c.targets or c.team[:3], key=lambda p: p[0])
+    kiln_air(draw, t, c, 0.3)
+    if not hits:
+        fire_cone(draw, mouth, (bx, by + 420), t)
+        return
+    sweep = span(t, 0.15, 0.78)
+    first, last = hits[0], hits[-1]
+    start = (first[0] - 90, first[1] + 40)
+    end = (last[0] + 90, last[1] + 40)
+    if 0 < t < 0.9:
+        charge = span(t, 0.0, 0.15)
+        for k, color in ((1.0, LAVA), (0.6, EMBER), (0.3, CORE)):
+            r = 50 * charge * k
+            draw.ellipse(
+                (mouth[0] - r, mouth[1] - r, mouth[0] + r, mouth[1] + r), fill=fade(color, 0.9)
+            )
+        if sweep > 0:
+            fire_cone(draw, mouth, lerp(start, end, ease(sweep)), t, spread=0.3, seed=3)
+    aim_x = lerp(start, end, ease(sweep))[0]
+    for i, (x, y) in enumerate(hits):
+        if aim_x < x - 40:
+            continue
+        burnt = span(t, 0.15 + (i + 0.5) / len(hits) * 0.63, 1.0)
+        draw.ellipse((x - 110, y + 50, x + 110, y + 100), fill=fade(CHAR, 0.75))
+        blaze(draw, (x, y + 76), 80, 150 * (1 - 0.4 * burnt), t, seed=50 + i, count=5)
+        draw.rounded_rectangle(
+            (x - 30, y - 176, x + 30, y - 120),
+            radius=12,
+            fill=fade(LAVA, 1),
+            outline=fade(CORE, 1),
+            width=3,
+        )
+        c.text("灼", (x, y - 148), 32, fade(WHITE, 1), True)
+    slam(c, "龙息扫座", (360, 830), t, 0.7, 64, CORE)
+
+
 SCENES = {
     ("goblin-pig", 0): Scene("lurk", (90, 110, 80), lurk),
     ("goblin-pig", 1): Scene("stench", (150, 180, 60), stench),
@@ -1313,6 +2229,15 @@ SCENES = {
     ("pighub0336", 0): Scene("rings", (200, 210, 255), rings),
     ("pighub0336", 1): Scene("gravity_field", (170, 150, 255), gravity_field),
     ("pighub0336", 2): Scene("meteor_shower", (255, 150, 60), meteor_shower, heavy=True),
+    ("pighub0315", 0): Scene("ember_pass", (255, 140, 60), ember_pass),
+    ("pighub0315", 1): Scene("crowd_heat", (255, 150, 70), crowd_heat),
+    ("pighub0315", 2): Scene("roast_seat", (255, 160, 50), roast_seat),
+    ("pighub0710", 0): Scene("anti_heal", (255, 70, 50), anti_heal),
+    ("pighub0710", 1): Scene("flame_lock", (255, 60, 45), flame_lock),
+    ("pighub0710", 2): Scene("read_receipt", (255, 90, 60), read_receipt, heavy=True),
+    ("pighub0116", 0): Scene("misbless", (255, 200, 90), misbless),
+    ("pighub0116", 1): Scene("short_takeoff", (255, 170, 70), short_takeoff, heavy=True),
+    ("pighub0116", 2): Scene("seat_breath", (255, 110, 40), seat_breath),
 }
 FALLBACK = Scene(
     "generic",

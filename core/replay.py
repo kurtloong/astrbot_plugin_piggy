@@ -57,6 +57,9 @@ BOSS_FLOOR = {
     "alien-pig": 700,
     "pighub0872": 680,
     "pighub0336": 640,
+    "pighub0315": 700,
+    "pighub0710": 720,
+    "pighub0116": 680,
 }
 HERO_BOX = 150
 HERO_FOOT_Y = 1062
@@ -80,6 +83,7 @@ THEMES = {
     4: ((40, 52, 46), (120, 140, 120)),
     5: ((20, 60, 120), (90, 160, 220)),
     6: ((30, 24, 70), (120, 100, 190)),
+    7: ((72, 24, 16), (255, 148, 55)),
 }
 
 
@@ -677,7 +681,7 @@ def _step(stage, step, previous, duration, clock):
 
         def effects(draw, layer, t=t, impact_t=impact_t, state=state):
             if scene and t >= CUTIN_SPLIT:
-                _scene(stage, draw, scene, state, (t - CUTIN_SPLIT) / (1 - CUTIN_SPLIT))
+                _scene(stage, draw, scene, state, (t - CUTIN_SPLIT) / (1 - CUTIN_SPLIT), mech)
             if not scene or t >= CUTIN_SPLIT:
                 for cue in cues:
                     _cue(stage, draw, cue, t, impact_t, element, color, skill, impact_at)
@@ -789,7 +793,7 @@ def _wrap(stage, draw, text, size, width):
     return lines + [line] if line else lines
 
 
-def _scene(stage, draw, scene, state, t):
+def _scene(stage, draw, scene, state, t, mech=None):
     team = [
         stage.centers[u["uid"]]
         for u in stage.roster
@@ -798,7 +802,16 @@ def _scene(stage, draw, scene, state, t):
         and state[u["uid"]][0] > 0
         and not state[u["uid"]][3]
     ]
-    ctx = scenes.Context(stage.boss_center, team, SIZE, lambda *a: stage.text(draw, *a))
+    mech = mech or {}
+    targets = [stage.centers[uid] for uid in mech.get("targets", ()) if uid in stage.centers]
+    ctx = scenes.Context(
+        stage.boss_center,
+        team,
+        SIZE,
+        lambda *a: stage.text(draw, *a),
+        targets,
+        mech.get("tag", ""),
+    )
     draw.rectangle((0, 0, W, H), fill=fx.fade(scene.color, 0.14 * fx.pulse(t)))
     scene.play(draw, t, ctx)
 

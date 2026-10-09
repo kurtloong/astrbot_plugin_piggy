@@ -52,6 +52,12 @@ DUNGEONS = (
         "intro": "停满了 UFO 的太空港，外面是一整片猪星团。",
         "bosses": ("alien-pig", "pighub0872", "pighub0336"),
     },
+    {
+        "key": 7,
+        "name": "熔岩猪窑",
+        "intro": "地底窑火昼夜不灭，越往下皮肤越烫。",
+        "bosses": ("pighub0315", "pighub0710", "pighub0116"),
+    },
 )
 
 # Effect types the replay animates on their own (damage and heals have their own cues).
@@ -219,8 +225,8 @@ class _RaidBattle(_Battle):
 
     # ----- helpers used by boss mechanics and field events -----
 
-    def note(self, text: str, mech: int | None = None, field: str = ""):
-        self.notes.append((text, mech, field))
+    def note(self, text: str, mech: int | None = None, field: str = "", targets=(), tag: str = ""):
+        self.notes.append((text, mech, field, tuple(targets), tag))
 
     def cue(self, kind: str, **data):
         self.cues.append({"t": kind, **data})
@@ -242,9 +248,12 @@ class _RaidBattle(_Battle):
     def flush(self):
         notes, falls = self.notes, self.falls
         self.notes, self.falls = [], []
-        for text, mech, field in notes:
+        for text, mech, field, targets, tag in notes:
             if mech is not None:
-                self.cue("mech", index=mech, name=self.mech.MECHANICS[mech][0])
+                extra = {"targets": [u.uid for u in targets]} if targets else {}
+                if tag:
+                    extra["tag"] = tag
+                self.cue("mech", index=mech, name=self.mech.MECHANICS[mech][0], **extra)
             if field:
                 self.cue("field", name=field)
             self.say(text)
@@ -452,6 +461,8 @@ class _RaidBattle(_Battle):
     def after_hit(self, unit, enemy, dealt):
         if unit is self.boss and enemy.side == 0:
             self.mech.outgoing(self, enemy, dealt)
+        elif enemy is self.boss and unit.side == 0 and dealt > 0:
+            self.mech.boss_struck(self, unit, dealt)
 
     def effect(self, unit, enemy, effect, skill):
         if self.mech.blocks_effect(self, unit, effect):
@@ -472,6 +483,10 @@ class _RaidBattle(_Battle):
         if effect["type"] == "cleanse":
             unit.vuln = 0
             unit.chill = 0
+            if unit.side == 0 and text:
+                self.mech.supported(self, unit, "cleanse")
+        elif effect["type"] == "heal" and unit.side == 0 and text:
+            self.mech.supported(self, unit, "heal")
         elif effect["type"] == "dispel" and enemy is self.boss:
             self.mech.dispelled(self)
         return text
