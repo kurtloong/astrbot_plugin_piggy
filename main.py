@@ -23,7 +23,7 @@ from .core.catalog import (
     sync_bundled_catalog,
 )
 from .core.config import PiggyError, Settings, migrate_host_config
-from .core.database import Database
+from .core.database import Database, player_name
 from .core.delivery import Message, QQError, QQTransport, Sender, message_key
 from .core.diagnostics import exception_detail
 from .core.raid import DUNGEONS, dungeon
@@ -89,17 +89,26 @@ BATTLE_COMMANDS = {
     "raid_leave",
     "raid_continue",
     "raid_retreat",
+    "grant_pig",
+    "grant_draw",
 }
 USAGE = {
     "duel": "用法：斗猪 @对方 你的小猪",
     "trade": "用法：小猪交换 @对方 你的小猪 对方的小猪",
+    "grant_pig": "用法：发小猪 @对方 小猪名字 数量",
+    "grant_draw": "用法：发再抽 @对方 数量",
 }
+GRANT_MAX = 999
 RAID_NAMES = " / ".join(f"{item['key']} {item['name']}" for item in DUNGEONS)
 RAID_USAGE = f"用法：开启副本 编号 你的小猪，例如：开启副本 1 猪人（{RAID_NAMES}）"
 NAME_USAGE = {
     "duel": "斗猪 #编号 你的小猪",
     "trade": "小猪交换 #编号 你的小猪 对方的小猪",
+    "grant_pig": "发小猪 #编号 小猪名字 数量",
+    "grant_draw": "发再抽 #编号 数量",
 }
+# Words needed after the command when the target is named instead of mentioned.
+NAME_MIN_WORDS = {"duel": 2, "trade": 3, "grant_pig": 3, "grant_draw": 2}
 
 
 def command_words(event, names: tuple[str, ...]) -> tuple[str, ...]:
@@ -505,7 +514,7 @@ class PiggyPlugin(Star):
                 words = words[1:]
             return target, words
         # Without a mention the first word must be a name, followed by the pig names.
-        if len(words) < (2 if command == "duel" else 3):
+        if len(words) < NAME_MIN_WORDS[command]:
             logger.info(
                 "[piggy] No mention resolved command=%s text=%r delivered=%s",
                 command,
@@ -530,6 +539,8 @@ class PiggyPlugin(Star):
             pig = await self.db.find_pig(" ".join(words))
             count = await self.db.pig_count(user["id"], pig["id"])
             return stats_message(settings, user, pig, count, settings.battle_level_cap)
+        if command in ("grant_pig", "grant_draw"):
+            return await self._grant(event, app_id, command, words)
         if command in ("duel", "trade"):
             target, words = await self._target(event, app_id, words, command)
             words = [word for word in words if word != "换"]
@@ -638,6 +649,30 @@ class PiggyPlugin(Star):
         if kind == "duel":
             return await battle_message(settings, self.root, result)
         return trade_message(settings, result)
+
+    async def _grant(self, event, app_id: str, command: str, words: tuple):
+        target, words = await self._target(event, app_id, words, command)
+        amount = words[-1] if words else ""
+        if not amount.isdigit() or not 1 <= int(amount) <= GRANT_MAX:
+            raise PiggyError(f"{USAGE[command]}（数量 1–{GRANT_MAX}）")
+        amount, name = int(amount), player_name(target)
+        if command == "grant_draw":
+            left = await self.db.grant_draws(app_id, event.get_group_id(), target["id"], amount)
+            return Message(f"已给 {name} 发放 {amount} 次再抽，今天在本群还剩 {left} 次。")
+        if len(words) < 2:
+            raise PiggyError(USAGE[command])
+        pig = await self.db.find_pig(" ".join(words[:-1]))
+        change = await self.db.grant_pig(
+            target["id"], pig["id"], amount, level_cap=self.settings.battle_level_cap
+        )
+        level = (
+            f"Lv.{change['before']} → Lv.{change['after']}"
+            if change["before"] != change["after"]
+            else f"Lv.{change['after']}"
+        )
+        return Message(
+            f"已给 {name} 发放 {amount} 只{pig['name']}，现有 {change['count_after']} 只（{level}）。"
+        )
 
     async def _raid(self, app_id: str, group: str, user: dict, command: str, words: tuple):
         settings, uid = self.settings, user["id"]
@@ -861,6 +896,18 @@ class PiggyPlugin(Star):
     async def diagnose(self, event: AstrMessageEvent):
         """仅管理员：绕过缓存上传测试猪图，发送消息并检查 QQ 图片转存链路。"""
         await self._handle(event, "diagnose")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("发小猪")
+    async def grant_pig(self, event: AstrMessageEvent):
+        """仅管理员：给群友发放小猪。用法：发小猪 @对方 小猪名字 数量"""
+        await self._handle(event, "grant_pig", command_words(event, ("发小猪",)))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("发再抽")
+    async def grant_draw(self, event: AstrMessageEvent):
+        """仅管理员：给群友发放今天在本群可用的再抽次数。用法：发再抽 @对方 数量"""
+        await self._handle(event, "grant_draw", command_words(event, ("发再抽",)))
 
     async def terminate(self):
         self.stopping = True

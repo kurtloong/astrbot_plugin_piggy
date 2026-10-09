@@ -450,6 +450,45 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.wild_challenge(OfficialEvent("w5", text="挑战小猪 坦克猪"))
         self.assertIn("已经被", sent.await_args.args[1]["content"])
 
+    async def test_admin_grants_pigs_and_bonus_draws(self):
+        await self.plugin.initialize()
+        db = self.plugin.db
+        self.assertTrue(self.plugin.grant_pig.admin_only)
+        self.assertTrue(self.plugin.grant_draw.admin_only)
+        await db.identify("app", "member", "group-a", "")
+        bob = await db.identify("app", "rival", "group-a", "阿波")
+        sent = self.plugin.transport.request
+
+        def last():
+            return sent.await_args.args[1]["content"]
+
+        await self.plugin.grant_pig(
+            OfficialEvent("g1", text="发小猪 <@rival> 坦克猪 3", mentions=("rival",))
+        )
+        self.assertIn("已给 阿波 发放 3 只坦克猪，现有 3 只", last())
+        await self.plugin.grant_pig(OfficialEvent("g2", text=f"发小猪 #{bob['id']} 坦克猪 2"))
+        self.assertIn("现有 5 只", last())
+        self.assertEqual(await db.pig_count(bob["id"], "tank_pig"), 5)
+        for index, text in enumerate(("发小猪 阿波 坦克猪 0", "发小猪 阿波 坦克猪 很多")):
+            await self.plugin.grant_pig(OfficialEvent(f"bad{index}", text=text))
+            self.assertIn("用法：发小猪 @对方 小猪名字 数量", last())
+        await db.run(lambda c: c.execute("UPDATE pigs SET enabled=0 WHERE id='tank_pig'"))
+        await self.plugin.grant_pig(OfficialEvent("g3", text="发小猪 阿波 坦克猪 1"))
+        self.assertIn("已经下架", last())
+        self.assertEqual(await db.pig_count(bob["id"], "tank_pig"), 5)
+
+        await self.plugin.grant_draw(
+            OfficialEvent("b1", text="发再抽 <@rival> 2", mentions=("rival",))
+        )
+        self.assertIn("已给 阿波 发放 2 次再抽，今天在本群还剩 2 次", last())
+        self.assertEqual(await db.bonus_count("app", "group-a", bob["id"]), 2)
+        self.assertEqual(await db.bonus_count("app", "group-b", bob["id"]), 0)
+        await self.plugin.draw(OfficialEvent("b2", user="rival", text="今日小猪"))
+        await self.plugin.draw(OfficialEvent("b3", user="rival", text="今日小猪"))
+        self.assertEqual(await db.bonus_count("app", "group-a", bob["id"]), 1)
+        await self.plugin.grant_draw(OfficialEvent("b4", text=f"发再抽 #{bob['id']} 两次"))
+        self.assertIn("用法：发再抽 @对方 数量", last())
+
     async def test_new_wild_pig_is_announced_once_without_mentions(self):
         from dataclasses import replace
 
