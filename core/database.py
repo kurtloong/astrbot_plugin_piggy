@@ -10,7 +10,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .battle import SKILL_SLOTS, entry_for, fighter, level_for, simulate
+from .battle import ROLES, SKILL_SLOTS, entry_for, fighter, level_for, simulate
 from .config import PiggyError
 from .raid import (
     DUNGEONS,
@@ -747,7 +747,9 @@ class Database:
             pig = dict(
                 conn.execute("SELECT * FROM pigs WHERE id=?", (member["pig_id"],)).fetchone()
             )
+            role = entry_for(pig.get("battle")).get("role", "输出")
             pig.pop("battle", None)
+            pig["role"] = role if role in ROLES else "输出"
             members.append(
                 {
                     **dict(member),

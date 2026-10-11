@@ -170,6 +170,36 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不能中途加入", str(caught.exception))
         lobby = raid_lobby_message(Settings(), opened, "open")
         self.assertIn("1/4", lobby.text)
+        self.assertIn("（输出）", lobby.text)
+        self.assertIn("还缺职业：坦克 / 治疗 / 辅助", lobby.text)
+
+    async def test_lobby_lists_pig_roles_and_missing_roles(self):
+        roles = {"p0": "坦克", "p1": "输出", "p2": "治疗"}
+        battle = {
+            "pigs": {
+                pig_id: {**FALLBACK, "role": role, "style": role} for pig_id, role in roles.items()
+            }
+        }
+        (self.root / "catalog" / "battle.json").write_text(
+            json.dumps(battle, ensure_ascii=False), "utf-8"
+        )
+        await self.db.catalog(read_catalog(self.root))
+        opened = await self.db.open_raid("app", "group", self.users[0]["id"], 1, "p0", NOW)
+        joined = await self.db.join_raid("app", "group", self.users[1]["id"], "p1", now=NOW)
+        third = await self.db.join_raid("app", "group", self.users[2]["id"], "p2", now=NOW)
+        lobby = raid_lobby_message(Settings(), third, "join")
+        self.assertIn("猪p0（坦克）", lobby.text)
+        self.assertIn("猪p1（输出）", lobby.text)
+        self.assertIn("猪p2（治疗）", lobby.text)
+        self.assertIn("还缺职业：辅助", lobby.text)
+        self.assertIn(
+            "还缺职业：输出 / 治疗 / 辅助",
+            raid_lobby_message(Settings(), opened, "open").text,
+        )
+        self.assertIn(
+            "还缺职业：治疗 / 辅助",
+            raid_lobby_message(Settings(), joined, "join").text,
+        )
 
     async def test_only_one_player_becomes_the_fourth_member(self):
         await self.db.open_raid("app", "group", self.users[0]["id"], 1, "p0", NOW)
