@@ -215,12 +215,25 @@ def _expired_notice(expired: list) -> list[str]:
     return notes
 
 
+def _member_role(member: dict) -> str:
+    role = member.get("pig", {}).get("role") or "输出"
+    return role if role in ROLES else "输出"
+
+
 def _raid_members(raid: dict) -> list[str]:
     return [
         f"{index}. {'队长 ' if m['user_id'] == raid['leader'] else ''}{display_name(m['user'])}"
-        f"：{m['pig']['name']}"
+        f"：{m['pig']['name']}（{_member_role(m)}）"
         for index, m in enumerate(raid["members"], 1)
     ]
+
+
+def _raid_missing_roles(raid: dict) -> str:
+    present = {_member_role(m) for m in raid["members"]}
+    missing = [role for role in ROLES if role not in present]
+    if not missing:
+        return "职业已齐：坦克 / 输出 / 治疗 / 辅助"
+    return f"还缺职业：{' / '.join(missing)}"
 
 
 RAID_TIPS = (
@@ -242,12 +255,14 @@ def _raid_team(status: dict) -> list[str]:
                 f"正在组队：「{raid['dungeon']['name']}」{len(raid['members'])}/{PARTY_SIZE}，"
                 f"约 {minutes} 分钟后过期，发送「加入副本 你的小猪」加入"
             )
+            lines += _raid_members(raid)
+            lines.append(_raid_missing_roles(raid))
         else:
             lines.append(
                 f"「{raid['dungeon']['name']}」队伍已打完第 {raid['stage']} 关，"
                 f"等队长决定继续还是撤退（约 {minutes} 分钟）"
             )
-        lines += _raid_members(raid)
+            lines += _raid_members(raid)
     return lines
 
 
@@ -346,6 +361,7 @@ def raid_lobby_message(settings: Settings, result: dict, kind: str) -> Message:
     blocks += [
         f"组队中 {count}/{PARTY_SIZE} · 约 {minutes} 分钟后没满员自动取消",
         _raid_members(raid),
+        _raid_missing_roles(raid),
         f"还差 {PARTY_SIZE - count} 人，发送「加入副本 你的小猪」加入，满 {PARTY_SIZE} 人自动开打第一关。",
     ]
     return text_message(
