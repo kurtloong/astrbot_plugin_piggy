@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import json
 import random
+from collections import deque
 from pathlib import Path
 
 from .config import PiggyError
@@ -21,6 +24,7 @@ STAT_LIMITS = {
     "crit": (0, 50),
     "dodge": (0, 40),
 }
+ROLES = ("坦克", "输出", "治疗", "辅助")
 # Level only scales the four core stats; crit and dodge are percentages.
 GROWN = ("hp", "atk", "def", "spd")
 GROWTH = 0.08
@@ -30,48 +34,179 @@ CRIT_MULTIPLIER = 1.6
 EXECUTE_MULTIPLIER = 1.8
 FURY_ROUND = 8
 FURY_STEP = 0.15
+HP_HISTORY = 6
+ENERGY_MAX = 100
+BASIC_ENERGY_GAIN = 8
+TARGET_KEYS = ("self", "enemy", "ally_lowest", "ally_random", "ally_all", "ally_missing")
 WHEN = {
     "hurt": "自身生命低于 70% 时",
     "low_hp": "自身生命低于 40% 时",
     "enemy_low": "对手生命低于 35% 时",
+    "on_crit": "暴击后",
+    "on_dodge": "闪避后",
+    "on_kill": "击杀后",
+    "on_ally_hurt": "队友受伤后",
+    "on_shield_break": "护盾破碎后",
+    "after_charge": "蓄力完成后",
 }
-PASSIVE_EFFECTS = {"buff", "shield", "thorns", "regen", "revive", "evade"}
+PASSIVE_EFFECTS = {
+    "buff",
+    "shield",
+    "thorns",
+    "regen",
+    "revive",
+    "evade",
+    "mitigate",
+    "taunt",
+    "aura",
+    "last_stand",
+    "immunity",
+    "mark",
+    "hot_boost",
+    "redirect",
+}
 
 _num = (int, float)
+_DAMAGE_FIELDS = {
+    "power": (_num, 0.1, 5),
+    "power_max": (_num, 0.1, 6),
+    "hits": (int, 1, 6),
+    "pierce": (_num, 0, 100),
+    "drain": (_num, 0, 100),
+    "execute": (_num, 1, 99),
+    "true": (bool,),
+    "sure": (bool,),
+    "scale": (str, {"atk", "def", "spd", "hp"}),
+    "overflow": (bool,),
+    "threshold": (_num, 1, 100),
+    "cleave": (_num, 1, 100),
+    "combo_bonus": (_num, 1, 50),
+}
 _EFFECT_FIELDS = {
-    "damage": {
-        "power": (_num, 0.1, 5),
-        "power_max": (_num, 0.1, 6),
-        "hits": (int, 1, 6),
-        "pierce": (_num, 0, 100),
-        "drain": (_num, 0, 100),
-        "execute": (_num, 1, 99),
-        "true": (bool,),
-        "sure": (bool,),
-        "scale": (str, {"atk", "def", "spd", "hp"}),
+    "damage": dict(_DAMAGE_FIELDS),
+    "heal": {
+        "pct": (_num, 1, 80),
+        "target": (str, set(TARGET_KEYS)),
+        "overheal_shield": (bool,),
+        "crit_heal": (bool,),
     },
-    "heal": {"pct": (_num, 1, 80)},
-    "shield": {"pct": (_num, 1, 80)},
+    "shield": {"pct": (_num, 1, 80), "target": (str, set(TARGET_KEYS))},
     "stun": {
         "turns": (int, 1, 3),
         "label": (str, 1, 8),
         "target": (str, {"enemy", "self"}),
     },
-    "dot": {"pct": (_num, 1, 20), "turns": (int, 1, 6), "label": (str, 1, 8)},
+    "dot": {
+        "pct": (_num, 1, 20),
+        "turns": (int, 1, 6),
+        "label": (str, 1, 8),
+        "stacks": (int, 1, 9),
+        "max_stacks": (int, 1, 9),
+        "spread": (bool,),
+    },
     "buff": {
         "stat": (str, {"atk", "def", "spd", "crit", "dodge"}),
         "pct": (_num, -80, 150),
         "turns": (int, 1, 99),
-        "target": (str, {"enemy", "self"}),
+        "target": (str, set(TARGET_KEYS)),
     },
     "thorns": {"pct": (_num, 1, 100), "turns": (int, 1, 99)},
-    "regen": {"pct": (_num, 1, 20), "turns": (int, 1, 99)},
+    "regen": {
+        "pct": (_num, 1, 20),
+        "turns": (int, 1, 99),
+        "target": (str, set(TARGET_KEYS)),
+        "stacks": (int, 1, 9),
+    },
     "evade": {"count": (int, 1, 3)},
-    "cleanse": {},
+    "cleanse": {"target": (str, set(TARGET_KEYS))},
     "dispel": {},
-    "copy": {},
+    "copy": {"pct": (_num, 50, 200)},
     "recoil": {"pct": (_num, 1, 60)},
     "revive": {"pct": (_num, 1, 100)},
+    # Team / tank
+    "taunt": {"turns": (int, 1, 99)},
+    "redirect": {"turns": (int, 1, 99)},
+    "guard": {"pct": (_num, 10, 80), "turns": (int, 1, 99), "target": (str, set(TARGET_KEYS))},
+    "share": {"pct": (_num, 10, 80), "turns": (int, 1, 99)},
+    "aura": {
+        "stat": (str, {"atk", "def", "spd", "crit", "dodge"}),
+        "pct": (_num, -40, 80),
+        "heal_pct": (_num, 1, 15),
+    },
+    "mitigate": {"pct": (_num, 5, 80), "turns": (int, 1, 99)},
+    "block": {"count": (int, 1, 4), "pct": (_num, 20, 100)},
+    "absorb": {"pct": (_num, 5, 80), "break_power": (_num, 0.1, 3)},
+    "reflect": {
+        "pct": (_num, 5, 100),
+        "turns": (int, 1, 99),
+        "stun_turns": (int, 1, 2),
+        "dot_pct": (_num, 1, 15),
+    },
+    "fortify": {"pct": (_num, 5, 50)},
+    "last_stand": {"threshold": (_num, 5, 40), "pct": (_num, 20, 80), "turns": (int, 1, 99)},
+    "sacrifice": {
+        "pct": (_num, 5, 40),
+        "shield_pct": (_num, 5, 60),
+        "heal_pct": (_num, 5, 60),
+        "mitigate_pct": (_num, 10, 60),
+        "target": (str, set(TARGET_KEYS)),
+    },
+    # Time
+    "rewind": {"turns": (int, 1, 5)},
+    "snapshot": {},
+    "delay_heal": {"pct": (_num, 5, 60), "turns": (int, 1, 4), "target": (str, set(TARGET_KEYS))},
+    "delay_damage": {"pct": (_num, 5, 40), "turns": (int, 1, 4), "label": (str, 1, 8)},
+    "charge": {
+        **_DAMAGE_FIELDS,
+        "turns": (int, 1, 4),
+        "interrupt": (bool,),
+    },
+    "channel": {
+        "turns": (int, 1, 4),
+        "power": (_num, 0.1, 2),
+        "heal_pct": (_num, 1, 25),
+    },
+    # Offense
+    "mark": {
+        "pct": (_num, 5, 50),
+        "turns": (int, 1, 99),
+        "stacks": (int, 1, 9),
+        "max_stacks": (int, 1, 9),
+        "burst_power": (_num, 0.5, 4),
+    },
+    "detonate": {},
+    "combo": {"gain": (int, 1, 3), "max": (int, 1, 9)},
+    "leech": {"pct": (_num, 5, 80), "target": (str, set(TARGET_KEYS)), "delay": (int, 0, 3)},
+    "hot_boost": {
+        "pct": (_num, 10, 100),
+        "turns": (int, 1, 99),
+        "target": (str, set(TARGET_KEYS)),
+    },
+    "corrupting": {"pct": (_num, 10, 80), "turns": (int, 1, 99)},
+    "bleed_burst": {"stacks": (int, 2, 9)},
+    # Control / support
+    "silence": {"turns": (int, 1, 3)},
+    "root": {"turns": (int, 1, 3)},
+    "weaken": {"pct": (_num, 5, 60), "turns": (int, 1, 99)},
+    "expose": {"pct": (_num, 5, 60), "turns": (int, 1, 99)},
+    "purge": {"mode": (str, {"buffs", "shield", "all"})},
+    "transfer": {"mode": (str, {"debuff", "buff"})},
+    "immunity": {
+        "kind": (str, {"stun", "dot", "weaken", "all"}),
+        "turns": (int, 1, 99),
+    },
+    # Heal specialists
+    "mass_heal": {"pct": (_num, 5, 50)},
+    "triage": {"pct": (_num, 8, 60), "bonus": (_num, 5, 40), "threshold": (_num, 20, 60)},
+    "cleanse_heal": {"pct": (_num, 5, 50), "target": (str, set(TARGET_KEYS))},
+    "life_link": {
+        "pct": (_num, 5, 50),
+        "self_pct": (_num, -40, 40),
+        "target": (str, set(TARGET_KEYS)),
+    },
+    "energy": {"gain": (int, 1, 100), "target": (str, set(TARGET_KEYS))},
+    # Randomly resolve one option bundle (e.g. cook a random dish with different buffs).
+    "pick": {},
 }
 _REQUIRED = {
     "damage": ("power",),
@@ -83,9 +218,46 @@ _REQUIRED = {
     "regen": ("pct",),
     "recoil": ("pct",),
     "revive": ("pct",),
+    "taunt": ("turns",),
+    "redirect": ("turns",),
+    "guard": ("pct", "turns"),
+    "share": ("pct", "turns"),
+    "aura": (),
+    "mitigate": ("pct",),
+    "block": ("count",),
+    "absorb": ("pct",),
+    "reflect": ("pct",),
+    "fortify": ("pct",),
+    "last_stand": ("threshold", "pct"),
+    "sacrifice": ("pct",),
+    "rewind": (),
+    "delay_heal": ("pct", "turns"),
+    "delay_damage": ("pct", "turns"),
+    "charge": ("turns", "power"),
+    "channel": ("turns",),
+    "mark": ("pct",),
+    "combo": (),
+    "leech": ("pct",),
+    "hot_boost": ("pct",),
+    "corrupting": ("pct",),
+    "bleed_burst": ("stacks",),
+    "silence": ("turns",),
+    "root": ("turns",),
+    "weaken": ("pct", "turns"),
+    "expose": ("pct", "turns"),
+    "purge": (),
+    "transfer": ("mode",),
+    "immunity": ("kind",),
+    "mass_heal": ("pct",),
+    "triage": ("pct",),
+    "cleanse_heal": ("pct",),
+    "life_link": ("pct",),
+    "energy": ("gain",),
+    "pick": ("options",),
 }
 
 FALLBACK = {
+    "role": "输出",
     "style": "均衡",
     "stats": {"hp": 105, "atk": 19, "def": 10, "spd": 10, "crit": 5, "dodge": 5},
     "skills": [
@@ -152,6 +324,44 @@ def _effects(items, where: str, passive: bool) -> list[dict]:
             raise PiggyError(f"战斗数据 {spot}：被动技能不能使用 {kind}。")
         if not passive and kind == "revive":
             raise PiggyError(f"战斗数据 {spot}：revive 只能用于被动技能。")
+        if kind == "pick":
+            if passive:
+                raise PiggyError(f"战斗数据 {spot}：被动技能不能使用 pick。")
+            allowed = {"type", "chance", "options"}
+            unknown = set(effect) - allowed
+            if unknown:
+                raise PiggyError(f"战斗数据 {spot} 含未知字段 {', '.join(sorted(unknown))}。")
+            if "chance" in effect:
+                _check(effect["chance"], (int, 1, 100), spot)
+            options = effect.get("options")
+            if not isinstance(options, list) or not 2 <= len(options) <= 8:
+                raise PiggyError(f"战斗数据 {spot}：pick 需要 2–8 个选项。")
+            normalized_opts = []
+            for oi, opt in enumerate(options):
+                ospot = f"{spot} 选项 {oi + 1}"
+                if not isinstance(opt, dict):
+                    raise PiggyError(f"战斗数据 {ospot} 必须为对象。")
+                bad = set(opt) - {"weight", "text", "effects"}
+                if bad:
+                    raise PiggyError(f"战斗数据 {ospot} 含未知字段 {', '.join(sorted(bad))}。")
+                if "weight" in opt:
+                    _check(opt["weight"], (int, 1, 100), f"{ospot} 权重")
+                if "text" in opt:
+                    _check(opt["text"], (str, 1, 24), f"{ospot} 文案")
+                nested = _effects(opt.get("effects"), ospot, False)
+                if any(e["type"] == "pick" for e in nested):
+                    raise PiggyError(f"战斗数据 {ospot}：pick 不能嵌套 pick。")
+                item = {"effects": nested}
+                if "weight" in opt:
+                    item["weight"] = opt["weight"]
+                if "text" in opt:
+                    item["text"] = opt["text"].strip()
+                normalized_opts.append(item)
+            packed = {"type": "pick", "options": normalized_opts}
+            if "chance" in effect:
+                packed["chance"] = effect["chance"]
+            result.append(packed)
+            continue
         fields = _EFFECT_FIELDS[kind]
         for key, value in effect.items():
             if key == "type":
@@ -165,8 +375,14 @@ def _effects(items, where: str, passive: bool) -> list[dict]:
         for key in _REQUIRED.get(kind, ()):
             if key not in effect:
                 raise PiggyError(f"战斗数据 {spot} 缺少 {key}。")
-        if kind == "damage" and effect.get("power_max", effect["power"]) < effect["power"]:
+        if kind in ("damage", "charge") and effect.get("power_max", effect.get("power", 0)) < effect.get(
+            "power", 0
+        ):
             raise PiggyError(f"战斗数据 {spot} 的 power_max 不能小于 power。")
+        if kind == "aura" and "stat" not in effect and "heal_pct" not in effect:
+            raise PiggyError(f"战斗数据 {spot}：aura 需要 stat 或 heal_pct。")
+        if kind == "channel" and "power" not in effect and "heal_pct" not in effect:
+            raise PiggyError(f"战斗数据 {spot}：channel 需要 power 或 heal_pct。")
         result.append(dict(effect))
     return result
 
@@ -175,9 +391,12 @@ def validate_entry(pig_id: str, entry) -> dict:
     where = pig_id
     if not isinstance(entry, dict):
         raise PiggyError(f"战斗数据 {where} 必须为对象。")
-    unknown = set(entry) - {"style", "stats", "skills"}
+    unknown = set(entry) - {"role", "style", "stats", "skills"}
     if unknown:
         raise PiggyError(f"战斗数据 {where} 含未知字段 {', '.join(sorted(unknown))}。")
+    role = entry.get("role", "输出")
+    if role not in ROLES:
+        raise PiggyError(f"战斗数据 {where} 的职业必须是 {'/'.join(ROLES)}。")
     _check(entry.get("style"), (str, 1, 8), f"{where} 流派")
     stats = entry.get("stats")
     if not isinstance(stats, dict) or set(stats) != set(STATS):
@@ -193,7 +412,17 @@ def validate_entry(pig_id: str, entry) -> dict:
         spot = f"{where} 技能 {index + 1}"
         if not isinstance(skill, dict):
             raise PiggyError(f"战斗数据 {spot} 必须为对象。")
-        unknown = set(skill) - {"name", "text", "cd", "when", "passive", "fail", "effects"}
+        unknown = set(skill) - {
+            "name",
+            "text",
+            "cd",
+            "when",
+            "passive",
+            "fail",
+            "effects",
+            "cost",
+            "gain",
+        }
         if unknown:
             raise PiggyError(f"战斗数据 {spot} 含未知字段 {', '.join(sorted(unknown))}。")
         _check(skill.get("name"), (str, 1, 16), f"{spot} 名称")
@@ -207,8 +436,8 @@ def validate_entry(pig_id: str, entry) -> dict:
         when = skill.get("when")
         if when is not None and when not in WHEN:
             raise PiggyError(f"战斗数据 {spot} 的触发条件不合法。")
-        if passive and (skill.get("cd") or when or "fail" in skill):
-            raise PiggyError(f"战斗数据 {spot}：被动技能不能设置冷却、条件或失败。")
+        if passive and (skill.get("cd") or when or "fail" in skill or "cost" in skill):
+            raise PiggyError(f"战斗数据 {spot}：被动技能不能设置冷却、条件、失败或消耗。")
         item = {
             "name": skill["name"].strip(),
             "text": skill["text"].strip(),
@@ -217,6 +446,12 @@ def validate_entry(pig_id: str, entry) -> dict:
             "passive": passive,
             "effects": _effects(skill.get("effects"), spot, passive),
         }
+        if "cost" in skill:
+            _check(skill["cost"], (int, 1, 100), f"{spot} 能量消耗")
+            item["cost"] = skill["cost"]
+        if "gain" in skill:
+            _check(skill["gain"], (int, 1, 100), f"{spot} 能量回复")
+            item["gain"] = skill["gain"]
         fail = skill.get("fail")
         if fail is not None:
             if not isinstance(fail, dict) or set(fail) - {"chance", "text", "effects"}:
@@ -237,10 +472,16 @@ def validate_entry(pig_id: str, entry) -> dict:
         or first["cd"]
         or first["when"]
         or "fail" in first
+        or "cost" in first
         or not any(e["type"] == "damage" for e in first["effects"])
     ):
         raise PiggyError(f"战斗数据 {where} 的第 1 个技能必须是无冷却、无条件的攻击技能。")
-    return {"style": entry["style"].strip(), "stats": dict(stats), "skills": normalized}
+    return {
+        "role": role,
+        "style": entry["style"].strip(),
+        "stats": dict(stats),
+        "skills": normalized,
+    }
 
 
 def validate_battle(data, pig_ids) -> dict:
@@ -280,12 +521,25 @@ def fighter(pig: dict, entry: dict, level: int, label: str = "") -> dict:
         "name": pig["name"],
         "asset": pig.get("asset", ""),
         "label": label or pig["name"],
+        "role": entry.get("role", "输出"),
         "style": entry["style"],
         "level": level,
         "stats": stats,
         "skills": entry["skills"][: min(level, SKILL_SLOTS)],
         "locked": entry["skills"][min(level, SKILL_SLOTS) :],
     }
+
+
+def _target_label(target: str | None) -> str:
+    return {
+        None: "",
+        "self": "自身",
+        "enemy": "对手",
+        "ally_lowest": "生命最低队友",
+        "ally_random": "随机队友",
+        "ally_all": "全体队友",
+        "ally_missing": "缺血最多队友",
+    }.get(target or "self", "")
 
 
 def describe_effect(effect: dict) -> str:
@@ -312,19 +566,42 @@ def describe_effect(effect: dict) -> str:
             extras.append(f"吸血 {effect['drain']:g}%")
         if effect.get("execute"):
             extras.append(f"对手低于 {effect['execute']:g}% 生命时伤害提高")
+        if effect.get("threshold"):
+            extras.append(f"按已损生命追加（阈值 {effect['threshold']:g}%）")
+        if effect.get("cleave"):
+            extras.append(f"溅射 {effect['cleave']:g}%")
+        if effect.get("overflow"):
+            extras.append("击杀溢出")
+        if effect.get("combo_bonus"):
+            extras.append(f"消耗连击强化 {effect['combo_bonus']:g}%/层")
         if extras:
             text += "，" + "，".join(extras)
     elif kind == "heal":
-        text = f"回复 {effect['pct']:g}% 生命"
+        who = _target_label(effect.get("target"))
+        text = f"{who + '：' if who and who != '自身' else ''}回复 {effect['pct']:g}% 生命"
+        if effect.get("overheal_shield"):
+            text += "，溢出转护盾"
+        if effect.get("crit_heal"):
+            text += "，可暴击治疗"
     elif kind == "shield":
-        text = f"获得 {effect['pct']:g}% 生命的护盾"
+        who = _target_label(effect.get("target"))
+        text = f"{who + '：' if who and who != '自身' else ''}获得 {effect['pct']:g}% 生命的护盾"
     elif kind == "stun":
         who = "自己" if effect.get("target") == "self" else "对手"
         text = f"使{who}{effect.get('label', '眩晕')} {effect.get('turns', 1)} 回合"
     elif kind == "dot":
-        text = f"{effect['label'] if 'label' in effect else '持续伤害'}：每回合 {effect['pct']:g}% 生命，持续 {effect['turns']} 回合"
+        text = (
+            f"{effect['label'] if 'label' in effect else '持续伤害'}：每回合 {effect['pct']:g}% 生命，"
+            f"持续 {effect['turns']} 回合"
+        )
+        if effect.get("stacks"):
+            text += f"，叠加 {effect['stacks']}"
+        if effect.get("spread"):
+            text += "，可扩散"
     elif kind == "buff":
-        who = "对手" if effect.get("target") == "enemy" else "自身"
+        who = _target_label(effect.get("target")) or "自身"
+        if effect.get("target") == "enemy":
+            who = "对手"
         sign = "+" if effect["pct"] >= 0 else ""
         unit = "%" if effect["stat"] in ("atk", "def", "spd") else " 点"
         turns = f"，{effect['turns']} 回合" if effect.get("turns", 99) < 99 else ""
@@ -338,15 +615,112 @@ def describe_effect(effect: dict) -> str:
     elif kind == "evade":
         text = f"完全躲开接下来 {effect.get('count', 1)} 次攻击"
     elif kind == "cleanse":
-        text = "清除自身负面状态"
+        text = "清除负面状态"
     elif kind == "dispel":
         text = "驱散对手增益和护盾"
     elif kind == "copy":
         text = "复制对手上一个技能"
+        if effect.get("pct", 100) != 100:
+            text += f"（效果 {effect['pct']:g}%）"
     elif kind == "recoil":
         text = f"自身损失 {effect['pct']:g}% 生命"
-    else:
+    elif kind == "revive":
         text = f"倒下时以 {effect['pct']:g}% 生命复活一次"
+    elif kind == "taunt":
+        text = f"嘲讽 {effect['turns']} 回合"
+    elif kind == "redirect":
+        text = f"强制吸引攻击 {effect['turns']} 回合"
+    elif kind == "guard":
+        text = f"守护队友，转移 {effect['pct']:g}% 伤害，{effect['turns']} 回合"
+    elif kind == "share":
+        text = f"灵魂链接，分摊 {effect['pct']:g}% 伤害，{effect['turns']} 回合"
+    elif kind == "aura":
+        parts = []
+        if "stat" in effect:
+            parts.append(f"队友{STAT_NAMES[effect['stat']]}+{effect['pct']:g}%")
+        if "heal_pct" in effect:
+            parts.append(f"每回合治疗 {effect['heal_pct']:g}%")
+        text = "光环：" + "，".join(parts)
+    elif kind == "mitigate":
+        text = f"减伤 {effect['pct']:g}%，{effect.get('turns', 2)} 回合"
+    elif kind == "block":
+        text = f"格挡 {effect['count']} 次（减免 {effect.get('pct', 100):g}%）"
+    elif kind == "absorb":
+        text = f"吸收盾 {effect['pct']:g}% 生命"
+        if effect.get("break_power"):
+            text += f"，破碎反击 {effect['break_power']:g} 倍"
+    elif kind == "reflect":
+        text = f"反射 {effect['pct']:g}% 伤害，{effect.get('turns', 2)} 回合"
+    elif kind == "fortify":
+        text = f"固化 {effect['pct']:g}% 护盾/防御为护盾池"
+    elif kind == "last_stand":
+        text = f"生命低于 {effect['threshold']:g}% 时触发减伤 {effect['pct']:g}%"
+    elif kind == "sacrifice":
+        text = f"自损 {effect['pct']:g}% 生命换取守护效果"
+    elif kind == "rewind":
+        text = f"回溯至 {effect.get('turns', 1)} 回合前生命"
+    elif kind == "snapshot":
+        text = "记录当前生命快照"
+    elif kind == "delay_heal":
+        text = f"{effect['turns']} 回合后回复 {effect['pct']:g}% 生命"
+    elif kind == "delay_damage":
+        text = f"{effect['turns']} 回合后引爆 {effect['pct']:g}% 生命伤害"
+    elif kind == "charge":
+        text = f"蓄力 {effect['turns']} 回合后造成 {effect['power']:g} 倍伤害"
+        if effect.get("interrupt"):
+            text += "（可被打断）"
+    elif kind == "channel":
+        text = f"引导 {effect['turns']} 回合"
+        if effect.get("power"):
+            text += f"，每回合 {effect['power']:g} 倍伤害"
+        if effect.get("heal_pct"):
+            text += f"，每回合治疗 {effect['heal_pct']:g}%"
+    elif kind == "mark":
+        text = f"标记：承伤 +{effect['pct']:g}%，{effect.get('turns', 3)} 回合"
+    elif kind == "detonate":
+        text = "引爆目标持续伤害与延迟伤害"
+    elif kind == "combo":
+        text = f"获得 {effect.get('gain', 1)} 点连击"
+    elif kind == "leech":
+        text = f"将 {effect['pct']:g}% 伤害转化为治疗"
+    elif kind == "hot_boost":
+        text = f"持续治疗增强 {effect['pct']:g}%"
+    elif kind == "corrupting":
+        text = f"反治疗 {effect['pct']:g}%，{effect['turns']} 回合"
+    elif kind == "bleed_burst":
+        text = f"层数达 {effect['stacks']} 时爆发结算"
+    elif kind == "silence":
+        text = f"沉默 {effect['turns']} 回合"
+    elif kind == "root":
+        text = f"禁锢 {effect['turns']} 回合（无法闪避）"
+    elif kind == "weaken":
+        text = f"造成伤害降低 {effect['pct']:g}%，{effect['turns']} 回合"
+    elif kind == "expose":
+        text = f"易伤 {effect['pct']:g}%，{effect['turns']} 回合"
+    elif kind == "purge":
+        mode = {"buffs": "增益", "shield": "护盾", "all": "增益与护盾"}.get(
+            effect.get("mode", "all"), "增益与护盾"
+        )
+        text = f"驱散对手{mode}"
+    elif kind == "transfer":
+        text = "转移负面状态" if effect["mode"] == "debuff" else "偷取增益"
+    elif kind == "immunity":
+        text = f"免疫{effect['kind']} {effect.get('turns', 2)} 回合"
+    elif kind == "mass_heal":
+        text = f"群体回复 {effect['pct']:g}% 生命"
+    elif kind == "triage":
+        text = f"急救生命最低队友 {effect['pct']:g}% 生命"
+    elif kind == "cleanse_heal":
+        text = f"驱散并回复 {effect['pct']:g}% 生命"
+    elif kind == "life_link":
+        text = f"生命链接治疗 {effect['pct']:g}%"
+    elif kind == "energy":
+        text = f"回复 {effect['gain']} 点能量"
+    elif kind == "pick":
+        labels = [opt.get("text") or f"选项{i+1}" for i, opt in enumerate(effect.get("options", []))]
+        text = "随机：" + "/".join(labels)
+    else:
+        text = kind
     return chance + text
 
 
@@ -356,6 +730,10 @@ def describe_skill(skill: dict) -> str:
         parts.insert(0, "被动")
     if skill["cd"]:
         parts.append(f"冷却 {skill['cd']}")
+    if skill.get("cost"):
+        parts.append(f"消耗能量 {skill['cost']}")
+    if skill.get("gain"):
+        parts.append(f"回复能量 {skill['gain']}")
     if skill["when"]:
         parts.append(WHEN[skill["when"]])
     if "fail" in skill:
@@ -374,6 +752,7 @@ class _Unit:
         self.dots = []
         self.regens = []
         self.thorns = []
+        self.reflects = []
         self.shield = 0.0
         self.stun = 0
         self.stun_label = ""
@@ -382,11 +761,47 @@ class _Unit:
         self.cooldowns = {}
         self.last = None
         self.actives = [s for s in data["skills"] if not s["passive"]]
+        self.mitigates = []
+        self.block_count = 0
+        self.block_pct = 100
+        self.absorb_break = 0.0
+        self.taunt = 0
+        self.redirect = 0
+        self.guards = []  # {ward, pct, turns} on caster
+        self.share = None  # {pct, turns, members}
+        self.auras = []
+        self.hp_history = deque([self.hp], maxlen=HP_HISTORY)
+        self.snapshot = None
+        self.delay_heals = []
+        self.delay_damages = []
+        self.charge = None
+        self.channel = None
+        self.marks = []
+        self.combo = 0
+        self.combo_max = 5
+        self.silence = 0
+        self.root = 0
+        self.weaken = []
+        self.expose = []
+        self.immunity = {}  # kind -> turns
+        self.hot_boost = []
+        self.corrupting = []
+        self.last_stand = None
+        self.last_stand_used = False
+        self.lock_hp = 0
+        self.pending_leech = []
+        self.energy = 0
+        self.uses_energy = any("cost" in s or "gain" in s for s in data["skills"])
+        self.flags = {"crit": False, "dodged": False, "killed": False, "shield_broke": False}
+        self.side = data.get("side", 0)
 
     def stat(self, key: str) -> float:
         bonus = sum(b["pct"] for b in self.buffs if b["stat"] == key)
         if key in ("crit", "dodge"):
-            return max(0.0, min(75.0, self.base[key] + bonus))
+            value = max(0.0, min(75.0, self.base[key] + bonus))
+            if key == "dodge" and self.root:
+                return 0.0
+            return value
         return max(1.0 if key != "def" else 0.0, self.base[key] * (1 + max(-80, bonus) / 100))
 
     @property
@@ -397,6 +812,18 @@ class _Unit:
     def alive(self) -> bool:
         return self.hp > 0
 
+    @property
+    def role(self) -> str:
+        return self.data.get("role", "输出")
+
+    def record_hp(self):
+        self.hp_history.append(self.hp)
+
+    def immune_to(self, kind: str) -> bool:
+        if self.immunity.get("all", 0) > 0:
+            return True
+        return self.immunity.get(kind, 0) > 0
+
 
 class _Battle:
     def __init__(self, a: dict, b: dict, seed: int):
@@ -404,9 +831,39 @@ class _Battle:
         self.units = (_Unit(a), _Unit(b))
         self.log = []
         self.round = 0
+        self._copy_scale = 1.0
+        self._leech_pool = 0.0
+        self.void_note = ""
+        self._in_trigger = False
 
     def say(self, text: str):
         self.log.append(f"R{self.round} {text}" if self.round else text)
+
+    def allies_of(self, unit: _Unit) -> list[_Unit]:
+        """1v1: only self. Raid overrides to return party members."""
+        return [unit]
+
+    def foes_of(self, unit: _Unit) -> list[_Unit]:
+        return [self.other(unit)]
+
+    def resolve_targets(self, unit: _Unit, enemy: _Unit, spec: str | None) -> list[_Unit]:
+        spec = spec or "self"
+        allies = [u for u in self.allies_of(unit) if u.alive]
+        if not allies:
+            allies = [unit] if unit.alive else []
+        if spec == "self":
+            return [unit] if unit.alive else []
+        if spec == "enemy":
+            return [enemy] if enemy and enemy.alive else []
+        if spec == "ally_all":
+            return allies
+        if spec == "ally_random":
+            return [self.rng.choice(allies)] if allies else []
+        if spec == "ally_lowest":
+            return [min(allies, key=lambda u: u.ratio)] if allies else []
+        if spec == "ally_missing":
+            return [max(allies, key=lambda u: u.max_hp - u.hp)] if allies else []
+        return [unit] if unit.alive else []
 
     def run(self) -> dict:
         for unit in self.units:
@@ -464,20 +921,52 @@ class _Battle:
     def apply_passive(self, unit: _Unit, effect: dict):
         kind = effect["type"]
         if kind == "buff":
-            target = self.other(unit) if effect.get("target") == "enemy" else unit
-            target.buffs.append(
-                {"stat": effect["stat"], "pct": effect["pct"], "turns": effect.get("turns", 99)}
+            spec = effect.get("target", "self")
+            targets = (
+                [self.other(unit)]
+                if spec == "enemy"
+                else self.resolve_targets(unit, self.other(unit), spec)
             )
+            for target in targets:
+                if target.alive:
+                    target.buffs.append(
+                        {
+                            "stat": effect["stat"],
+                            "pct": effect["pct"],
+                            "turns": effect.get("turns", 99),
+                        }
+                    )
         elif kind == "shield":
-            unit.shield += unit.max_hp * effect["pct"] / 100
+            for target in self.resolve_targets(unit, self.other(unit), effect.get("target", "self")):
+                target.shield += target.max_hp * effect["pct"] / 100
         elif kind == "thorns":
             unit.thorns.append({"pct": effect["pct"], "turns": effect.get("turns", 99)})
         elif kind == "regen":
-            unit.regens.append({"pct": effect["pct"], "turns": effect.get("turns", 99)})
+            for target in self.resolve_targets(unit, self.other(unit), effect.get("target", "self")):
+                target.regens.append({"pct": effect["pct"], "turns": effect.get("turns", 99)})
         elif kind == "evade":
             unit.evade += effect.get("count", 1)
         elif kind == "revive":
             unit.revive = effect["pct"]
+        elif kind == "mitigate":
+            unit.mitigates.append({"pct": effect["pct"], "turns": effect.get("turns", 99)})
+        elif kind == "taunt":
+            unit.taunt = max(unit.taunt, effect["turns"])
+        elif kind == "redirect":
+            unit.redirect = max(unit.redirect, effect["turns"])
+        elif kind == "aura":
+            unit.auras.append(dict(effect))
+        elif kind == "last_stand":
+            unit.last_stand = dict(effect)
+        elif kind == "immunity":
+            unit.immunity[effect["kind"]] = max(
+                unit.immunity.get(effect["kind"], 0), effect.get("turns", 99)
+            )
+        elif kind == "mark":
+            enemy = self.other(unit)
+            self._apply_mark(enemy, effect)
+        elif kind == "hot_boost":
+            unit.hot_boost.append({"pct": effect["pct"], "turns": effect.get("turns", 99)})
 
     def fury(self) -> float:
         """Long fights escalate so sustain-heavy pigs cannot stall forever."""
@@ -486,17 +975,85 @@ class _Battle:
     def other(self, unit: _Unit) -> _Unit:
         return self.units[1] if unit is self.units[0] else self.units[0]
 
-    def hurt(self, unit: _Unit, amount: float, source: str = "") -> float:
+    def _mitigation(self, unit: _Unit) -> float:
+        return min(80.0, sum(m["pct"] for m in unit.mitigates))
+
+    def _expose_bonus(self, unit: _Unit) -> float:
+        return sum(e["pct"] for e in unit.expose)
+
+    def _weaken_factor(self, unit: _Unit) -> float:
+        cut = min(80.0, sum(w["pct"] for w in unit.weaken))
+        return 1 - cut / 100
+
+    def _mark_bonus(self, unit: _Unit) -> float:
+        return sum(m["pct"] for m in unit.marks)
+
+    def hurt(self, unit: _Unit, amount: float, source: str = "", attacker: _Unit | None = None) -> float:
         if amount <= 0 or not unit.alive:
             return 0.0
+        # Guard transfer: damage taken by ward goes partially to guardian.
+        for ally in self.allies_of(unit):
+            for guard in list(ally.guards):
+                if guard["ward"] is unit and ally.alive and ally is not unit:
+                    share = amount * guard["pct"] / 100
+                    amount -= share
+                    self.hurt(ally, share, source="guard", attacker=attacker)
+        # Share link
+        if unit.share and unit.share["turns"] > 0:
+            members = [m for m in unit.share["members"] if m.alive]
+            if len(members) > 1:
+                portion = amount * unit.share["pct"] / 100
+                amount -= portion
+                each = portion / len(members)
+                for member in members:
+                    if member is not unit:
+                        self._raw_hurt(member, each, attacker=attacker)
+            else:
+                # 1v1 / alone: partial mitigation
+                amount *= 1 - unit.share["pct"] / 200
+        return self._raw_hurt(unit, amount, attacker=attacker)
+
+    def _raw_hurt(self, unit: _Unit, amount: float, attacker: _Unit | None = None) -> float:
+        if amount <= 0 or not unit.alive:
+            return 0.0
+        amount *= 1 + self._expose_bonus(unit) / 100
+        amount *= 1 - self._mitigation(unit) / 100
+        if unit.block_count > 0:
+            unit.block_count -= 1
+            amount *= 1 - unit.block_pct / 100
+        before_shield = unit.shield
         absorbed = min(unit.shield, amount)
         unit.shield -= absorbed
         amount -= absorbed
+        if before_shield > 0 and unit.shield <= 0 and absorbed > 0:
+            unit.flags["shield_broke"] = True
+            if unit.absorb_break and attacker and attacker.alive:
+                break_raw = unit.stat("atk") * unit.absorb_break * self.fury()
+                self._raw_hurt(attacker, max(1.0, break_raw))
+                unit.absorb_break = 0.0
         unit.hp -= amount
+        if unit.lock_hp and unit.hp < unit.max_hp * unit.lock_hp / 100:
+            unit.hp = unit.max_hp * unit.lock_hp / 100
+        if (
+            unit.last_stand
+            and not unit.last_stand_used
+            and unit.hp > 0
+            and unit.ratio * 100 <= unit.last_stand["threshold"]
+        ):
+            unit.last_stand_used = True
+            unit.mitigates.append(
+                {"pct": unit.last_stand["pct"], "turns": unit.last_stand.get("turns", 1) + 1}
+            )
+            unit.lock_hp = 1
+            unit.lock_hp_turns = 1
+            self.say(f"{unit.label} 进入绝境坚守！")
         self.check_revive(unit)
         return amount + absorbed
 
     def check_revive(self, unit: _Unit):
+        if unit.hp <= 0 and unit.snapshot is not None and unit.revive is None:
+            # Prefer explicit revive; snapshot alone does not revive.
+            pass
         if unit.hp <= 0 and unit.revive:
             unit.hp = unit.max_hp * unit.revive / 100
             unit.revive = None
@@ -504,47 +1061,189 @@ class _Battle:
             self.say(f"{unit.label} 倒下后又站了起来！恢复 {round(unit.hp)} 生命")
 
     def heal(self, unit: _Unit, amount: float) -> int:
+        if amount <= 0 or not unit.alive:
+            return 0
+        boost = sum(h["pct"] for h in unit.hot_boost)
+        amount *= 1 + boost / 100
+        corrupt = sum(c["pct"] for c in unit.corrupting)
+        if corrupt:
+            converted = amount * corrupt / 100
+            amount -= converted
+            self._raw_hurt(unit, converted)
         before = unit.hp
         unit.hp = min(unit.max_hp, unit.hp + amount)
         return round(unit.hp - before)
 
+    def heal_with_options(self, unit: _Unit, amount: float, effect: dict) -> tuple[int, int]:
+        if effect.get("crit_heal") and self.rng.random() * 100 < unit.stat("crit"):
+            amount *= CRIT_MULTIPLIER
+        before = unit.hp
+        healed = self.heal(unit, amount)
+        over = 0
+        if effect.get("overheal_shield"):
+            overflow = before + amount - unit.max_hp
+            if overflow > 0:
+                unit.shield += overflow
+                over = round(overflow)
+        return healed, over
+
     def turn(self, unit: _Unit, enemy: _Unit):
+        unit.flags = {k: False for k in unit.flags}
+        unit.record_hp()
+        self._tick_delays(unit, enemy)
+        self._tick_auras(unit)
+        self._tick_charge_channel(unit, enemy)
         for dot in list(unit.dots):
+            if unit.immune_to("dot"):
+                break
+            stacks = max(1, dot.get("stacks", 1))
+            damage = self.hurt(unit, self.dot_amount(unit, dot) * stacks)
+            self.say(f"{unit.label} 受到{dot['label']}影响，损失 {round(damage)} 生命")
             dot["turns"] -= 1
             if dot["turns"] <= 0 and dot in unit.dots:
                 unit.dots.remove(dot)
-            damage = self.hurt(unit, self.dot_amount(unit, dot))
-            self.say(f"{unit.label} 受到{dot['label']}影响，损失 {round(damage)} 生命")
             if not unit.alive:
                 return
         for regen in list(unit.regens):
-            healed = self.heal(unit, unit.max_hp * regen["pct"] / 100)
+            stacks = max(1, regen.get("stacks", 1))
+            healed = self.heal(unit, unit.max_hp * regen["pct"] / 100 * stacks)
             regen["turns"] -= 1
             if regen["turns"] <= 0:
                 unit.regens.remove(regen)
             if healed:
                 self.say(f"{unit.label} 回复 {healed} 生命")
+        for leech in list(unit.pending_leech):
+            leech["turns"] -= 1
+            if leech["turns"] <= 0:
+                healed = self.heal(leech["target"], leech["amount"])
+                if healed:
+                    self.say(f"{leech['target'].label} 吸收 {healed} 生命")
+                unit.pending_leech.remove(leech)
         for name in list(unit.cooldowns):
             unit.cooldowns[name] = max(0, unit.cooldowns[name] - 1)
         if unit.stun:
+            if unit.charge and unit.charge.get("interrupt"):
+                unit.charge = None
+                self.say(f"{unit.label} 的蓄力被打断了")
             unit.stun -= 1
             self.say(f"{unit.label} 处于{unit.stun_label}状态，这回合动不了")
+        elif unit.channel:
+            pass  # channel ticks in _tick_charge_channel; skip normal act
         else:
             self.act(unit, enemy)
-        for group in (unit.buffs, unit.thorns):
+        self._decay_status(unit)
+
+    def _tick_delays(self, unit: _Unit, enemy: _Unit):
+        for item in list(unit.delay_heals):
+            item["turns"] -= 1
+            if item["turns"] <= 0:
+                healed, _ = self.heal_with_options(
+                    item["target"], item["target"].max_hp * item["pct"] / 100, item.get("opts", {})
+                )
+                if healed:
+                    self.say(f"{item['target'].label} 延迟回复 {healed} 生命")
+                unit.delay_heals.remove(item)
+        for item in list(unit.delay_damages):
+            item["turns"] -= 1
+            if item["turns"] <= 0:
+                lost = self.hurt(unit, unit.max_hp * item["pct"] / 100)
+                self.say(f"{unit.label} 遭受{item['label']}，损失 {round(lost)} 生命")
+                unit.delay_damages.remove(item)
+
+    def _tick_auras(self, unit: _Unit):
+        for aura in unit.auras:
+            for ally in self.allies_of(unit):
+                if not ally.alive:
+                    continue
+                if "stat" in aura:
+                    ally.buffs.append(
+                        {"stat": aura["stat"], "pct": aura["pct"], "turns": 1}
+                    )
+                if "heal_pct" in aura:
+                    healed = self.heal(ally, ally.max_hp * aura["heal_pct"] / 100)
+                    if healed:
+                        self.say(f"{ally.label} 受到光环治疗 {healed}")
+
+    def _tick_charge_channel(self, unit: _Unit, enemy: _Unit):
+        if unit.charge:
+            unit.charge["turns"] -= 1
+            if unit.charge["turns"] <= 0:
+                effect = {k: v for k, v in unit.charge.items() if k not in ("turns", "interrupt")}
+                effect["type"] = "damage"
+                note = self.damage(unit, enemy, effect)
+                self.say(f"{unit.label} 蓄力爆发，{note}")
+                unit.charge = None
+                self._try_triggers(unit, enemy, "after_charge")
+        if unit.channel:
+            unit.channel["turns"] -= 1
+            if unit.channel.get("power"):
+                note = self.damage(
+                    unit, enemy, {"type": "damage", "power": unit.channel["power"]}
+                )
+                self.say(f"{unit.label} 引导中，{note}")
+            if unit.channel.get("heal_pct"):
+                for ally in self.resolve_targets(unit, enemy, "ally_lowest"):
+                    healed = self.heal(ally, ally.max_hp * unit.channel["heal_pct"] / 100)
+                    if healed:
+                        self.say(f"{unit.label} 引导治疗 {ally.label} {healed}")
+            if unit.channel["turns"] <= 0:
+                unit.channel = None
+
+    def _decay_status(self, unit: _Unit):
+        for group in (
+            unit.buffs,
+            unit.thorns,
+            unit.reflects,
+            unit.mitigates,
+            unit.weaken,
+            unit.expose,
+            unit.marks,
+            unit.hot_boost,
+            unit.corrupting,
+        ):
             for item in list(group):
                 item["turns"] -= 1
                 if item["turns"] <= 0:
                     group.remove(item)
+        for guard in list(unit.guards):
+            guard["turns"] -= 1
+            if guard["turns"] <= 0:
+                unit.guards.remove(guard)
+        if unit.share:
+            unit.share["turns"] -= 1
+            if unit.share["turns"] <= 0:
+                for member in unit.share["members"]:
+                    if member.share is unit.share:
+                        member.share = None
+        for kind in list(unit.immunity):
+            unit.immunity[kind] -= 1
+            if unit.immunity[kind] <= 0:
+                del unit.immunity[kind]
+        if unit.taunt:
+            unit.taunt -= 1
+        if unit.redirect:
+            unit.redirect -= 1
+        if unit.silence:
+            unit.silence -= 1
+        if unit.root:
+            unit.root -= 1
+        if getattr(unit, "lock_hp_turns", 0):
+            unit.lock_hp_turns -= 1
+            if unit.lock_hp_turns <= 0:
+                unit.lock_hp = 0
 
     def act(self, unit: _Unit, enemy: _Unit):
         self.cast(unit, enemy, self.choose(unit, enemy))
 
     def choose(self, unit: _Unit, enemy: _Unit) -> dict:
         basic = unit.actives[0]
+        if unit.silence:
+            return basic
         ready = []
         for skill in unit.actives[1:]:
             if unit.cooldowns.get(skill["name"], 0):
+                continue
+            if skill.get("cost") and unit.energy < skill["cost"]:
                 continue
             when = skill["when"]
             if when == "hurt" and unit.ratio >= 0.7:
@@ -553,6 +1252,15 @@ class _Battle:
                 continue
             if when == "enemy_low" and enemy.ratio >= 0.35:
                 continue
+            if when in (
+                "on_crit",
+                "on_dodge",
+                "on_kill",
+                "on_ally_hurt",
+                "on_shield_break",
+                "after_charge",
+            ):
+                continue  # reactive; fired via _try_triggers
             if any(e["type"] == "copy" for e in skill["effects"]) and not enemy.last:
                 continue
             ready.append(skill)
@@ -561,10 +1269,36 @@ class _Battle:
         weights = [unit.actives.index(skill) + 1 for skill in ready]
         return self.rng.choices(ready, weights)[0]
 
+    def _try_triggers(self, unit: _Unit, enemy: _Unit, when: str):
+        if self._in_trigger:
+            return
+        for skill in unit.actives[1:]:
+            if skill.get("when") != when:
+                continue
+            if unit.cooldowns.get(skill["name"], 0):
+                continue
+            if skill.get("cost") and unit.energy < skill["cost"]:
+                continue
+            self._in_trigger = True
+            try:
+                self.cast(unit, enemy, skill)
+            finally:
+                self._in_trigger = False
+            break
+
     def cast(self, unit: _Unit, enemy: _Unit, skill: dict, copied: bool = False):
         if not copied:
             unit.cooldowns[skill["name"]] = skill["cd"] + 1 if skill["cd"] else 0
             unit.last = skill
+            if skill.get("cost"):
+                unit.energy = max(0, unit.energy - skill["cost"])
+            gain = skill.get("gain")
+            if gain:
+                unit.energy = min(ENERGY_MAX, unit.energy + gain)
+            elif skill is unit.actives[0] and unit.uses_energy:
+                unit.energy = min(ENERGY_MAX, unit.energy + BASIC_ENERGY_GAIN)
+            if skill is unit.actives[0]:
+                unit.combo = min(unit.combo_max, unit.combo + 1)
         fail = skill.get("fail")
         if fail and self.rng.randrange(100) < fail["chance"]:
             self.say(f"{unit.label}「{skill['name']}」失手了：{fail['text']}")
@@ -574,8 +1308,9 @@ class _Battle:
 
     def apply(self, unit: _Unit, enemy: _Unit, effects: list, skill: dict):
         notes = []
+        self._leech_pool = 0.0
         for effect in effects:
-            if not unit.alive or not enemy.alive:
+            if not unit.alive:
                 break
             if self.rng.randrange(100) >= effect.get("chance", 100):
                 continue
@@ -586,6 +1321,14 @@ class _Battle:
             f"{unit.label}「{skill['name']}」" + ("，".join(notes) if notes else "，但什么也没发生")
         )
         self.announce_falls(unit, enemy)
+        if unit.flags["crit"]:
+            self._try_triggers(unit, enemy, "on_crit")
+        if unit.flags["dodged"]:
+            self._try_triggers(unit, enemy, "on_dodge")
+        if unit.flags["killed"]:
+            self._try_triggers(unit, enemy, "on_kill")
+        if unit.flags["shield_broke"]:
+            self._try_triggers(unit, enemy, "on_shield_break")
 
     def announce_falls(self, unit: _Unit, enemy: _Unit):
         for target in (enemy, unit):
@@ -608,76 +1351,444 @@ class _Battle:
     def after_hit(self, unit: _Unit, enemy: _Unit, dealt: float):
         pass
 
+    def _apply_mark(self, target: _Unit, effect: dict):
+        stacks = effect.get("stacks", 1)
+        max_stacks = effect.get("max_stacks", 9)
+        existing = next((m for m in target.marks), None)
+        if existing:
+            existing["stacks"] = min(max_stacks, existing.get("stacks", 1) + stacks)
+            existing["pct"] = max(existing["pct"], effect["pct"])
+            existing["turns"] = max(existing["turns"], effect.get("turns", 3))
+            if existing["stacks"] >= max_stacks and effect.get("burst_power"):
+                return effect["burst_power"]
+        else:
+            target.marks.append(
+                {
+                    "pct": effect["pct"],
+                    "turns": effect.get("turns", 3),
+                    "stacks": stacks,
+                    "max_stacks": max_stacks,
+                    "burst_power": effect.get("burst_power"),
+                }
+            )
+        return None
+
     def effect(self, unit: _Unit, enemy: _Unit, effect: dict, skill: dict) -> str:
         kind = effect["type"]
         if kind == "damage":
             return self.damage(unit, enemy, effect)
         if kind == "heal":
-            return f"回复 {self.heal(unit, unit.max_hp * effect['pct'] / 100)} 生命"
+            return self._do_heal(unit, enemy, effect)
         if kind == "shield":
-            amount = unit.max_hp * effect["pct"] / 100
-            unit.shield += amount
-            return f"获得 {round(amount)} 护盾"
+            notes = []
+            for target in self.resolve_targets(unit, enemy, effect.get("target", "self")):
+                amount = target.max_hp * effect["pct"] / 100
+                target.shield += amount
+                notes.append(f"{target.label}获得{round(amount)}护盾")
+            return "，".join(notes) or "获得护盾"
         if kind == "stun":
+            if enemy.immune_to("stun") and effect.get("target") != "self":
+                return f"{enemy.label}免疫控制"
             target = unit if effect.get("target") == "self" else enemy
             label = effect.get("label", "眩晕")
             target.stun = max(target.stun, effect.get("turns", 1))
             target.stun_label = label
             return f"{'自己' if target is unit else target.label}陷入{label}"
         if kind == "dot":
-            enemy.dots.append(
-                {
-                    "pct": effect["pct"],
-                    "turns": effect["turns"],
-                    "label": effect.get("label", "持续伤害"),
-                }
-            )
-            return f"{enemy.label}陷入{effect.get('label', '持续伤害')}"
+            if enemy.immune_to("dot"):
+                return f"{enemy.label}免疫持续伤害"
+            stacks = effect.get("stacks", 1)
+            max_stacks = effect.get("max_stacks", 9)
+            label = effect.get("label", "持续伤害")
+            existing = next((d for d in enemy.dots if d["label"] == label), None)
+            if existing:
+                existing["stacks"] = min(max_stacks, existing.get("stacks", 1) + stacks)
+                existing["turns"] = max(existing["turns"], effect["turns"])
+                existing["pct"] = max(existing["pct"], effect["pct"])
+            else:
+                enemy.dots.append(
+                    {
+                        "pct": effect["pct"],
+                        "turns": effect["turns"],
+                        "label": label,
+                        "stacks": stacks,
+                        "max_stacks": max_stacks,
+                    }
+                )
+            if effect.get("spread"):
+                others = [f for f in self.foes_of(unit) if f is not enemy and f.alive]
+                if others:
+                    other = self.rng.choice(others)
+                    other.dots.append(
+                        {
+                            "pct": effect["pct"] * 0.5,
+                            "turns": effect["turns"],
+                            "label": label,
+                            "stacks": 1,
+                        }
+                    )
+            return f"{enemy.label}陷入{label}"
         if kind == "buff":
-            target = enemy if effect.get("target") == "enemy" else unit
-            # Own buffs tick down at the end of this same turn.
-            turns = effect.get("turns", 2) + (target is unit)
-            target.buffs.append({"stat": effect["stat"], "pct": effect["pct"], "turns": turns})
-            sign = "+" if effect["pct"] >= 0 else ""
-            unit_text = "%" if effect["stat"] in ("atk", "def", "spd") else ""
-            who = target.label if target is enemy else ""
-            return f"{who}{STAT_NAMES[effect['stat']]}{sign}{effect['pct']:g}{unit_text}"
+            targets = self.resolve_targets(unit, enemy, effect.get("target", "self"))
+            if effect.get("target") == "enemy":
+                targets = [enemy] if enemy.alive else []
+            notes = []
+            for target in targets:
+                turns = effect.get("turns", 2) + (target is unit)
+                target.buffs.append({"stat": effect["stat"], "pct": effect["pct"], "turns": turns})
+                sign = "+" if effect["pct"] >= 0 else ""
+                unit_text = "%" if effect["stat"] in ("atk", "def", "spd") else ""
+                who = target.label if target is not unit else ""
+                notes.append(f"{who}{STAT_NAMES[effect['stat']]}{sign}{effect['pct']:g}{unit_text}")
+            return "，".join(notes)
         if kind == "thorns":
             unit.thorns.append({"pct": effect["pct"], "turns": effect.get("turns", 2) + 1})
             return f"进入反弹状态 {effect['pct']:g}%"
         if kind == "regen":
-            unit.regens.append({"pct": effect["pct"], "turns": effect.get("turns", 3)})
+            for target in self.resolve_targets(unit, enemy, effect.get("target", "self")):
+                target.regens.append(
+                    {
+                        "pct": effect["pct"],
+                        "turns": effect.get("turns", 3),
+                        "stacks": effect.get("stacks", 1),
+                    }
+                )
             return "开始持续回复"
         if kind == "evade":
             unit.evade += effect.get("count", 1)
             return "准备躲开下一次攻击"
         if kind == "cleanse":
-            unit.dots.clear()
-            unit.buffs = [b for b in unit.buffs if b["pct"] >= 0]
-            unit.stun = 0
+            for target in self.resolve_targets(unit, enemy, effect.get("target", "self")):
+                self._cleanse(target)
             return "清除了负面状态"
         if kind == "dispel":
-            enemy.buffs = [b for b in enemy.buffs if b["pct"] < 0]
-            enemy.shield = 0
-            enemy.thorns.clear()
-            enemy.evade = 0
-            return f"驱散了{enemy.label}的增益"
+            return self._purge(enemy, "all")
         if kind == "copy":
             source = enemy.last
             if not source or any(e["type"] == "copy" for e in source["effects"]):
                 return "没找到能复制的技能"
+            self._copy_scale = effect.get("pct", 100) / 100
             self.say(f"{unit.label} 复制了「{source['name']}」！")
             self.cast(unit, enemy, source, copied=True)
+            self._copy_scale = 1.0
             return ""
         if kind == "recoil":
             lost = self.hurt(unit, unit.max_hp * effect["pct"] / 100)
             return f"自己也损失 {round(lost)} 生命"
+        if kind == "taunt":
+            unit.taunt = max(unit.taunt, effect["turns"])
+            return f"嘲讽 {effect['turns']} 回合"
+        if kind == "redirect":
+            unit.redirect = max(unit.redirect, effect["turns"])
+            return f"吸引火力 {effect['turns']} 回合"
+        if kind == "guard":
+            wards = self.resolve_targets(unit, enemy, effect.get("target", "ally_lowest"))
+            wards = [w for w in wards if w is not unit] or self.resolve_targets(unit, enemy, "self")
+            for ward in wards[:1]:
+                unit.guards.append({"ward": ward, "pct": effect["pct"], "turns": effect["turns"] + 1})
+                return f"守护 {ward.label}"
+            return "守护落空"
+        if kind == "share":
+            members = [u for u in self.allies_of(unit) if u.alive]
+            link = {"pct": effect["pct"], "turns": effect["turns"] + 1, "members": members}
+            for member in members:
+                member.share = link
+            if len(members) == 1:
+                return f"自我分摊减伤 {effect['pct']:g}%"
+            return f"与队友灵魂链接 {effect['pct']:g}%"
+        if kind == "aura":
+            unit.auras.append(dict(effect))
+            return "展开光环"
+        if kind == "mitigate":
+            unit.mitigates.append({"pct": effect["pct"], "turns": effect.get("turns", 2) + 1})
+            return f"减伤 {effect['pct']:g}%"
+        if kind == "block":
+            unit.block_count += effect["count"]
+            unit.block_pct = effect.get("pct", 100)
+            return f"格挡 {effect['count']} 次"
+        if kind == "absorb":
+            amount = unit.max_hp * effect["pct"] / 100
+            unit.shield += amount
+            unit.absorb_break = effect.get("break_power", 0)
+            return f"吸收盾 {round(amount)}"
+        if kind == "reflect":
+            unit.reflects.append(
+                {
+                    "pct": effect["pct"],
+                    "turns": effect.get("turns", 2) + 1,
+                    "stun_turns": effect.get("stun_turns"),
+                    "dot_pct": effect.get("dot_pct"),
+                }
+            )
+            return f"反射 {effect['pct']:g}%"
+        if kind == "fortify":
+            pool = unit.shield * effect["pct"] / 100 + unit.stat("def") * effect["pct"] / 10
+            unit.shield += pool
+            return f"固化护盾 {round(pool)}"
+        if kind == "last_stand":
+            unit.last_stand = dict(effect)
+            return "预备绝境坚守"
+        if kind == "sacrifice":
+            lost = self.hurt(unit, unit.max_hp * effect["pct"] / 100)
+            notes = [f"自损 {round(lost)}"]
+            for target in self.resolve_targets(unit, enemy, effect.get("target", "ally_lowest")):
+                if effect.get("shield_pct"):
+                    target.shield += target.max_hp * effect["shield_pct"] / 100
+                    notes.append(f"{target.label}获盾")
+                if effect.get("heal_pct"):
+                    healed = self.heal(target, target.max_hp * effect["heal_pct"] / 100)
+                    notes.append(f"治疗{healed}")
+            if effect.get("mitigate_pct"):
+                unit.mitigates.append({"pct": effect["mitigate_pct"], "turns": 3})
+                notes.append("自身减伤")
+            return "，".join(notes)
+        if kind == "rewind":
+            steps = effect.get("turns", 1)
+            if unit.snapshot is not None:
+                unit.hp = min(unit.max_hp, unit.snapshot)
+                unit.snapshot = None
+                return f"回溯至快照 {round(unit.hp)}"
+            if len(unit.hp_history) > steps:
+                unit.hp = min(unit.max_hp, unit.hp_history[-1 - steps])
+            elif unit.hp_history:
+                unit.hp = min(unit.max_hp, unit.hp_history[0])
+            return f"时光倒流至 {round(unit.hp)}"
+        if kind == "snapshot":
+            unit.snapshot = unit.hp
+            return f"记录快照 {round(unit.hp)}"
+        if kind == "delay_heal":
+            for target in self.resolve_targets(unit, enemy, effect.get("target", "self")):
+                unit.delay_heals.append(
+                    {
+                        "target": target,
+                        "pct": effect["pct"],
+                        "turns": effect["turns"],
+                        "opts": {
+                            "overheal_shield": effect.get("overheal_shield", False),
+                            "crit_heal": effect.get("crit_heal", False),
+                        },
+                    }
+                )
+            return f"延迟治疗 {effect['turns']} 回合"
+        if kind == "delay_damage":
+            enemy.delay_damages.append(
+                {
+                    "pct": effect["pct"],
+                    "turns": effect["turns"],
+                    "label": effect.get("label", "延时炸弹"),
+                }
+            )
+            return f"给{enemy.label}安装延时炸弹"
+        if kind == "charge":
+            unit.charge = {
+                k: v for k, v in effect.items() if k not in ("type", "chance")
+            }
+            return f"开始蓄力 {effect['turns']} 回合"
+        if kind == "channel":
+            unit.channel = {
+                "turns": effect["turns"],
+                "power": effect.get("power"),
+                "heal_pct": effect.get("heal_pct"),
+            }
+            return f"开始引导 {effect['turns']} 回合"
+        if kind == "mark":
+            burst = self._apply_mark(enemy, effect)
+            if burst:
+                note = self.damage(unit, enemy, {"type": "damage", "power": burst})
+                enemy.marks.clear()
+                return f"标记引爆，{note}"
+            return f"标记{enemy.label}"
+        if kind == "detonate":
+            total = 0.0
+            for dot in list(enemy.dots):
+                stacks = max(1, dot.get("stacks", 1))
+                total += self.dot_amount(enemy, dot) * stacks * max(1, dot["turns"])
+                enemy.dots.remove(dot)
+            for bomb in list(enemy.delay_damages):
+                total += enemy.max_hp * bomb["pct"] / 100
+                enemy.delay_damages.remove(bomb)
+            if total <= 0:
+                return "没有可引爆的效果"
+            dealt = self.hurt(enemy, total)
+            return f"引爆造成 {round(dealt)} 伤害"
+        if kind == "combo":
+            unit.combo = min(effect.get("max", unit.combo_max), unit.combo + effect.get("gain", 1))
+            unit.combo_max = effect.get("max", unit.combo_max)
+            return f"连击 {unit.combo}"
+        if kind == "leech":
+            # Applies to damage already dealt this skill via _leech_pool, or arms drain.
+            amount = self._leech_pool * effect["pct"] / 100
+            if amount <= 0:
+                return "吸血落空"
+            delay = effect.get("delay", 0)
+            targets = self.resolve_targets(unit, enemy, effect.get("target", "self"))
+            target = targets[0] if targets else unit
+            if delay:
+                unit.pending_leech.append({"target": target, "amount": amount, "turns": delay})
+                return f"延迟吸血 {round(amount)}"
+            healed = self.heal(target, amount)
+            return f"吸血 {healed}"
+        if kind == "hot_boost":
+            for target in self.resolve_targets(unit, enemy, effect.get("target", "self")):
+                target.hot_boost.append({"pct": effect["pct"], "turns": effect.get("turns", 3) + 1})
+            return f"持续治疗增强 {effect['pct']:g}%"
+        if kind == "corrupting":
+            enemy.corrupting.append({"pct": effect["pct"], "turns": effect["turns"] + 1})
+            return f"{enemy.label}陷入反治疗"
+        if kind == "bleed_burst":
+            need = effect["stacks"]
+            for dot in list(enemy.dots):
+                if dot.get("stacks", 1) >= need:
+                    total = self.dot_amount(enemy, dot) * dot["stacks"] * max(1, dot["turns"])
+                    enemy.dots.remove(dot)
+                    dealt = self.hurt(enemy, total)
+                    return f"层数爆发 {round(dealt)} 伤害"
+            return "层数不足"
+        if kind == "silence":
+            enemy.silence = max(enemy.silence, effect["turns"])
+            return f"沉默{enemy.label}"
+        if kind == "root":
+            enemy.root = max(enemy.root, effect["turns"])
+            enemy.evade = 0
+            return f"禁锢{enemy.label}"
+        if kind == "weaken":
+            if enemy.immune_to("weaken"):
+                return f"{enemy.label}免疫虚弱"
+            enemy.weaken.append({"pct": effect["pct"], "turns": effect["turns"] + 1})
+            return f"{enemy.label}造成伤害降低"
+        if kind == "expose":
+            enemy.expose.append({"pct": effect["pct"], "turns": effect["turns"] + 1})
+            return f"{enemy.label}易伤"
+        if kind == "purge":
+            return self._purge(enemy, effect.get("mode", "all"))
+        if kind == "transfer":
+            if effect["mode"] == "debuff":
+                if unit.dots:
+                    enemy.dots.append(unit.dots.pop(0))
+                    return "转移持续伤害"
+                negs = [b for b in unit.buffs if b["pct"] < 0]
+                if negs:
+                    enemy.buffs.append(negs[0])
+                    unit.buffs.remove(negs[0])
+                    return "转移减益"
+                return "没有可转移的负面"
+            buffs = [b for b in enemy.buffs if b["pct"] > 0]
+            if buffs:
+                unit.buffs.append(buffs[0])
+                enemy.buffs.remove(buffs[0])
+                return "偷取增益"
+            if enemy.shield > 0:
+                stolen = enemy.shield * 0.5
+                enemy.shield -= stolen
+                unit.shield += stolen
+                return "偷取护盾"
+            return "没有可偷取的增益"
+        if kind == "immunity":
+            unit.immunity[effect["kind"]] = max(
+                unit.immunity.get(effect["kind"], 0), effect.get("turns", 2)
+            )
+            return f"免疫{effect['kind']}"
+        if kind == "mass_heal":
+            notes = []
+            for ally in self.allies_of(unit):
+                if ally.alive:
+                    healed = self.heal(ally, ally.max_hp * effect["pct"] / 100)
+                    notes.append(f"{ally.label}+{healed}")
+            return "群体治疗 " + "，".join(notes) if notes else "群体治疗落空"
+        if kind == "triage":
+            targets = self.resolve_targets(unit, enemy, "ally_lowest")
+            if not targets:
+                return "没有治疗目标"
+            target = targets[0]
+            pct = effect["pct"]
+            if target.ratio * 100 <= effect.get("threshold", 40):
+                pct += effect.get("bonus", 0)
+            healed = self.heal(target, target.max_hp * pct / 100)
+            return f"急救{target.label} {healed}"
+        if kind == "cleanse_heal":
+            notes = []
+            for target in self.resolve_targets(unit, enemy, effect.get("target", "ally_lowest")):
+                self._cleanse(target)
+                healed = self.heal(target, target.max_hp * effect["pct"] / 100)
+                notes.append(f"{target.label}+{healed}")
+            return "净化治疗 " + "，".join(notes)
+        if kind == "life_link":
+            notes = []
+            if effect.get("self_pct", 0) < 0:
+                lost = self.hurt(unit, unit.max_hp * abs(effect["self_pct"]) / 100)
+                notes.append(f"自损{round(lost)}")
+            elif effect.get("self_pct", 0) > 0:
+                healed = self.heal(unit, unit.max_hp * effect["self_pct"] / 100)
+                notes.append(f"自疗{healed}")
+            for target in self.resolve_targets(unit, enemy, effect.get("target", "ally_lowest")):
+                healed = self.heal(target, target.max_hp * effect["pct"] / 100)
+                notes.append(f"{target.label}+{healed}")
+            return "生命链接 " + "，".join(notes)
+        if kind == "energy":
+            for target in self.resolve_targets(unit, enemy, effect.get("target", "self")):
+                target.energy = min(ENERGY_MAX, target.energy + effect["gain"])
+                target.uses_energy = True
+            return f"回复能量 {effect['gain']}"
+        if kind == "pick":
+            options = effect["options"]
+            weights = [opt.get("weight", 1) for opt in options]
+            chosen = self.rng.choices(options, weights=weights, k=1)[0]
+            label = chosen.get("text") or "随机效果"
+            notes = []
+            for nested in chosen["effects"]:
+                if not unit.alive:
+                    break
+                if self.rng.randrange(100) >= nested.get("chance", 100):
+                    continue
+                note = self.effect(unit, enemy, nested, skill)
+                if note:
+                    notes.append(note)
+            body = "，".join(notes) if notes else "什么也没发生"
+            return f"抽到「{label}」：{body}"
         return ""
+
+    def _do_heal(self, unit: _Unit, enemy: _Unit, effect: dict) -> str:
+        notes = []
+        scale = self._copy_scale
+        for target in self.resolve_targets(unit, enemy, effect.get("target", "self")):
+            amount = target.max_hp * effect["pct"] / 100 * scale
+            healed, over = self.heal_with_options(target, amount, effect)
+            bit = f"{target.label}回复{healed}" if target is not unit else f"回复 {healed} 生命"
+            if over:
+                bit += f"（溢盾{over}）"
+            notes.append(bit)
+        return "，".join(notes) or "回复 0 生命"
+
+    def _cleanse(self, unit: _Unit):
+        unit.dots.clear()
+        unit.buffs = [b for b in unit.buffs if b["pct"] >= 0]
+        unit.stun = 0
+        unit.silence = 0
+        unit.root = 0
+        unit.weaken.clear()
+        unit.expose.clear()
+        unit.corrupting.clear()
+        unit.delay_damages.clear()
+        unit.marks.clear()
+
+    def _purge(self, enemy: _Unit, mode: str) -> str:
+        mode = mode or "all"
+        if mode in ("buffs", "all"):
+            enemy.buffs = [b for b in enemy.buffs if b["pct"] < 0]
+            enemy.thorns.clear()
+            enemy.reflects.clear()
+            enemy.evade = 0
+            enemy.mitigates.clear()
+            enemy.hot_boost.clear()
+        if mode in ("shield", "all"):
+            enemy.shield = 0
+        return f"驱散了{enemy.label}的增益"
 
     def damage(self, unit: _Unit, enemy: _Unit, effect: dict) -> str:
         true = effect.get("true", False)
         if enemy.evade and not true:
             enemy.evade -= 1
+            unit.flags["dodged"] = True
             return f"被{enemy.label}完全躲开"
         scale = effect.get("scale", "atk")
         if scale == "atk":
@@ -689,21 +1800,34 @@ class _Battle:
         hits = effect.get("hits", 1)
         total, crits, misses, voids = 0.0, 0, 0, 0
         self.void_note = ""
+        combo_spent = 0
+        if effect.get("combo_bonus") and unit.combo:
+            combo_spent = unit.combo
+            unit.combo = 0
         for _ in range(hits):
             if not enemy.alive:
                 break
             if not (true or effect.get("sure")) and self.rng.random() * 100 < enemy.stat("dodge"):
                 misses += 1
+                unit.flags["dodged"] = True
                 continue
             power = effect["power"]
             if "power_max" in effect:
                 power = self.rng.uniform(power, effect["power_max"])
             raw = base * power * self.rng.uniform(0.9, 1.1) * self.fury()
+            raw *= self._weaken_factor(unit) * self._copy_scale
             if effect.get("execute") and enemy.ratio * 100 <= effect["execute"]:
                 raw *= EXECUTE_MULTIPLIER
+            if effect.get("threshold"):
+                missing = 1 - enemy.ratio
+                raw *= 1 + missing * (effect["threshold"] / 100)
+            if combo_spent and effect.get("combo_bonus"):
+                raw *= 1 + combo_spent * effect["combo_bonus"] / 100
+            raw *= 1 + self._mark_bonus(enemy) / 100
             if self.crit_roll(unit, enemy):
                 raw *= CRIT_MULTIPLIER
                 crits += 1
+                unit.flags["crit"] = True
             if not true:
                 defense = enemy.stat("def") * (1 - min(100, self.pierce(unit, enemy, effect)) / 100)
                 raw *= 60 / (60 + defense)
@@ -711,11 +1835,38 @@ class _Battle:
             if raw <= 0:
                 voids += 1
                 continue
-            dealt = self.hurt(enemy, max(1.0, raw))
+            before_hp = enemy.hp
+            dealt = self.hurt(enemy, max(1.0, raw), attacker=unit)
             total += dealt
             self.after_hit(unit, enemy, dealt)
             for thorn in enemy.thorns:
-                self.hurt(unit, dealt * thorn["pct"] / 100)
+                self.hurt(unit, dealt * thorn["pct"] / 100, attacker=enemy)
+            for reflect in enemy.reflects:
+                bounced = self.hurt(unit, dealt * reflect["pct"] / 100, attacker=enemy)
+                if reflect.get("stun_turns") and bounced > 0 and not unit.immune_to("stun"):
+                    unit.stun = max(unit.stun, reflect["stun_turns"])
+                    unit.stun_label = "反震"
+                if reflect.get("dot_pct") and bounced > 0 and not unit.immune_to("dot"):
+                    unit.dots.append(
+                        {
+                            "pct": reflect["dot_pct"],
+                            "turns": 2,
+                            "label": "反噬",
+                            "stacks": 1,
+                        }
+                    )
+            if effect.get("overflow") and before_hp > 0 and not enemy.alive:
+                overflow = max(0.0, raw - before_hp)
+                others = [f for f in self.foes_of(unit) if f.alive]
+                if overflow > 0 and others:
+                    self.hurt(others[0], overflow, attacker=unit)
+            if effect.get("cleave"):
+                for foe in self.foes_of(unit):
+                    if foe is not enemy and foe.alive:
+                        self.hurt(foe, dealt * effect["cleave"] / 100, attacker=unit)
+        if not enemy.alive and total > 0:
+            unit.flags["killed"] = True
+        self._leech_pool += total
         if misses == hits:
             return f"被{enemy.label}闪开了"
         if misses + voids == hits:
@@ -729,7 +1880,7 @@ class _Battle:
             healed = self.heal(unit, total * effect["drain"] / 100)
             if healed:
                 text += f"，吸血 {healed}"
-        if enemy.thorns and total:
+        if (enemy.thorns or enemy.reflects) and total:
             text += "，被反弹了一部分"
         return text
 

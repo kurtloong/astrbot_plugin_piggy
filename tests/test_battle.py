@@ -121,12 +121,126 @@ class BattleDataTests(unittest.TestCase):
         stats = copy.deepcopy(FALLBACK)
         stats["stats"]["hp"] = 9999
         broken.append(stats)
+        bad_role = copy.deepcopy(FALLBACK)
+        bad_role["role"] = "法师"
+        broken.append(bad_role)
         for entry in broken:
             with self.assertRaises(PiggyError):
                 validate_entry("bad", entry)
         with self.assertRaises(PiggyError):
             validate_battle({"pigs": {"ghost": FALLBACK}}, ["pig"])
         self.assertEqual(entry_for("")["skills"][0]["name"], FALLBACK["skills"][0]["name"])
+
+    def test_role_defaults_and_new_effect_primitives(self):
+        pig = {"id": "test", "name": "测试猪"}
+        bare = copy.deepcopy(FALLBACK)
+        bare.pop("role", None)
+        entry = validate_entry("bare", bare)
+        self.assertEqual(entry["role"], "输出")
+        self.assertEqual(fighter(pig, entry, 5)["role"], "输出")
+
+        cases = [
+            ("mitigate", {"type": "mitigate", "pct": 40, "turns": 3}),
+            ("taunt", {"type": "taunt", "turns": 2}),
+            ("share", {"type": "share", "pct": 40, "turns": 2}),
+            ("rewind", {"type": "snapshot"}),
+            ("charge", {"type": "charge", "turns": 1, "power": 2.0}),
+            ("mark", {"type": "mark", "pct": 20, "turns": 3}),
+            ("silence", {"type": "silence", "turns": 1}),
+            ("weaken", {"type": "weaken", "pct": 30, "turns": 2}),
+            ("expose", {"type": "expose", "pct": 25, "turns": 2}),
+            ("triage", {"type": "triage", "pct": 25, "bonus": 10, "threshold": 40}),
+            ("mass_heal", {"type": "mass_heal", "pct": 15}),
+            ("delay_damage", {"type": "delay_damage", "pct": 10, "turns": 1, "label": "炸弹"}),
+            ("immunity", {"type": "immunity", "kind": "stun", "turns": 2}),
+            ("combo", {"type": "combo", "gain": 2, "max": 5}),
+            ("energy", {"type": "energy", "gain": 20}),
+        ]
+        for name, effect in cases:
+            pack = copy.deepcopy(FALLBACK)
+            pack["role"] = "坦克"
+            pack["skills"][2] = {
+                "name": f"测{name}",
+                "text": "测试",
+                "cd": 1,
+                "effects": [effect] if effect["type"] != "snapshot" else [effect, {"type": "rewind", "turns": 1}],
+            }
+            validated = validate_entry(name, pack)
+            self.assertTrue(describe_skill(validated["skills"][2]))
+            result = simulate(
+                fighter(pig, validated, 5, "甲"),
+                fighter(pig, validate_entry("fb", FALLBACK), 5, "乙"),
+                hash(name) % 10_000,
+            )
+            self.assertIn(result["winner"], (0, 1))
+
+    def test_pick_resolves_random_option_bundles(self):
+        pig = {"id": "curator-pig", "name": "猪理人"}
+        pack = copy.deepcopy(FALLBACK)
+        pack["role"] = "辅助"
+        pack["skills"][2] = {
+            "name": "今日菜单·测试",
+            "text": "随机做一道菜。",
+            "cd": 1,
+            "effects": [
+                {
+                    "type": "pick",
+                    "options": [
+                        {
+                            "text": "红烧",
+                            "weight": 1,
+                            "effects": [{"type": "buff", "stat": "atk", "pct": 20, "turns": 2}],
+                        },
+                        {
+                            "text": "清汤",
+                            "weight": 1,
+                            "effects": [{"type": "heal", "pct": 15}],
+                        },
+                    ],
+                }
+            ],
+        }
+        entry = validate_entry("pick-test", pack)
+        logs = "\n".join(
+            line
+            for seed in range(20)
+            for line in simulate(
+                fighter(pig, entry, 5, "厨"),
+                fighter(pig, validate_entry("fb", FALLBACK), 5, "客"),
+                seed,
+            )["log"]
+        )
+        self.assertTrue("抽到" in logs)
+        self.assertTrue("红烧" in logs or "清汤" in logs)
+
+    def test_detonate_and_ally_target_degrade_in_duel(self):
+        pig = {"id": "test", "name": "测试猪"}
+        bomber = copy.deepcopy(FALLBACK)
+        bomber["role"] = "输出"
+        bomber["skills"][2] = {
+            "name": "挂毒",
+            "text": "测试",
+            "cd": 1,
+            "effects": [{"type": "dot", "pct": 8, "turns": 3, "label": "毒", "stacks": 2}],
+        }
+        bomber["skills"][3] = {
+            "name": "引爆",
+            "text": "测试",
+            "cd": 2,
+            "effects": [{"type": "detonate"}],
+        }
+        healer = copy.deepcopy(FALLBACK)
+        healer["role"] = "治疗"
+        healer["skills"][2] = {
+            "name": "群奶",
+            "text": "测试",
+            "cd": 2,
+            "effects": [{"type": "heal", "pct": 20, "target": "ally_all"}],
+        }
+        a = fighter(pig, validate_entry("bomber", bomber), 5, "爆")
+        b = fighter(pig, validate_entry("healer", healer), 5, "奶")
+        logs = "\n".join(simulate(a, b, 7)["log"])
+        self.assertTrue("毒" in logs or "引爆" in logs or "回复" in logs)
 
 
 if __name__ == "__main__":

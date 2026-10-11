@@ -25,7 +25,6 @@ from core.raid import (  # noqa: E402
     DUNGEONS,
     REST_HEAL,
     boss_fighter,
-    boss_level,
     mechanics_for,
     simulate_raid,
 )
@@ -59,9 +58,8 @@ def party(pigs, data, ids, level, rng, hp=None):
 
 
 def boss(pigs, data, slot, level, stage):
-    return boss_fighter(
-        pigs[slot], data[slot], boss_level([level] * 4), stage, slot, pigs[slot]["name"]
-    )
+    del level  # party level no longer affects bosses
+    return boss_fighter(pigs[slot], data[slot], stage, slot, pigs[slot]["name"])
 
 
 def stage_rate(pigs, data, ids, slot, stage, level, trials, seed):

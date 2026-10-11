@@ -447,7 +447,8 @@ def render_wild(root: Path, wild: dict, unit: dict, describe) -> Card:
     _paste_art(canvas, root, wild["pig"]["asset"], (250, 262, 580, 384), faded=tamed)
     canvas.text(wild["pig"]["name"], 88, 690, 43, bold=True, width=640)
     canvas.draw.rounded_rectangle((780, 690, 994, 746), radius=28, fill=SUB if tamed else ACCENT)
-    level = f"Lv{wild['level']} · {unit['style']}"
+    role = unit.get("role") or ""
+    level = f"Lv{wild['level']} · {role + ' · ' if role else ''}{unit['style']}"
     face = canvas.font(26, True)
     canvas.draw.text(
         (887 - canvas.draw.textlength(level, font=face) / 2, 702), level, font=face, fill="#ffffff"
@@ -616,7 +617,8 @@ def render_duel_poster(root: Path, poster: dict) -> Card:
             names = [names[0], names[1][:-1] + "…"]
         for row, line in enumerate(names):
             canvas.text(line, x + 28, 600 + row * 44, 34, TEXT, True)
-        info = f"Lv{side['level']}" + (f" · {side['style']}" if side.get("style") else "")
+        role_style = " · ".join(p for p in (side.get("role"), side.get("style")) if p)
+        info = f"Lv{side['level']}" + (f" · {role_style}" if role_style else "")
         canvas.text(info, x + 28, 690, 22, ACCENT if won else SUB, True, width=396)
         if side.get("max_hp"):
             ratio = max(0, side["hp"]) / side["max_hp"]
@@ -722,7 +724,9 @@ def render_raid_poster(root: Path, poster: dict) -> Card:
         names = [names[0], names[1][:-1] + "…"]
     for row, line in enumerate(names):
         canvas.text(line, 540, 286 + row * 48, 36, TEXT, True)
-    info = f"Lv{boss['level']}" + (f" · {boss['style']}" if boss.get("style") else "")
+    role_style = " · ".join(p for p in (boss.get("role"), boss.get("style")) if p)
+    # Raid bosses have no level — strength comes from dungeon stage multipliers.
+    info = role_style or "副本 Boss"
     canvas.text(info, 540, 392, 24, SUB if defeated else ACCENT, True, width=440)
     _hp_bar(canvas, 540, 446, 330, boss["hp"], boss["max_hp"], SUB if defeated else ACCENT)
     canvas.text(f"{boss['hp']}/{boss['max_hp']}", 884, 438, 20, SUB, width=120)
@@ -770,7 +774,9 @@ def render_raid_poster(root: Path, poster: dict) -> Card:
         canvas.text(side["owner"], x + 16, party_top + 186, 18, SUB, width=inner)
         canvas.text(side["pig"], x + 16, party_top + 214, 24, TEXT, True, width=inner)
         level = f"Lv{side['level']}" if side.get("level") else ""
-        info = " · ".join(part for part in (level, side.get("style") or "") if part)
+        info = " · ".join(
+            part for part in (level, side.get("role") or "", side.get("style") or "") if part
+        )
         canvas.text(info, x + 16, party_top + 252, 18, SUB if dim else ACCENT, True, width=inner)
         if side.get("max_hp"):
             _hp_bar(

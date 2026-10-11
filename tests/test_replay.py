@@ -32,7 +32,7 @@ def party(count=4):
 
 
 def fight(slot="pig_god", seed=3, stage=3):
-    boss = boss_fighter({"id": slot, "name": "BOSS", "asset": ""}, ENTRY, 6, stage, slot, "BOSS")
+    boss = boss_fighter({"id": slot, "name": "BOSS", "asset": ""}, ENTRY, stage, slot, "BOSS")
     return simulate_raid(party(), boss, slot, new_config(), seed)
 
 

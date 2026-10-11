@@ -2,18 +2,20 @@
 
 import random
 
-from .battle import CRIT_MULTIPLIER, FURY_ROUND, FURY_STEP, _Battle, _Unit, fighter
+from .battle import CRIT_MULTIPLIER, FURY_ROUND, FURY_STEP, SKILL_SLOTS, _Battle, _Unit, fighter
 from .raid_bosses import BOSSES, BossMechanics
 from .raid_events import field_event
 
 PARTY_SIZE = 4
 TIMEOUT_MINUTES = 10
 MAX_RAID_ROUNDS = 25
-REST_HEAL = 0.3
-# Bosses match the party's average level; later stages hit harder through these
-# multipliers instead, so the difficulty curve is the same at every level.
-STAGE_HP = (4.6, 5.2, 5.8)
-STAGE_ATK = (1.35, 1.45, 1.55)
+REST_HEAL = 0.4
+# When continuing to the next boss, one fallen pig may rejoin at this HP ratio.
+REST_REVIVE_HP = 0.4
+# Bosses ignore party level: full kit + base stats, scaled only by stage / boss multipliers.
+STAGE_HP = (7.0, 8.2, 9.6)
+# Raised so boss auto-attacks threaten tanks that now soak focus fire.
+STAGE_ATK = (2.20, 2.45, 2.75)
 
 DUNGEONS = (
     {
@@ -62,7 +64,29 @@ DUNGEONS = (
 
 # Effect types the replay animates on their own (damage and heals have their own cues).
 STATUS_CUES = frozenset(
-    {"shield", "stun", "dot", "buff", "thorns", "regen", "evade", "cleanse", "dispel", "copy"}
+    {
+        "shield",
+        "stun",
+        "dot",
+        "buff",
+        "thorns",
+        "regen",
+        "evade",
+        "cleanse",
+        "dispel",
+        "copy",
+        "taunt",
+        "mitigate",
+        "mark",
+        "silence",
+        "weaken",
+        "expose",
+        "absorb",
+        "block",
+        "share",
+        "guard",
+        "immunity",
+    }
 )
 
 GUARD_SKILL = {
@@ -87,18 +111,20 @@ def mechanics_for(pig_id: str) -> type[BossMechanics]:
 
 
 def boss_level(levels: list[int]) -> int:
+    """Deprecated: bosses no longer scale with party level. Kept for old call sites."""
     return max(1, round(sum(levels) / len(levels))) if levels else 1
 
 
-def boss_fighter(pig: dict, entry: dict, level: int, stage: int, slot_id: str, label: str) -> dict:
-    """The boss pig at raid strength; `slot_id` picks the mechanics' own multipliers."""
+def boss_fighter(pig: dict, entry: dict, stage: int, slot_id: str, label: str) -> dict:
+    """Raid boss at stage strength: base stats, all skills unlocked, no level growth."""
     cls = mechanics_for(slot_id)
-    unit = fighter(pig, entry, level, label)
+    unit = fighter(pig, entry, 1, label)
+    unit["level"] = 0
+    unit["skills"] = list(entry["skills"][:SKILL_SLOTS])
+    unit["locked"] = []
     stats = unit["stats"]
     unit["dot_basis"] = stats["hp"]
-    # Low-level pigs have few skills and fights drag on; ease them in until Lv5.
-    rookie = min(1.0, 0.7 + 0.06 * level)
-    stats["hp"] = round(stats["hp"] * STAGE_HP[stage - 1] * cls.HP * rookie)
+    stats["hp"] = round(stats["hp"] * STAGE_HP[stage - 1] * cls.HP)
     stats["atk"] = round(stats["atk"] * STAGE_ATK[stage - 1] * cls.ATK)
     stats["def"] = round(stats["def"] * cls.DEF)
     return unit
@@ -169,6 +195,10 @@ class _RaidBattle(_Battle):
         self.rng = random.Random(seed)
         self.log = []
         self.round = 0
+        # Shared with 1v1 `_Battle` skill paths (copy, reactive triggers, leech).
+        self._copy_scale = 1.0
+        self._leech_pool = 0.0
+        self._in_trigger = False
         self.cfg = cfg
         self.heroes = [_RaidUnit(data, 0) for data in heroes]
         self.boss = _RaidUnit(boss, 1)
@@ -333,6 +363,16 @@ class _RaidBattle(_Battle):
     def other(self, unit):
         return self.target_for(unit)
 
+    def allies_of(self, unit):
+        if unit.side == 0:
+            return [h for h in self.heroes if h.alive and not h.away]
+        return [f for f in self.foes if f.alive and not f.away]
+
+    def foes_of(self, unit):
+        if unit.side == 0:
+            return [f for f in self.foes if f.alive and not f.away]
+        return [h for h in self.heroes if h.alive and not h.away]
+
     def target_for(self, unit):
         if unit.side == 0:
             foes = [f for f in self.foes if f.alive and not f.away]
@@ -343,6 +383,10 @@ class _RaidBattle(_Battle):
         heroes = self.present_heroes()
         if not heroes:
             return None
+        # Summons and redirects: prefer redirect/taunt holders when present.
+        redirected = [h for h in heroes if getattr(h, "redirect", 0) > 0]
+        if redirected and unit is not self.boss:
+            return self.rng.choice(redirected)
         if unit is self.boss:
             return self.mech.pick_target(self, heroes)
         return self.rng.choice(heroes)
@@ -357,16 +401,16 @@ class _RaidBattle(_Battle):
             return
         super().apply_passive(unit, effect)
 
-    def hurt(self, unit, amount: float, source: str = "") -> float:
+    def hurt(self, unit, amount: float, source: str = "", attacker=None) -> float:
         was_alive = unit.alive
-        dealt = super().hurt(unit, amount)
-        attacker = self.acting
-        if attacker is not None and attacker.side != unit.side:
-            self.dealt[id(attacker)] = self.dealt.get(id(attacker), 0.0) + dealt
+        dealt = super().hurt(unit, amount, source=source, attacker=attacker)
+        credited = attacker if attacker is not None else self.acting
+        if credited is not None and credited.side != unit.side:
+            self.dealt[id(credited)] = self.dealt.get(id(credited), 0.0) + dealt
         if dealt > 0:
             self.cue(
                 "hit",
-                src=attacker.uid if attacker is not None else None,
+                src=credited.uid if credited is not None else None,
                 dst=unit.uid,
                 amt=round(dealt),
                 crit=self._crit,
@@ -480,14 +524,14 @@ class _RaidBattle(_Battle):
             else:
                 target = enemy if kind in ("dot", "dispel") else unit
             self.cue(kind, src=unit.uid, dst=target.uid, up=effect.get("pct", 0) >= 0)
-        if effect["type"] == "cleanse":
+        if effect["type"] in ("cleanse", "cleanse_heal"):
             unit.vuln = 0
             unit.chill = 0
             if unit.side == 0 and text:
                 self.mech.supported(self, unit, "cleanse")
-        elif effect["type"] == "heal" and unit.side == 0 and text:
+        elif effect["type"] in ("heal", "mass_heal", "triage", "life_link", "delay_heal") and unit.side == 0 and text:
             self.mech.supported(self, unit, "heal")
-        elif effect["type"] == "dispel" and enemy is self.boss:
+        elif effect["type"] in ("dispel", "purge") and enemy is self.boss:
             self.mech.dispelled(self)
         return text
 

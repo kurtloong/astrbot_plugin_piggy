@@ -11,7 +11,15 @@ from .battle import STAT_NAMES, STATS, describe_skill, entry_for, fighter, level
 from .config import PiggyError, Settings
 from .database import EAST_ASIA
 from .delivery import Message
-from .raid import DUNGEONS, PARTY_SIZE, REST_HEAL, TIMEOUT_MINUTES, dungeon, mechanics_for
+from .raid import (
+    DUNGEONS,
+    PARTY_SIZE,
+    REST_HEAL,
+    REST_REVIVE_HP,
+    TIMEOUT_MINUTES,
+    dungeon,
+    mechanics_for,
+)
 from .rendering import (
     ATLAS_SHEET_SIZE,
     PEN_SHEET_SIZE,
@@ -178,6 +186,7 @@ async def wild_battle_message(settings: Settings, root: Path, result: dict) -> M
                 "pig": unit["name"],
                 "asset": unit["asset"],
                 "level": unit["level"],
+                "role": unit.get("role"),
                 "style": unit["style"],
                 "hp": fight["hp"][index],
                 "max_hp": fight["max_hp"][index],
@@ -358,6 +367,7 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
             "pig": f["pig"]["name"],
             "asset": f["pig"]["asset"],
             "level": f["level"],
+            "role": f.get("role"),
             "style": f["style"],
             "hp": f["hp"],
             "max_hp": f["max_hp"],
@@ -388,6 +398,7 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
                 "pig": ally["pig"]["name"],
                 "asset": ally["pig"]["asset"],
                 "level": ally["level"],
+                "role": ally.get("role"),
                 "style": ally["style"],
                 "hp": ally["hp"],
                 "max_hp": ally["max_hp"],
@@ -443,7 +454,8 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
     if status == "waiting":
         next_step = (
             f"第 {battle['stage']} 关通关！队长 {leader} 发送「继续副本」挑战第 {battle['stage'] + 1} 关"
-            f"「{battle['next_boss']}」，或发送「撤退副本」带着奖励离开。存活的猪会先回复 {REST_HEAL:.0%} 生命；"
+            f"「{battle['next_boss']}」，或发送「撤退副本」带着奖励离开。"
+            f"存活的猪会先回复 {REST_HEAL:.0%} 生命，倒下的猪会随机救回一只（{REST_REVIVE_HP:.0%} 生命）；"
             f"{TIMEOUT_MINUTES} 分钟内不决定自动撤退。"
         )
     elif status == "cleared":
@@ -459,7 +471,8 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
         "boss": {
             "name": boss["label"],
             "asset": boss["pig"]["asset"],
-            "level": boss["level"],
+            "level": 0,
+            "role": boss.get("role"),
             "style": boss["style"],
             "hp": boss["hp"],
             "max_hp": boss["max_hp"],
@@ -654,7 +667,7 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
             f"开启副本 编号 {example} —— 发起组队；群友发送「加入副本 他的猪」加入",
             f"满 {PARTY_SIZE} 人自动开打，{TIMEOUT_MINUTES} 分钟没满员自动取消，开打后不能中途加入",
             "每关打赢：每位队员各得 1 只 boss 猪，全群各得 1 次再抽；倒下的猪，主人失去 1 只",
-            "打完一关由队长发送「继续副本」或「撤退副本」；每个副本每人每天 1 次",
+            "打完一关由队长发送「继续副本」或「撤退副本」（继续时随机救回一只倒下的猪）；每个副本每人每天 1 次",
         ],
     ]
     if favorite:
@@ -689,7 +702,9 @@ def stats_message(settings: Settings, user: dict, pig: dict, count: int, cap: in
         for slot, skill in enumerate(entry["skills"], 1)
     ]
     return text_message(
-        settings, f"{pig['name']}（{entry['style']}）", [owned, numbers, "技能", skills]
+        settings,
+        f"{pig['name']}（{entry.get('role', '输出')}·{entry['style']}）",
+        [owned, numbers, "技能", skills],
     )
 
 
@@ -765,6 +780,7 @@ async def battle_message(settings: Settings, root: Path, result: dict) -> Messag
                 "pig": unit["name"],
                 "asset": unit["asset"],
                 "level": unit["level"],
+                "role": unit.get("role"),
                 "style": unit["style"],
                 "hp": fight["hp"][index],
                 "max_hp": fight["max_hp"][index],

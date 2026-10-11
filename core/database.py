@@ -16,9 +16,9 @@ from .raid import (
     DUNGEONS,
     PARTY_SIZE,
     REST_HEAL,
+    REST_REVIVE_HP,
     TIMEOUT_MINUTES,
     boss_fighter,
-    boss_level,
     dungeon,
     mechanics_for,
     simulate_raid,
@@ -1068,6 +1068,26 @@ class Database:
             raise PiggyError("猪库没有启用的小猪，副本暂时无法进行。")
         members = self._raid_view(conn, raid)["members"]
         party, absent = [], []
+        revived = None
+        if interlude:
+            # One fallen pig may rejoin for the next boss if the owner still has a copy.
+            fallen = []
+            for member in members:
+                if member["alive"]:
+                    continue
+                count = _owned(conn, member["user_id"], member["pig_id"])
+                if count < 1:
+                    continue
+                fallen.append(member)
+            if fallen:
+                pick = rng.choice(fallen)
+                pick["alive"] = 1
+                pick["hp"] = REST_REVIVE_HP
+                conn.execute(
+                    "UPDATE raid_members SET alive=1,hp=? WHERE raid_id=? AND user_id=?",
+                    (REST_REVIVE_HP, raid_id, pick["user_id"]),
+                )
+                revived = pick
         for member in members:
             if not member["alive"]:
                 continue
@@ -1094,7 +1114,18 @@ class Database:
         cfg, rewards, events = new_config(), new_rewards(), []
         if interlude:
             for member in party:
+                if revived and member["seat"] == revived["seat"]:
+                    continue  # already set to REST_REVIVE_HP
                 member["hp"] = min(1.0, member["hp"] + REST_HEAL)
+            if revived:
+                label = f"{player_name(revived['user'])}的{revived['pig']['name']}"
+                events.append(
+                    {
+                        "kind": "关间",
+                        "name": "战地急救",
+                        "text": f"{label}被救了回来，以 {REST_REVIVE_HP:.0%} 生命重返战场",
+                    }
+                )
             for event in resolve([roll_interlude(rng)], party, rng, cfg, rewards, mechanics):
                 events.append({**event, "kind": "关间"})
         for event in resolve(roll_entry(rng, info["key"]), party, rng, cfg, rewards, mechanics):
@@ -1105,11 +1136,9 @@ class Database:
         possessed = boss_row is None
         boss_pig = dict(boss_row) if boss_row else dict(rng.choice(enabled))
         levels = [level_for(member["count"], level_cap) for member in party]
-        level = boss_level(levels)
         boss = boss_fighter(
             boss_pig,
             entry_for(boss_pig["battle"]),
-            level,
             stage,
             slot_id,
             ("被附身的" if possessed else "") + boss_pig["name"],
@@ -1169,6 +1198,7 @@ class Database:
                     "user": member["member"]["user"],
                     "pig": {k: v for k, v in pig.items() if k != "battle"},
                     "level": hero_level,
+                    "role": hero.get("role"),
                     "style": hero["style"],
                     "hp": state["hp"],
                     "max_hp": state["max_hp"],
@@ -1236,7 +1266,7 @@ class Database:
                 raid_id,
                 stage,
                 boss_pig["id"],
-                level,
+                0,  # bosses no longer use level; column kept for schema compatibility
                 int(won),
                 fight_seed,
                 json.dumps(events, ensure_ascii=False),
@@ -1259,7 +1289,8 @@ class Database:
             "boss": {
                 "pig": prize,
                 "label": boss["label"],
-                "level": level,
+                "level": 0,
+                "role": boss.get("role"),
                 "style": boss["style"],
                 "hp": result["boss"]["hp"] if result else boss["stats"]["hp"],
                 "max_hp": result["boss"]["max_hp"] if result else boss["stats"]["hp"],
@@ -1273,6 +1304,7 @@ class Database:
                     "pig": {"name": ally["name"], "asset": ally["asset"]},
                     "label": ally["label"],
                     "level": ally["level"],
+                    "role": ally.get("role"),
                     "style": ally["style"],
                     "hp": result["heroes"][-1]["hp"],
                     "max_hp": result["heroes"][-1]["max_hp"],
@@ -1284,6 +1316,16 @@ class Database:
             ),
             "absent": absent,
             "retired": [m for m in members if not m["alive"]],
+            "revived": (
+                {
+                    "seat": revived["seat"],
+                    "user": revived["user"],
+                    "pig": revived["pig"],
+                    "hp": REST_REVIVE_HP,
+                }
+                if revived
+                else None
+            ),
             "events": events,
             "result": result,
             "changes": [(member["user"], changes[member["user_id"]]) for member in members],
@@ -1908,7 +1950,7 @@ class Database:
             hero["seat"] = seat
             heroes.append(hero)
         boss = boss_fighter(
-            boss_pig, entry_for(boss_pig["battle"]), level, stage, slot_id, boss_pig["name"]
+            boss_pig, entry_for(boss_pig["battle"]), stage, slot_id, boss_pig["name"]
         )
         result = await asyncio.to_thread(simulate_raid, heroes, boss, slot_id, new_config(), seed)
         return {

@@ -14,7 +14,7 @@ from core.battle import FALLBACK, fighter, validate_entry
 from core.catalog import read_catalog
 from core.config import PiggyError, Settings
 from core.database import Database
-from core.raid import DUNGEONS, _RaidBattle, boss_fighter, boss_level, simulate_raid
+from core.raid import DUNGEONS, _RaidBattle, boss_fighter, simulate_raid
 from core.raid_events import (
     ENTRY_EVENTS,
     FIELD_EVENTS,
@@ -75,7 +75,7 @@ def unit(name, level=5, seat=None):
 
 
 def battle(slot, heroes=4, cfg=None, seed=1):
-    boss = boss_fighter({"id": slot, "name": "BOSS", "asset": ""}, ENTRY, 5, 1, slot, "BOSS")
+    boss = boss_fighter({"id": slot, "name": "BOSS", "asset": ""}, ENTRY, 1, slot, "BOSS")
     party = [unit(f"猪{i}", seat=i) for i in range(heroes)]
     return _RaidBattle(party, boss, slot, cfg or new_config(), seed)
 
@@ -246,8 +246,11 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             second = await self.db.continue_raid("app", "group", self.users[0]["id"], now=NOW)
         self.assertEqual(second["stage"], 2)
         self.assertEqual(second["status"], "failed")
-        self.assertEqual([f["seat"] for f in second["fighters"]], [0, 2, 3])
-        self.assertEqual(len(second["retired"]), 1)
+        # Seat 1 fell in stage 1 but is revived for the continue fight.
+        self.assertEqual(second["revived"]["seat"], 1)
+        self.assertEqual([f["seat"] for f in second["fighters"]], [0, 1, 2, 3])
+        self.assertEqual(second["retired"], [])
+        self.assertTrue(any(e["name"] == "战地急救" for e in second["events"]))
         self.assertEqual(await self.count(self.users[0], "p0"), 1)
         self.assertEqual(await self.count(self.users[0], DUNGEONS[0]["bosses"][1]), 0)
         with self.assertRaises(PiggyError):
@@ -392,21 +395,23 @@ class RaidEngineTests(unittest.TestCase):
 
     def test_same_seed_same_fight(self):
         party = [unit(f"猪{i}", seat=i) for i in range(4)]
-        boss = boss_fighter(self.boss_pig, ENTRY, 5, 3, "pig_god", "猪神")
+        boss = boss_fighter(self.boss_pig, ENTRY, 3, "pig_god", "猪神")
         first = simulate_raid(party, boss, "pig_god", new_config(), 42)
         again = simulate_raid(party, boss, "pig_god", new_config(), 42)
         self.assertEqual(first["log"], again["log"])
         self.assertEqual(first["heroes"], again["heroes"])
 
-    def test_boss_follows_party_level_and_stage(self):
-        self.assertEqual(boss_level([4, 6, 8, 10]), 7)
-        weak = boss_fighter(self.boss_pig, ENTRY, 3, 1, "pig_god", "猪神")
-        strong = boss_fighter(self.boss_pig, ENTRY, 12, 1, "pig_god", "猪神")
-        later = boss_fighter(self.boss_pig, ENTRY, 12, 3, "pig_god", "猪神")
-        self.assertLess(weak["stats"]["hp"], strong["stats"]["hp"])
-        self.assertLess(strong["stats"]["hp"], later["stats"]["hp"])
-        self.assertLess(strong["stats"]["atk"], later["stats"]["atk"])
-        self.assertEqual(strong["dot_basis"], fighter(self.boss_pig, ENTRY, 12)["stats"]["hp"])
+    def test_boss_scales_by_stage_only_with_full_kit(self):
+        early = boss_fighter(self.boss_pig, ENTRY, 1, "pig_god", "猪神")
+        later = boss_fighter(self.boss_pig, ENTRY, 3, "pig_god", "猪神")
+        again = boss_fighter(self.boss_pig, ENTRY, 1, "pig_god", "猪神")
+        self.assertEqual(early["stats"], again["stats"])
+        self.assertLess(early["stats"]["hp"], later["stats"]["hp"])
+        self.assertLess(early["stats"]["atk"], later["stats"]["atk"])
+        self.assertEqual(early["level"], 0)
+        self.assertEqual(len(early["skills"]), 5)
+        self.assertEqual(early["locked"], [])
+        self.assertEqual(early["dot_basis"], fighter(self.boss_pig, ENTRY, 1)["stats"]["hp"])
 
     def test_goblin_lurks_out_of_reach(self):
         fight = battle("goblin-pig")
@@ -643,6 +648,15 @@ class RaidEngineTests(unittest.TestCase):
             result = fight.run()
             self.assertIn(result["winner"], (0, 1))
 
+    def test_raid_shares_battle_runtime_state(self):
+        """_RaidBattle must expose 1v1 internals used by copy / triggers / cleave."""
+        fight = battle("goblin-pig")
+        self.assertEqual(fight._copy_scale, 1.0)
+        self.assertFalse(fight._in_trigger)
+        before = fight.heroes[1].hp
+        fight.hurt(fight.heroes[1], 10, attacker=fight.boss)
+        self.assertLess(fight.heroes[1].hp, before)
+
 
 class RaidEventTests(unittest.TestCase):
     def party(self):
@@ -701,6 +715,22 @@ class RaidEventTests(unittest.TestCase):
             fight.flush()
             self.assertEqual(fight.field_events, [item["name"]])
             self.assertTrue(any(item["name"] in line for line in fight.log))
+
+    def test_boss_normal_attacks_prefer_tanks_then_taunt(self):
+        from core.raid_bosses import BossMechanics
+
+        fight = battle("goblin-pig", heroes=4, seed=11)
+        # Disable goblin mechanics that steal targeting.
+        fight.mech.disabled = 0
+        for hero, role in zip(fight.heroes, ("输出", "坦克", "治疗", "辅助")):
+            hero.data["role"] = role
+        picks = [BossMechanics().pick_target(fight, fight.heroes) for _ in range(40)]
+        self.assertTrue(all(p.role == "坦克" for p in picks))
+
+        fight.heroes[0].taunt = 3
+        fight.heroes[0].data["role"] = "输出"
+        taunt_picks = [BossMechanics().pick_target(fight, fight.heroes) for _ in range(20)]
+        self.assertTrue(all(p is fight.heroes[0] for p in taunt_picks))
 
 
 if __name__ == "__main__":
