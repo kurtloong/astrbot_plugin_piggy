@@ -49,6 +49,17 @@ class BossMechanics:
         return 0
 
     def pick_target(self, battle, candidates: list):
+        """Normal (non-mechanic) boss attacks prefer taunt, then tanks."""
+        taunted = [h for h in candidates if getattr(h, "taunt", 0) > 0]
+        if taunted:
+            return battle.rng.choice(taunted)
+        tanks = [
+            h
+            for h in candidates
+            if getattr(h, "role", None) == "坦克" or h.data.get("role") == "坦克"
+        ]
+        if tanks:
+            return battle.rng.choice(tanks)
         return battle.rng.choice(candidates)
 
     def incoming(self, battle, attacker, raw: float, effect: dict) -> float:
@@ -115,7 +126,8 @@ class Goblin(BossMechanics):
         ("邋遢光环", "每回合给全体队员叠 1 层熏味，每层速度 -5%，最多 6 层，清除负面效果可以驱散"),
         ("摆烂", "生命第一次低于 30% 时躺平 2 回合回血，但躺平期间受到的伤害 +30%"),
     )
-    HP = 0.85
+    ATK = 1.25
+    HP = 1.6
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -176,7 +188,8 @@ class Frozen(BossMechanics):
         ("冰块外壳", "开场自带 25% 生命的冰壳，冰壳在时不会被暴击，伤害先扣冰壳"),
         ("融化", "冰壳碎掉后防御 -30%、攻击 +20%"),
     )
-    HP = 0.7
+    ATK = 1.25
+    HP = 1.55
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -240,8 +253,9 @@ class Everest(BossMechanics):
         ("不可逾越", "单次受到的伤害最多只算它最大生命的 6%，多段和持续伤害更划算"),
         ("雪崩", "第 5、10、15 回合对全队造成 1.2 倍攻击伤害，每只猪 30% 概率臣服跳过下一回合"),
     )
-    HP = 0.5
-    DEF = 1.1
+    ATK = 1.4
+    HP = 1.5
+    DEF = 1.25
 
     def round_start(self, battle):
         boss = battle.boss
@@ -287,7 +301,8 @@ class Error404(BossMechanics):
         ("页面不存在", "每 4 回合让一只队员猪 404，它的下一次行动变成原地刷新，并损失 5% 生命"),
         ("缓存回滚", "生命第一次低于 40% 时回滚到 60%，同时清除身上的持续伤害"),
     )
-    HP = 1.85
+    ATK = 1.3
+    HP = 2.05
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -333,8 +348,9 @@ class Mechanical(BossMechanics):
         ("金属外壳", "防御很高，无视防御效果对它翻倍；每挨 6 次攻击会过热，防御归零 2 回合"),
         ("系统 bug", "每回合 10% 概率忘了自己是猪，原地哼哼一回合"),
     )
-    HP = 1.1
-    DEF = 1.6
+    ATK = 1.4
+    HP = 2.15
+    DEF = 1.55
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -396,7 +412,8 @@ class Cyberpunk(BossMechanics):
         ("义体进化", "每回合攻击 +4%，一直累积；驱散效果能把累积的加成清零"),
         ("超频过载", "生命低于 40% 后每回合行动 2 次，但每回合损失 4% 生命"),
     )
-    HP = 1.1
+    ATK = 1.08
+    HP = 1.25
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -448,7 +465,8 @@ class Demon(BossMechanics):
         ("恶作剧", "每 4 回合把两只队员猪的生命比例对调"),
         ("得逞的坏笑", "每有一只队员猪倒下，它回复 15% 生命、攻击 +10%"),
     )
-    HP = 2.1
+    ATK = 1.32
+    HP = 2.25
     CURSES = ("虚弱", "迟缓", "流血", "易伤")
 
     def setup(self, battle):
@@ -497,6 +515,7 @@ class ChainedKing(BossMechanics):
         ("王者归来", "3 条锁链全断时恢复全部属性，回复 15% 生命"),
         ("王者威压", "每 4 回合让速度最低的队员猪臣服，跳过 1 回合"),
     )
+    ATK = 0.98
     HP = 0.85
 
     def __init__(self, disabled=None):
@@ -556,7 +575,8 @@ class PigGod(BossMechanics):
         ("神谕", "每 3 回合看穿全队并预告下回合的目标，下一回合全队闪避归零"),
         ("守护神降临", "生命第一次低于 50% 时召唤 2 只小猪守护灵，守护灵在场时必须先打守护灵"),
     )
-    HP = 0.5
+    ATK = 1.24
+    HP = 1.18
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -595,7 +615,7 @@ class PigGod(BossMechanics):
             and self.prophecy in candidates
         ):
             return self.prophecy
-        return battle.rng.choice(candidates)
+        return super().pick_target(battle, candidates)
 
     def damaged(self, battle):
         if self.on(2) and not self.summoned and battle.boss.ratio < 0.5:
@@ -615,7 +635,8 @@ class Zombie(BossMechanics):
         ("一瘸一拐", "总是最后一个行动，但每次行动后有 30% 概率再扑咬一次"),
         ("尸变", "它亲手击倒的队员猪会变成僵尸小猪，站到敌方一起作战（生命为原来的 40%）"),
     )
-    HP = 1.05
+    ATK = 0.92
+    HP = 0.84
     GUARDS_FIRST = False
 
     @staticmethod
@@ -667,7 +688,8 @@ class TwoFacedGhost(BossMechanics):
         ("附身", "每 4 回合附身一只队员猪，它的下一次行动改为攻击一名队友"),
         ("双面夹击", "生命低于 40% 后，每回合结束时同时打一下生命最高和最低的两只猪"),
     )
-    HP = 0.7
+    ATK = 1.26
+    HP = 1.5
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -720,7 +742,8 @@ class Skeleton(BossMechanics):
             "每 3 回合按顺序施放：红烧（全队流血）、爆炒（全队受到 0.6 倍伤害）、清蒸（全队速度 -20%，2 回合）",
         ),
     )
-    HP = 0.55
+    ATK = 1.35
+    HP = 1.55
     DISHES = ("红烧", "爆炒", "清蒸")
 
     def __init__(self, disabled=None):
@@ -777,7 +800,8 @@ class Nezha(BossMechanics):
             "每被暴击一次攻击 +8%（最多 5 层）；生命低于 25% 时扔出乾坤圈，对全队造成 2 倍伤害",
         ),
     )
-    HP = 0.95
+    ATK = 1.06
+    HP = 1.12
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -844,7 +868,8 @@ class FishDuke(BossMechanics):
             "身上 20 片鳞，鳞片在时受到的伤害 -20%；每挨一次打掉一片，鳞片给随机一只队员猪 3% 生命的护盾",
         ),
     )
-    HP = 0.6
+    ATK = 1.45
+    HP = 2.1
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -916,7 +941,8 @@ class DeepSea(BossMechanics):
         ),
         ("深渊暗流", "生命低于 50% 后全队受到的治疗减半，护盾每回合流失一半"),
     )
-    HP = 0.85
+    ATK = 1.3
+    HP = 1.55
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -964,7 +990,8 @@ class Alien(BossMechanics):
             "生命第一次低于 50% 时离场 2 回合，期间母舰每回合扫射全队、队员打不到它；回来时回复 15% 生命",
         ),
     )
-    HP = 1.35
+    ATK = 1.22
+    HP = 1.48
     STATS = {"atk": "攻击", "def": "防御", "spd": "速度"}
 
     def __init__(self, disabled=None):
@@ -1042,7 +1069,8 @@ class StarCluster(BossMechanics):
             "星核生命低于 25% 后倒计时 3 回合，没打倒它就对全队造成各自最大生命 40% 的伤害",
         ),
     )
-    HP = 0.5
+    ATK = 1.3
+    HP = 1.38
     GUARDS_FIRST = False
 
     def __init__(self, disabled=None):
@@ -1121,7 +1149,8 @@ class CosmicRing(BossMechanics):
             "每 4 回合落下 3 颗陨石，每颗打随机一只猪 0.8 倍伤害；被砸中两次的猪眩晕 1 回合",
         ),
     )
-    HP = 0.8
+    ATK = 1.3
+    HP = 1.48
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -1196,8 +1225,8 @@ class Campfire(BossMechanics):
             "每回合按座位轮流当烤位：强制点名该座且受伤 +20%，回合结束烤位回 10% 生命，左右邻座各回 5%",
         ),
     )
-    HP = 1.65
-    ATK = 0.88
+    HP = 0.92
+    ATK = 0.68
     HEAT = {4: 22, 3: 8, 2: 0, 1: -15}
 
     def __init__(self, disabled=None):
@@ -1257,7 +1286,7 @@ class Campfire(BossMechanics):
             for hero in candidates:
                 if hero.seat == self.roast:
                     return hero
-        return battle.rng.choice(candidates)
+        return super().pick_target(battle, candidates)
 
     def outgoing_factor(self, battle, attacker, target):
         if self.on(2) and attacker is battle.boss and target.seat == self.roast:
@@ -1297,8 +1326,8 @@ class RedHot(BossMechanics):
             "每回合对它的第一次伤害无效；若整回合没有人打中它，它因憋着自损 6% 最大生命并失去 1 层越劝越火",
         ),
     )
-    HP = 1.2
-    ATK = 1.0
+    HP = 1.05
+    ATK = 0.88
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -1352,7 +1381,7 @@ class RedHot(BossMechanics):
             target = self._lock_target(battle)
             if target in candidates:
                 return target
-        return battle.rng.choice(candidates)
+        return super().pick_target(battle, candidates)
 
     def outgoing_factor(self, battle, attacker, target):
         if self.on(1) and attacker is battle.boss and target is self._lock_target(battle):
@@ -1416,8 +1445,8 @@ class DragonPig(BossMechanics):
             "每 3 回合以随机一只队员的座位为中心，灼烧该座及相邻座位（最多 3 只）",
         ),
     )
-    HP = 0.78
-    ATK = 1.2
+    HP = 0.55
+    ATK = 0.7
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
