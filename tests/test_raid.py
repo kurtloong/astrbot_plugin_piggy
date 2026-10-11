@@ -687,6 +687,19 @@ class RaidEngineTests(unittest.TestCase):
         fight.hurt(fight.heroes[1], 10, attacker=fight.boss)
         self.assertLess(fight.heroes[1].hp, before)
 
+    def test_mutual_guards_do_not_recurse(self):
+        """Two tanks guarding each other used to blow the stack in raid.hurt."""
+        fight = battle("goblin-pig")
+        a, b = fight.heroes[0], fight.heroes[1]
+        a.hp = a.max_hp
+        b.hp = b.max_hp
+        a.guards.append({"ward": b, "pct": 50, "turns": 3})
+        b.guards.append({"ward": a, "pct": 50, "turns": 3})
+        fight.hurt(b, 100, attacker=fight.boss)
+        self.assertLess(a.hp, a.max_hp)
+        self.assertLess(b.hp, b.max_hp)
+        self.assertTrue(a.alive and b.alive)
+
 
 class RaidEventTests(unittest.TestCase):
     def party(self):

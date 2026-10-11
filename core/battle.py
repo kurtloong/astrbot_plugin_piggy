@@ -992,12 +992,14 @@ class _Battle:
         if amount <= 0 or not unit.alive:
             return 0.0
         # Guard transfer: damage taken by ward goes partially to guardian.
-        for ally in self.allies_of(unit):
-            for guard in list(ally.guards):
-                if guard["ward"] is unit and ally.alive and ally is not unit:
-                    share = amount * guard["pct"] / 100
-                    amount -= share
-                    self.hurt(ally, share, source="guard", attacker=attacker)
+        # Do not re-enter on transferred hits — mutual/cyclic guards would recurse forever.
+        if source != "guard":
+            for ally in self.allies_of(unit):
+                for guard in list(ally.guards):
+                    if guard["ward"] is unit and ally.alive and ally is not unit:
+                        share = amount * guard["pct"] / 100
+                        amount -= share
+                        self.hurt(ally, share, source="guard", attacker=attacker)
         # Share link
         if unit.share and unit.share["turns"] > 0:
             members = [m for m in unit.share["members"] if m.alive]
