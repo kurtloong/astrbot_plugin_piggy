@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import replay, video
-from .battle import STAT_NAMES, STATS, describe_skill, entry_for, fighter, level_for
+from .battle import ROLES, STAT_NAMES, STATS, describe_skill, entry_for, fighter, level_for
 from .config import PiggyError, Settings
 from .database import EAST_ASIA
 from .delivery import Message
@@ -531,22 +531,41 @@ def raid_video_job(settings: Settings, root: Path, battle: dict):
     return build
 
 
+def _pen_entries(progress: dict) -> list[dict]:
+    """Owned pigs ordered 坦克 → 输出 → 治疗 → 辅助 for the pen card."""
+    rank = {role: index for index, role in enumerate(ROLES)}
+    items = []
+    for pig in progress["entries"]:
+        if not pig["count"]:
+            continue
+        role = entry_for(pig.get("battle")).get("role", "输出")
+        if role not in rank:
+            role = "输出"
+        items.append({**pig, "role": role})
+    items.sort(key=lambda pig: (rank[pig["role"]], pig.get("sort_order", 0), pig["id"]))
+    return items
+
+
 async def collection_message(
     settings: Settings, root: Path, user: dict, progress: dict, page: int, atlas: bool
 ) -> Message:
     """The same in-memory cream card serves both delivery modes."""
     title = "小猪图鉴" if atlas else "我的猪圈"
-    items = (
-        [p for p in progress["entries"] if p["enabled"]]
-        if atlas
-        else [p for p in progress["entries"] if p["count"]]
-    )
+    if atlas:
+        items = [p for p in progress["entries"] if p["enabled"]]
+        view = progress
+    else:
+        items = _pen_entries(progress)
+        view = {
+            **progress,
+            "role_counts": {role: sum(1 for p in items if p["role"] == role) for role in ROLES},
+        }
     entries, page, pages = paginate(items, page, ATLAS_SHEET_SIZE if atlas else PEN_SHEET_SIZE)
     card = await asyncio.to_thread(
         render_collection,
         root,
         f"{display_name(user)} · 玩家编号 #{user['id']}",
-        progress,
+        view,
         entries,
         page,
         pages,

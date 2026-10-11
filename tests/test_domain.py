@@ -393,6 +393,46 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
         for pig in progress["entries"]:
             self.assertEqual(pig["name"] in labels, bool(pig["count"]))
 
+    async def test_pen_groups_owned_pigs_by_role(self):
+        from core.battle import FALLBACK
+
+        roles = {"pig": "辅助", "cat": "坦克", "dog": "治疗", "fox": "输出"}
+        self.write_catalog(list(roles))
+        battle = {
+            "version": 1,
+            "pigs": {
+                pig_id: {**FALLBACK, "role": role, "style": role}
+                for pig_id, role in roles.items()
+            },
+        }
+        (self.root / "catalog" / "battle.json").write_text(
+            json.dumps(battle, ensure_ascii=False), "utf-8"
+        )
+        await self.db.catalog(read_catalog(self.root))
+        for pig_id in ("pig", "cat", "dog", "fox"):
+            await self.db.run(
+                lambda c, pid=pig_id: c.execute(
+                    "INSERT INTO collections VALUES(?,?,1,0,0)", (self.user["id"], pid)
+                )
+            )
+        progress = await self.db.collection(self.user["id"])
+        labels = []
+        original = ImageDraw.ImageDraw.text
+
+        def record(canvas, xy, text, *args, **kwargs):
+            labels.append(str(text))
+            return original(canvas, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", record):
+            await collection_message(Settings(), self.root, self.user, progress, 1, False)
+        order = [name for name in ("坦克", "输出", "治疗", "辅助") if name in labels]
+        self.assertEqual(order, ["坦克", "输出", "治疗", "辅助"])
+        positions = {name: labels.index(name) for name in ("cat", "fox", "dog", "pig")}
+        self.assertLess(positions["cat"], positions["fox"])
+        self.assertLess(positions["fox"], positions["dog"])
+        self.assertLess(positions["dog"], positions["pig"])
+        self.assertIn("坦克 1 · 输出 1 · 治疗 1 · 辅助 1", labels)
+
     async def test_current_96_catalog_is_one_card_and_future_expansion_has_navigation(self):
         progress = await self.db.collection(self.user["id"])
         template = progress["entries"][0]

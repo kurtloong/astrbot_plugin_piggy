@@ -12,6 +12,8 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps, ImageStat
 
+from .battle import ROLES
+
 # One sheet contains the entire initial catalog. Limits keep future expansions
 # below QQ's practical image size and the renderer's memory budget.
 ATLAS_SHEET_SIZE = 192
@@ -24,6 +26,7 @@ ACCENT = "#b85969"
 PANEL = "#f5e8da"
 BORDER = "#ebdfd1"
 TRACK = "#e8d6c6"
+PEN_HEADER_STEP = 44
 FONT_DIR = Path(__file__).resolve().parents[1] / "resources" / "fonts"
 FONT = FONT_DIR / "NotoSansSC.ttf.xz"
 # Tried in order for characters the main font lacks: emoji, symbols, fancy math letters.
@@ -157,6 +160,28 @@ class Card:
     height: int
 
 
+def _pen_blocks(entries: list[dict], columns: int) -> list[tuple[str, object]]:
+    """Group pen pigs into role headers and card rows; a new role always starts a new row."""
+    blocks: list[tuple[str, object]] = []
+    row: list[dict] = []
+    role = None
+    for pig in entries:
+        current = pig.get("role") or "输出"
+        if current != role:
+            if row:
+                blocks.append(("row", row))
+                row = []
+            blocks.append(("header", current))
+            role = current
+        row.append(pig)
+        if len(row) == columns:
+            blocks.append(("row", row))
+            row = []
+    if row:
+        blocks.append(("row", row))
+    return blocks
+
+
 def render_collection(
     root: Path,
     name: str,
@@ -172,8 +197,15 @@ def render_collection(
     step = 122 if atlas else 248
     top = 384 if atlas else 478
     row_step = 122 if atlas else 246
-    rows = max(1, math.ceil(len(entries) / columns))
-    height = top + rows * row_step + 78
+    blocks = [] if atlas else _pen_blocks(entries, columns)
+    if atlas:
+        rows = max(1, math.ceil(len(entries) / columns))
+        height = top + rows * row_step + 78
+    elif blocks:
+        body = sum(PEN_HEADER_STEP if kind == "header" else row_step for kind, _ in blocks)
+        height = top + body + 78
+    else:
+        height = top + row_step + 78
     image = Image.new("RGB", (WIDTH, height), BG)
     draw = ImageDraw.Draw(image)
     typeset = Typeset(root)
@@ -217,17 +249,16 @@ def render_collection(
             text(value, x, 275, 38, bold=True, width=277)
         bar_y = 363
         text("收藏的小猪", 58, 425, 23, bold=True)
-        text(f"共 {progress['species']} 种", 820, 429, 19, SUB, width=205)
+        counts = progress.get("role_counts") or {}
+        summary = " · ".join(f"{role} {counts[role]}" for role in ROLES if counts.get(role))
+        text(summary or f"共 {progress['species']} 种", 320, 429, 19, SUB, width=700)
     draw.rounded_rectangle((86, bar_y, 992, bar_y + 9), radius=4, fill=TRACK)
     if ratio > 0:
         draw.rounded_rectangle(
             (86, bar_y, 86 + max(9, int(906 * min(ratio, 1))), bar_y + 9), radius=4, fill=ACCENT
         )
 
-    for index, pig in enumerate(entries):
-        x = 56 + (index % columns) * step
-        y = top + (index // columns) * row_step
-        locked = atlas and not pig["count"]
+    def draw_pig(pig: dict, x: int, y: int, locked: bool):
         if atlas:
             draw.rounded_rectangle(
                 (x, y, x + 114, y + 110), radius=18, fill="#e5e5e5" if locked else "#ffffff"
@@ -238,7 +269,7 @@ def render_collection(
                 # Do not open or draw the hidden asset, including its silhouette or embedded text.
                 face = font(62, True)
                 draw.text((cx, cy - 1), "?", font=face, fill="#565656", anchor="mm")
-                continue
+                return
         else:
             draw.rounded_rectangle((x, y + 3, x + 224, y + 230), radius=23, fill=BORDER)
             draw.rounded_rectangle((x, y, x + 224, y + 227), radius=23, fill="#ffffff")
@@ -255,6 +286,25 @@ def render_collection(
                 " · 已下架" if not pig["enabled"] else ""
             )
             text(count, cx, y + 197, 16, ACCENT, width=200, center=True)
+
+    if atlas:
+        for index, pig in enumerate(entries):
+            x = 56 + (index % columns) * step
+            y = top + (index // columns) * row_step
+            draw_pig(pig, x, y, not pig["count"])
+        footer = top + rows * row_step + 12
+    else:
+        y = top
+        for kind, payload in blocks:
+            if kind == "header":
+                text(str(payload), 58, y + 10, 22, ACCENT, bold=True)
+                draw.line((140, y + 24, 1024, y + 24), fill=BORDER, width=2)
+                y += PEN_HEADER_STEP
+            else:
+                for index, pig in enumerate(payload):
+                    draw_pig(pig, 56 + index * step, y, False)
+                y += row_step
+        footer = y + 12
     if not entries:
         text(
             "猪圈还是空的，先抽一只今日小猪吧。" if not atlas else "暂无可展示的小猪",
@@ -264,12 +314,11 @@ def render_collection(
             SUB,
             center=True,
         )
-    footer = top + rows * row_step + 12
     draw.line((56, footer, 1024, footer), fill=BORDER, width=2)
     if atlas:
         text("彩色 · 已解锁    问号 · 待发现", 58, footer + 19, 17, SUB)
     else:
-        text("同种猪越多等级越高 · 发送「小猪玩法」和群友斗猪、换猪", 58, footer + 19, 17, ACCENT)
+        text("按职业分组 · 同种猪越多等级越高 · 发送「小猪玩法」", 58, footer + 19, 17, ACCENT)
     text(f"{page:02d} / {pages:02d}", 888, footer + 16, 21, bold=True)
     return finish(image)
 
