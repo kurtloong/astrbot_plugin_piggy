@@ -55,6 +55,18 @@ class CatalogSyncTests(unittest.TestCase):
         self.assertTrue((self.data / "catalog" / "images" / "a.webp").is_file())
         self.assertEqual(len(read_catalog(self.data)), 4)
 
+    def test_upgrade_retires_reviewed_duplicate_without_deleting_history_record(self):
+        self.bundle([("pighub0174", 0), ("pighub0099", 1)])
+        initialize_catalog(self.data, self.resources)
+
+        result = sync_bundled_catalog(self.data, self.resources)
+        pigs = {pig["id"]: pig for pig in self.catalog()}
+
+        self.assertEqual(result["text"], 1)
+        self.assertFalse(pigs["pighub0174"]["enabled"])
+        self.assertTrue(pigs["pighub0099"]["enabled"])
+        self.assertEqual(set(pigs), {"pighub0174", "pighub0099"})
+
     def test_upgrade_adds_new_pigs_keeps_edits_and_respects_deletions(self):
         # An older install: only the first release, admin renamed "a" and deleted "b".
         catalog = self.data / "catalog"

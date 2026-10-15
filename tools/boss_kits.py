@@ -7,6 +7,8 @@ Each kit keeps the boss's identity / raid mechanics theme, and must include:
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 # pig_id -> battle entry
 BOSS_KITS: dict[str, dict] = {
     "goblin-pig": {
@@ -2025,23 +2027,14 @@ BOSS_KITS: dict[str, dict] = {
             },
             {
                 "name": "八猪围炉",
-                "text": "先给自己续火，再继续烤人。",
-                "cd": 3,
+                "text": "围炉温火缓慢暖回伤口。",
+                "cd": 0,
                 "effects": [
                     {
-                        "type": "life_link",
-                        "pct": 18,
-                        "self_pct": 10,
-                        "target": "ally_all"
-                    },
-                    {
-                        "type": "hot_boost",
-                        "pct": 30,
-                        "turns": 2
-                    },
-                    {
-                        "type": "heal",
-                        "pct": 12
+                        "type": "regen",
+                        "pct": 3,
+                        "turns": 2,
+                        "target": "ally_lowest"
                     }
                 ]
             },
@@ -2294,11 +2287,24 @@ BOSS_KITS: dict[str, dict] = {
 }
 
 def apply_boss_kits(pigs: dict) -> list[str]:
-    """Overwrite boss entries in-place; return updated ids."""
+    """Apply boss stats without erasing an approved AI-authored core engine.
+
+    The original table remains useful for restoring boss identity and base stats,
+    but a redesigned battle entry is the source of truth for its linked five-skill
+    engine.  Re-running this maintenance helper must not silently restore the old
+    standalone kit.
+    """
     updated = []
     for pig_id, entry in BOSS_KITS.items():
         if pig_id not in pigs:
             raise KeyError(f"battle.json missing boss pig {pig_id}")
-        pigs[pig_id] = entry
+        replacement = deepcopy(entry)
+        current = pigs[pig_id]
+        if current.get("engine"):
+            replacement["skills"] = deepcopy(current["skills"])
+            replacement["engine"] = deepcopy(current["engine"])
+            replacement["tags"] = deepcopy(current.get("tags", replacement.get("tags", [])))
+            replacement["style"] = current.get("style", replacement.get("style"))
+        pigs[pig_id] = replacement
         updated.append(pig_id)
     return updated

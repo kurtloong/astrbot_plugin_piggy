@@ -7,10 +7,11 @@ from datetime import datetime
 from pathlib import Path
 
 from . import replay, video
-from .battle import ROLES, STAT_NAMES, STATS, describe_skill, entry_for, fighter, level_for
+from .battle import ROLES, STAT_NAMES, STATS, TAGS, describe_skill, entry_for, fighter, level_for
 from .config import PiggyError, Settings
 from .database import EAST_ASIA
 from .delivery import Message
+from .personalities import PERSONALITIES
 from .raid import (
     DUNGEONS,
     PARTY_SIZE,
@@ -18,6 +19,7 @@ from .raid import (
     REST_REVIVE_HP,
     TIMEOUT_MINUTES,
     dungeon,
+    mechanic_details,
     mechanics_for,
 )
 from .rendering import (
@@ -83,9 +85,9 @@ def keyboard(
         },
         {
             "buttons": [
-                button("斗猪玩法", "小猪玩法"),
-                button("斗猪排行", "斗猪排行"),
-                button("斗猪记录", "斗猪记录"),
+                button("小猪玩法", "小猪玩法"),
+                button("小猪属性", "小猪属性 "),
+                button("小猪交换", "小猪交换 "),
                 button("小猪挑战", "小猪挑战"),
             ]
         },
@@ -136,7 +138,7 @@ def today_message(
     elif not result["created"]:
         hint = "打败本群的野生小猪，全群都能再抽一次 · 发送「小猪挑战」"
     else:
-        hint = f"Lv{level} · 已解锁 {min(level, 5)}/5 个技能 · 发送「小猪玩法」和群友斗猪、换猪"
+        hint = f"Lv{level} · 已解锁 {min(level, 5)}/5 个技能 · 发送「小猪玩法」查看稀有度与性格"
     card = render_today(
         root,
         display_name(user),
@@ -315,7 +317,7 @@ async def raid_detail_message(
         "title": f"{item['key']} {item['name']}",
         "subtitle": f"{item['intro']} · {state}",
         "bosses": [
-            {**status["bosses"][slot], "stage": stage, "mechanics": mechanics_for(slot).MECHANICS}
+            {**status["bosses"][slot], "stage": stage, "mechanics": mechanic_details(slot)}
             for stage, slot in enumerate(item["bosses"], 1)
         ],
         "tips": (f"开启副本 {item['key']} 你的小猪 —— 发起这个副本的组队", *RAID_TIPS[1:]),
@@ -466,6 +468,11 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
             f"本群 {battle['rewarded']} 位玩家各获得 {battle['bonus']} 次再抽机会，"
             "今天再发「今日小猪」即可使用"
         )
+    for nature in battle.get("personalities", []):
+        settlement.append(
+            f"{display_name(nature['user'])}的「{nature['pig']}」获得性格【{nature['name']}】："
+            f"{nature['skill']}"
+        )
     status = battle["status"]
     if status == "waiting":
         next_step = (
@@ -547,23 +554,33 @@ def raid_video_job(settings: Settings, root: Path, battle: dict):
     return build
 
 
-def _pen_entries(progress: dict) -> list[dict]:
+def _pen_entries(progress: dict, filters: tuple[str, ...] = ()) -> list[dict]:
     """Owned pigs ordered 坦克 → 输出 → 治疗 → 辅助 for the pen card."""
     rank = {role: index for index, role in enumerate(ROLES)}
     items = []
     for pig in progress["entries"]:
         if not pig["count"]:
             continue
-        role = entry_for(pig.get("battle")).get("role", "输出")
+        battle = entry_for(pig.get("battle"))
+        role = battle.get("role", "输出")
         if role not in rank:
             role = "输出"
-        items.append({**pig, "role": role})
+        tags = battle.get("tags", [role])
+        if filters and not all(tag in tags for tag in filters):
+            continue
+        items.append({**pig, "role": role, "tags": tags})
     items.sort(key=lambda pig: (rank[pig["role"]], pig.get("sort_order", 0), pig["id"]))
     return items
 
 
 async def collection_message(
-    settings: Settings, root: Path, user: dict, progress: dict, page: int, atlas: bool
+    settings: Settings,
+    root: Path,
+    user: dict,
+    progress: dict,
+    page: int,
+    atlas: bool,
+    filters: tuple[str, ...] = (),
 ) -> Message:
     """The same in-memory cream card serves both delivery modes."""
     title = "小猪图鉴" if atlas else "我的猪圈"
@@ -571,7 +588,12 @@ async def collection_message(
         items = [p for p in progress["entries"] if p["enabled"]]
         view = progress
     else:
-        items = _pen_entries(progress)
+        invalid = [tag for tag in filters if tag not in TAGS]
+        if invalid:
+            raise PiggyError(
+                f"未知猪圈标签：{'/'.join(invalid)}。可用职业或机制标签筛选。"
+            )
+        items = _pen_entries(progress, filters)
         view = {
             **progress,
             "role_counts": {role: sum(1 for p in items if p["role"] == role) for role in ROLES},
@@ -588,6 +610,8 @@ async def collection_message(
         atlas,
         settings.battle_level_cap,
     )
+    if filters:
+        title += f"（{' · '.join(filters)}）"
     return card_message(settings, user, card, title, "atlas" if atlas else "pen", page, pages)
 
 
@@ -653,37 +677,29 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
     blocks = [
         "【等级】",
         [
-            f"同种猪有几只就是几级（上限 Lv{settings.battle_level_cap}），等级越高属性越强",
+            f"同种猪有几只就是几级（上限 Lv{settings.battle_level_cap}），等级越高属性成长越强",
             "1–5 级各解锁 1 个专属技能，每只猪最多 5 个技能",
             f"小猪属性 {example} —— 查看属性和技能",
         ],
-        "【斗猪】",
+        "【稀有度与性格】",
         [
-            f"斗猪 @群友 {example} —— 用你的猪发起挑战",
-            f"@ 识别不到时用玩家编号代替：斗猪 #编号 {example}（你的编号是 #{user['id']}，"
-            "编号显示在「我的猪圈」上）",
-            "对方发送「接受斗猪 他的猪」立即开打，或「拒绝斗猪」",
-            "回合制自动对战，赢家把输家出战的那只猪收进猪圈，输家这只猪降 1 级",
-            f"每天最多 {settings.duel_daily_limit} 场",
+            "稀有度分普通、稀有、史诗、传说、神话，决定基础属性、每级成长与技能数值",
+            "完整通关三关副本后，每只存活参战猪独立有 25% 概率觉醒永久性格",
+            "性格会增加一项独特战斗技能；已经觉醒的猪不会洗掉或重复获得",
         ],
         "【交换】",
         [
             f"小猪交换 @群友 {example} 对方的猪 —— 一换一",
+            f"@ 识别不到时可用玩家编号；你的编号是 #{user['id']}，编号显示在「我的猪圈」上",
             "对方发送「接受交换」成交，或「拒绝交换」",
         ],
         "【请求】",
         [
             f"我的请求 / 取消请求 —— 查看或撤回，{settings.request_ttl_minutes} 分钟内未处理自动作废",
         ],
-        "【战绩】",
-        [
-            "斗猪排行 —— 本群斗猪胜率排行，至少 3 场上榜",
-            "斗猪记录 [页码] —— 自己的历史对战",
-            "斗猪回放 编号 —— 重看某场的完整战报",
-        ],
         "【抽卡】",
         [
-            "今日小猪 —— 每天一抽，每只猪都可能触发猪群聚集（多得 1 只相同的）和小猪连抽（再抽 1 只）",
+            "今日小猪 —— 每天一抽；聚集得到的每一只也会独立再判定聚集，连抽则再抽一种猪",
             "有再抽机会时，当天再发「今日小猪」就能再抽一次",
         ],
         "【野猪】",
@@ -709,9 +725,9 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
         blocks.append(f"你的「{example}」有 {favorite['count']} 只，是你现在最强的出战选择。")
     return text_message(
         settings,
-        "小猪玩法：斗猪与交换",
+        "小猪玩法：养成、副本与交换",
         blocks,
-        buttons=[("小猪属性", "小猪属性 "), ("斗猪", "斗猪 "), ("我的请求", "我的请求")],
+        buttons=[("小猪属性", "小猪属性 "), ("猪副本", "猪副本"), ("小猪交换", "小猪交换 ")],
     )
 
 
@@ -720,10 +736,17 @@ def _skill_line(skill: dict, slot: int, level: int) -> str:
     return f"【{state}】{skill['name']}：{skill['text']}（{describe_skill(skill)}）"
 
 
-def stats_message(settings: Settings, user: dict, pig: dict, count: int, cap: int) -> Message:
+def stats_message(
+    settings: Settings,
+    user: dict,
+    pig: dict,
+    count: int,
+    cap: int,
+    personality: str | None = None,
+) -> Message:
     entry = entry_for(pig.get("battle"))
     level = level_for(count, cap)
-    unit = fighter(pig, entry, level)
+    unit = fighter(pig, entry, level, personality=personality)
     stats = unit["stats"]
     if count:
         owned = f"{display_name(user)} 拥有 {count} 只 · Lv{level}（上限 Lv{cap}）"
@@ -736,10 +759,34 @@ def stats_message(settings: Settings, user: dict, pig: dict, count: int, cap: in
         _skill_line(skill, slot, level if count else 0)
         for slot, skill in enumerate(entry["skills"], 1)
     ]
+    engine = entry.get("engine", {})
+    engine_lines = [
+        f"循环：{engine.get('loop', '暂无说明')}",
+        f"兑现：{engine.get('payoff', '暂无说明')}",
+        f"弱点：{engine.get('weakness', '暂无说明')}",
+        f"关联技能：{' → '.join(engine.get('skills', [])) or '暂无说明'}",
+    ]
+    nature = PERSONALITIES.get(personality or "")
+    nature_lines = (
+        [
+            f"性格：{nature['name']}",
+            f"额外技能：{nature['skill']['name']}——{nature['skill']['text']}",
+        ]
+        if nature
+        else ["性格：尚未觉醒（完整通关副本后有机会获得）"]
+    )
     return text_message(
         settings,
-        f"{pig['name']}（{entry.get('role', '输出')}·{entry['style']}）",
-        [owned, numbers, "技能", skills],
+        f"【{unit['rarity']}】{pig['name']}（{entry.get('role', '输出')}·{entry['style']}）",
+        [
+            owned,
+            numbers,
+            nature_lines,
+            f"核心引擎：{engine.get('name', entry['style'])}",
+            engine_lines,
+            "技能",
+            skills,
+        ],
     )
 
 

@@ -160,6 +160,18 @@ class RaidWinrateTests(unittest.TestCase):
         print("\n".join(lines))
         # Baseline party should clear most first bosses sometimes; finals may be near-zero.
         self.assertGreater(sum(stage1_rates) / len(stage1_rates), 0.05)
+        # These three dungeons previously sat at pathological 2% / 5% / 90%
+        # clear rates.  Keep distinct identities, but reject another hard wall or
+        # near-free clear after future skill-data changes.
+        for name in ("机械猪厂", "星际猪港", "熔岩猪窑"):
+            rate = dungeon_clears[name] / SEEDS
+            self.assertGreaterEqual(rate, 0.10, (name, rate))
+            self.assertLessEqual(rate, 0.65, (name, rate))
+        # Fresh-party difficulty should still move toward a harder final boss.
+        for item in (DUNGEONS[1], DUNGEONS[5], DUNGEONS[6]):
+            first = stage_wins[(item["name"], 1, item["bosses"][0])]
+            final = stage_wins[(item["name"], 3, item["bosses"][2])]
+            self.assertGreaterEqual(first, final, item["name"])
 
 
 if __name__ == "__main__":

@@ -11,6 +11,11 @@ class BossMechanics:
     pig_id = ""
     # (name, description) for each of the three mechanics.
     MECHANICS: tuple = ()
+    # One concise, engine-accurate counterplay hint for each mechanic.  The raid is
+    # fully automatic, so these may only describe build choices or conditions the
+    # simulator can actually resolve; never ask the player to stop attacking,
+    # switch targets or move on command.
+    COUNTERS: tuple = ()
     # Per-boss multipliers on top of the shared raid scaling.
     HP = 1.0
     ATK = 1.0
@@ -348,8 +353,8 @@ class Mechanical(BossMechanics):
         ("金属外壳", "防御很高，无视防御效果对它翻倍；每挨 6 次攻击会过热，防御归零 2 回合"),
         ("系统 bug", "每回合 10% 概率忘了自己是猪，原地哼哼一回合"),
     )
-    ATK = 1.4
-    HP = 2.15
+    ATK = 1.25
+    HP = 1.95
     DEF = 1.55
 
     def __init__(self, disabled=None):
@@ -412,8 +417,8 @@ class Cyberpunk(BossMechanics):
         ("义体进化", "每回合攻击 +4%，一直累积；驱散效果能把累积的加成清零"),
         ("超频过载", "生命低于 40% 后每回合行动 2 次，但每回合损失 4% 生命"),
     )
-    ATK = 1.08
-    HP = 1.25
+    ATK = 1.0
+    HP = 1.12
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -1069,8 +1074,8 @@ class StarCluster(BossMechanics):
             "星核生命低于 25% 后倒计时 3 回合，没打倒它就对全队造成各自最大生命 40% 的伤害",
         ),
     )
-    ATK = 1.3
-    HP = 1.38
+    ATK = 1.12
+    HP = 1.2
     GUARDS_FIRST = False
 
     def __init__(self, disabled=None):
@@ -1149,8 +1154,8 @@ class CosmicRing(BossMechanics):
             "每 4 回合落下 3 颗陨石，每颗打随机一只猪 0.8 倍伤害；被砸中两次的猪眩晕 1 回合",
         ),
     )
-    ATK = 1.3
-    HP = 1.48
+    ATK = 1.4
+    HP = 1.65
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -1225,8 +1230,8 @@ class Campfire(BossMechanics):
             "每回合按座位轮流当烤位：强制点名该座且受伤 +20%，回合结束烤位回 10% 生命，左右邻座各回 5%",
         ),
     )
-    HP = 0.92
-    ATK = 0.68
+    HP = 1.3
+    ATK = 1.2
     HEAT = {4: 22, 3: 8, 2: 0, 1: -15}
 
     def __init__(self, disabled=None):
@@ -1323,11 +1328,11 @@ class RedHot(BossMechanics):
         ),
         (
             "已读不回",
-            "每回合对它的第一次伤害无效；若整回合没有人打中它，它因憋着自损 6% 最大生命并失去 1 层越劝越火",
+            "每回合第一次伤害无效并留下已读标记；同回合再次命中会追问成功，使它自损 6% 最大生命并失去 1 层越劝越火",
         ),
     )
-    HP = 1.05
-    ATK = 0.88
+    HP = 1.35
+    ATK = 1.15
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -1335,7 +1340,7 @@ class RedHot(BossMechanics):
         self.lock = None
         self.round_damage = {}
         self.read = False
-        self.landed = False
+        self.replied = False
 
     def supported(self, battle, unit, kind):
         if not self.on(0) or self.stacks >= 6:
@@ -1353,7 +1358,7 @@ class RedHot(BossMechanics):
 
     def round_start(self, battle):
         self.read = False
-        self.landed = False
+        self.replied = False
         if self.on(1):
             if self.round_damage:
                 seat = max(self.round_damage, key=self.round_damage.get)
@@ -1395,7 +1400,7 @@ class RedHot(BossMechanics):
             self.say(
                 battle,
                 2,
-                f"{battle.boss.label} 已读不回，把这一下划掉了",
+                f"{battle.boss.label} 已读不回，把这一下划掉了；同回合再命中一次即可追问",
                 targets=[attacker] if attacker.side == 0 else (),
                 tag="read",
             )
@@ -1403,30 +1408,28 @@ class RedHot(BossMechanics):
         return raw
 
     def boss_struck(self, battle, attacker, dealt):
-        self.landed = True
         if attacker.seat is not None:
             self.round_damage[attacker.seat] = self.round_damage.get(attacker.seat, 0.0) + dealt
-
-    def round_end(self, battle):
-        if not self.on(2) or self.landed or not battle.boss.alive:
+        if not self.on(2) or not self.read or self.replied or not battle.boss.alive:
             return
+        self.replied = True
         lost = battle.hurt(battle.boss, battle.boss.max_hp * 0.06)
         if self.stacks > 0 and self.on(0):
             self.stacks -= 1
             battle.boss.mods["atk"] = battle.boss.mods.get("atk", 0) - 4
-            self.say(
-                battle,
-                2,
-                f"没人回它消息，{battle.boss.label} 憋坏了，自损 {round(lost)} 生命，火气 -1 层",
-                tag="burst",
-            )
+            suffix = "，火气 -1 层"
         else:
-            self.say(
-                battle,
-                2,
-                f"没人回它消息，{battle.boss.label} 憋坏了，自损 {round(lost)} 生命",
-                tag="burst",
-            )
+            suffix = ""
+        self.say(
+            battle,
+            2,
+            f"追问成功！{battle.boss.label} 绷不住了，自损 {round(lost)} 生命{suffix}",
+            targets=[attacker] if attacker.side == 0 else (),
+            tag="burst",
+        )
+
+    def round_end(self, battle):
+        pass
 
 
 class DragonPig(BossMechanics):
@@ -1445,8 +1448,8 @@ class DragonPig(BossMechanics):
             "每 3 回合以随机一只队员的座位为中心，灼烧该座及相邻座位（最多 3 只）",
         ),
     )
-    HP = 0.55
-    ATK = 0.7
+    HP = 0.62
+    ATK = 0.75
 
     def __init__(self, disabled=None):
         super().__init__(disabled)
@@ -1591,3 +1594,119 @@ BOSSES = {
         DragonPig,
     )
 }
+
+
+# Build-facing counterplay shown on the raid detail card and battle report.  Keeping
+# it separate from MECHANICS lets old saves/events continue to identify mechanics
+# by their stable name while the UI can explain how an automatic party answers
+# them.  Bracketed words are searchable skill/build tags rather than manual orders.
+BOSS_COUNTERS = {
+    "goblin-pig": (
+        "【持续伤害/多段】潜伏时持续伤害仍会结算；现身后自动恢复直接命中",
+        "【净化】可清掉熏味；速度增益也能抵消减速",
+        "【爆发】躺平的 2 回合是自动集火窗口，伤害提高 30%",
+    ),
+    "frozen-pig": (
+        "【净化/抗控】净化可清寒冷，抗控或篝火余温可挡冻结",
+        "【多段/破盾】攻击次数多的队伍更快击碎冰壳，之后暴击恢复",
+        "【爆发/减攻】冰壳碎后趁低防爆发；减攻可压住它的攻击提升",
+    ),
+    "everest-pig": (
+        "【加速/治疗】速度增益抵消爬升，群疗与护盾覆盖后期缺氧",
+        "【多段/持续伤害】单段封顶，攻击段数和持续伤害不受总量封顶",
+        "【护盾/净化】第 5 回合前周期性预警；护盾承伤，净化解除臣服",
+    ),
+    "error-404-pig": (
+        "【必中/真实伤害】未被观测时仍稳定命中，不依赖随机观测",
+        "【净化/抗控】净化型技能会清除自身 404，抗控构筑降低空转损失",
+        "【斩杀/爆发】从 40% 以上直接击倒可跳过回滚；否则只触发一次",
+    ),
+    "mechanical-pig": (
+        "【护盾/守护/减伤】锁定提前 1 回合预警，防护可自动覆盖被点名者",
+        "【多段/无视防御】6 次命中使其过热 2 回合；穿透效果收益翻倍",
+        "【稳定收益】系统故障是队伍的免费输出与恢复窗口",
+    ),
+    "cyberpunk-pig": (
+        "【错峰增益/持续恢复】第 3 回合清除后再施加增益，持续恢复不被删除",
+        "【驱散】任意成功驱散都能把累计攻击加成清零",
+        "【爆发/减攻/护盾】40% 后尽快收尾；双动同时承受减攻与护盾",
+    ),
+    "demon-pig": (
+        "【净化】开场诅咒可被净化；群体恢复可覆盖未及时清掉的流血",
+        "【均衡治疗】保持全队血线接近，生命比例对调的收益与风险都会降低",
+        "【护盾/守护/复活】避免减员就不会给它回血和攻击成长",
+    ),
+    "chained_crown_pig": (
+        "【护盾/群疗】每跨 25% 生命自动预警并冲击全队，群体防护承接冲击",
+        "【爆发/减攻】最后一条锁链断裂后尽快收尾，减攻压住完全解放",
+        "【加速/净化/抗控】提高最低速度减少固定受控；净化可解除臣服",
+    ),
+    "pig_god": (
+        "【多段/稳定伤害】多次命中摊薄暴击被好运抵消的波动",
+        "【护盾/闪避】目标会提前 1 回合预告，自动防护可覆盖被点名者",
+        "【范围/多段】守护灵出现后系统自动优先攻击；范围伤害可同时压低它们",
+    ),
+    "zombie-pig": (
+        "【净化/持续恢复】净化尸毒恢复治疗效率，持续恢复提前铺设也能稳住血线",
+        "【控制/减攻】控制与减攻减少末位扑咬；额外扑咬不是必定触发",
+        "【护盾/守护/复活】避免由 boss 亲手击倒即可阻止尸变增援",
+    ),
+    "pighub0876": (
+        "【真实/持续伤害/普通伤害】伤害类型齐全的队伍会自动利用阴阳弱点",
+        "【护盾/守护】附身只持续下一次行动，团队防护会自动承接误伤",
+        "【群疗/减攻】40% 后的双目标夹击由群疗、护盾和减攻共同处理",
+    ),
+    "skeleton-pig": (
+        "【续航】重组只有 2 次且血量递减，稳定续航可换完它的三条命",
+        "【单段爆发】单段伤害提高 25%；多段仍可用于破除其他次数型效果",
+        "【净化/加速】流血和减速都可净化；群疗覆盖爆炒的固定群伤",
+    ),
+    "pighub0233": (
+        "【护盾/持续恢复】先手不可抢，但开场护盾和持续恢复可提前生效",
+        "【即时治疗】少带可被抢走的护盾/闪避，或用即时治疗维持血线",
+        "【低暴击/减攻/群盾】低暴击构筑减慢成长；群盾承接 25% 的乾坤圈",
+    ),
+    "pighub0007": (
+        "【加速/爆发】加速抵消涨潮；退潮的低防回合会被自动爆发利用",
+        "【构筑多样性】禁疗与禁技交替，伤害、护盾、持续恢复可互相补位",
+        "【多段】每次命中剥 1 片鳞并给队伍护盾，多段技能加速破甲",
+    ),
+    "pighub0830": (
+        "【群疗/护盾】水压逐回合预警并递增，群体续航覆盖固定生命损失",
+        "【守护/减伤/护盾】诱光者必暴击后被标记，团队防护承接后续双倍攻击",
+        "【持续恢复/减攻】50% 前铺持续恢复，暗流后用减攻降低续航压力",
+    ),
+    "alien-pig": (
+        "【均衡队伍/召唤】随机离场不会锁死单一职业，均衡构筑能自动补位",
+        "【持续伤害/护盾】每 3 回合减益仅持续当回合，预先施加的效果照常结算",
+        "【群疗/护盾/持续伤害】离场 2 回合无法直击，防护抗扫射且持续伤害照常结算",
+    ),
+    "pighub0872": (
+        "【范围/多段】范围技能压低小星；重建会消耗星核 10% 生命",
+        "【稳定收益】伤害会自动均摊，系统选择任何目标都不会浪费单体输出",
+        "【爆发/护盾/群疗】25% 时明确倒数 3 回合；爆发击倒或防护承受爆炸",
+    ),
+    "pighub0336": (
+        "【多段/真实伤害】多段逐道拆环，真实伤害可直接穿过星环",
+        "【均衡速度/护盾】缩小速度差降低牵引影响，护盾保护被拉近者",
+        "【群盾/净化/抗控】第 4 回合周期预警；群盾承伤，净化解除眩晕",
+    ),
+    "pighub0315": (
+        "【减攻/护盾/守护】伤害转为下次攻击的余烬，团队防护承接被点名者",
+        "【减攻/续航】人数越多攻击越高但火力也更足，减攻与群疗稳定满编收益",
+        "【均衡续航】烤位由系统按座次轮换，并自动回复该座及相邻队员",
+    ),
+    "pighub0710": (
+        "【护盾/持续恢复】直接治疗和驱散会加火；护盾、减伤与已铺恢复不触发劝火",
+        "【守护/护盾/减伤】按上回合伤害自动点名，保护型技能承接 1.3 倍攻击",
+        "【多段/连携】首击会提示已读；同回合第 2 次命中自动追问并使其自损",
+    ),
+    "pighub0116": (
+        "【即时治疗/净化】少囤可被转移的增益和护盾，或用驱散清掉偷走的增益",
+        "【爆发/多段】每 4 回合蓄力且防御 -30%，累计 12% 生命伤害即可打断",
+        "【群盾/群疗/净化】第 3 回合周期预警；群防承伤，净化灼烧",
+    ),
+}
+
+for _pig_id, _counters in BOSS_COUNTERS.items():
+    BOSSES[_pig_id].COUNTERS = _counters
