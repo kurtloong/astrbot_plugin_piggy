@@ -171,6 +171,9 @@ class DrawAndWildTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("聚集", labels)
         self.assertIn("连抽", labels)
         self.assertTrue(any("本次共 3 只" in label for label in labels))
+        expected_tags = {tag for item in result["items"] for tag in item["pig"]["tags"]}
+        self.assertTrue(expected_tags.issubset(labels))
+        self.assertTrue(all(item["pig"]["rarity"] for item in result["items"]))
 
     async def test_one_wild_pig_per_group_per_day(self):
         first = await self.db.wild_pig("app", "group", NOW, level_max=20)
