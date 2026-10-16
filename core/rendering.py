@@ -48,6 +48,51 @@ _COVERAGE: dict[tuple[str, str], bool] = {}
 PALETTE_MAX_ERROR = 1.5
 
 
+def _draw_rarity_frame(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    rarity: str,
+    *,
+    radius: int = 18,
+    sold: bool = False,
+):
+    """Draw the shared tier frame used by collection and shop cards."""
+    info = RARITIES.get(rarity, RARITIES["普通"])
+    rank = info["rank"]
+    color = SUB if sold else info["color"]
+    right, bottom = x + width, y + height
+    draw.rounded_rectangle((x, y + 3, right, bottom + 3), radius=radius, fill=BORDER)
+    draw.rounded_rectangle(
+        (x, y, right, bottom),
+        radius=radius,
+        fill="#f1ece6" if sold else "#ffffff",
+        outline=color,
+        width=2 if rank == 1 else 3,
+    )
+    if rank >= 2:
+        draw.rounded_rectangle(
+            (x + 4, y + 4, right - 4, bottom - 4),
+            radius=max(8, radius - 4),
+            outline=SUB if sold else ("#d9e9ff" if rank == 2 else color),
+            width=1 if rank < 4 else 2,
+        )
+    if rank >= 3:
+        edge = 24 if rank == 3 else 31
+        for left in (x + 9, right - 9 - edge):
+            draw.line((left, y + 8, left + edge, y + 8), fill=color, width=3)
+            draw.line((left, bottom - 8, left + edge, bottom - 8), fill=color, width=3)
+    if rank == 5:
+        gold = SUB if sold else RARITIES["传说"]["color"]
+        for cx in (x + 12, right - 12):
+            draw.polygon(
+                ((cx, y + 5), (cx + 5, y + 10), (cx, y + 15), (cx - 5, y + 10)),
+                fill=gold,
+            )
+
+
 @lru_cache(maxsize=8)
 def _digest(source: Path) -> str:
     return hashlib.sha256(source.read_bytes()).hexdigest()[:16]
@@ -266,40 +311,7 @@ def render_collection(
 
     def rarity_frame(x: int, y: int, rarity: str):
         """Draw tier-specific framing so rarity remains visible without reading text."""
-        info = RARITIES.get(rarity, RARITIES["普通"])
-        rank = info["rank"]
-        color = info["color"]
-        right = x + PEN_CARD_WIDTH
-        bottom = y + PEN_CARD_HEIGHT
-        draw.rounded_rectangle((x, y + 3, right, bottom + 3), radius=18, fill=BORDER)
-        draw.rounded_rectangle(
-            (x, y, right, bottom),
-            radius=18,
-            fill="#ffffff",
-            outline=color,
-            width=2 if rank == 1 else 3,
-        )
-        if rank >= 2:
-            draw.rounded_rectangle(
-                (x + 4, y + 4, right - 4, bottom - 4),
-                radius=14,
-                outline="#d9e9ff" if rank == 2 else color,
-                width=1 if rank < 4 else 2,
-            )
-        if rank >= 3:
-            # Epic and above gain ornamental corner strokes in addition to colour.
-            edge = 24 if rank == 3 else 31
-            for left in (x + 9, right - 9 - edge):
-                draw.line((left, y + 8, left + edge, y + 8), fill=color, width=3)
-                draw.line((left, bottom - 8, left + edge, bottom - 8), fill=color, width=3)
-        if rank == 5:
-            # Mythic uses a second gold diamond, making it distinct from legendary gold.
-            gold = RARITIES["传说"]["color"]
-            for cx in (x + 12, right - 12):
-                draw.polygon(
-                    ((cx, y + 5), (cx + 5, y + 10), (cx, y + 15), (cx - 5, y + 10)),
-                    fill=gold,
-                )
+        _draw_rarity_frame(draw, x, y, PEN_CARD_WIDTH, PEN_CARD_HEIGHT, rarity)
 
     def draw_tags(tags: list[str], x: int, y: int):
         """Fit every controlled tag into at most two compact, readable rows."""
@@ -334,9 +346,18 @@ def render_collection(
 
     def draw_pig(pig: dict, x: int, y: int, locked: bool):
         if atlas:
-            draw.rounded_rectangle(
-                (x, y, x + 114, y + 110), radius=18, fill="#e5e5e5" if locked else "#ffffff"
-            )
+            if locked:
+                draw.rounded_rectangle((x, y, x + 114, y + 110), radius=18, fill="#e5e5e5")
+            else:
+                _draw_rarity_frame(
+                    draw,
+                    x,
+                    y,
+                    114,
+                    110,
+                    pig.get("rarity", "普通"),
+                    radius=18,
+                )
             box_w, box_h = 96, 94
             cx, cy = x + 57, y + 55
             if locked:
@@ -454,6 +475,51 @@ class Canvas:
         return lines
 
 
+def _draw_tags(
+    canvas: Canvas,
+    tags: list[str],
+    x: int,
+    y: int,
+    width: int,
+    *,
+    size: int = 12,
+    max_lines: int = 2,
+    muted: bool = False,
+):
+    """Draw compact role/mechanic chips consistently across feature cards."""
+    cursor_x, cursor_y = x, y
+    right = x + width
+    line = 0
+    pill_h = size + 7
+    line_step = pill_h + 4
+    for index, label in enumerate(tags[:4]):
+        label = str(label)
+        label_width = canvas.measure(label, size, index == 0)
+        pill_width = math.ceil(label_width) + 12
+        if cursor_x + pill_width > right and cursor_x > x:
+            line += 1
+            cursor_x = x
+            cursor_y += line_step
+        if line >= max_lines:
+            break
+        fill = SUB if muted else (TEXT if index == 0 else PANEL)
+        color = "#ffffff" if index == 0 or muted else TEXT
+        canvas.draw.rounded_rectangle(
+            (cursor_x, cursor_y, cursor_x + pill_width, cursor_y + pill_h),
+            radius=pill_h // 2,
+            fill=fill,
+        )
+        canvas.text(
+            label,
+            cursor_x + (pill_width - label_width) / 2,
+            cursor_y + 1,
+            size,
+            color,
+            index == 0,
+        )
+        cursor_x += pill_width + 4
+
+
 def render_today(
     root: Path,
     name: str,
@@ -477,24 +543,37 @@ def render_today(
     canvas.image.close()
     description_y = 870
     panel_bottom = description_y + 58 + 43 * len(lines)
-    columns, tile_w, tile_h = 4, 224, 230
+    columns, tile_w, tile_h = 5, PEN_CARD_WIDTH, PEN_CARD_HEIGHT
     rows = math.ceil(len(extras) / columns)
     grid_top = panel_bottom + 40
-    grid_bottom = grid_top + (70 + rows * 246 if extras else 0)
+    grid_bottom = grid_top + (70 + rows * PEN_ROW_STEP if extras else 0)
     canvas = Canvas(root, WIDTH, grid_bottom + 262 + (40 if summary else 0))
     canvas.text("PIGGY  /  DAILY", 58, 34, 18, ACCENT, True)
     canvas.text(title, 54, 76, 56, bold=True, width=760)
     canvas.text(name, 58, 158, 25, SUB, width=700)
     canvas.text(result["day"], 826, 43, 19, SUB)
-    canvas.draw.rounded_rectangle((56, 222, 1024, 824), radius=32, fill="#ffffff")
+    rarity = pig.get("rarity") or rarity_for(pig.get("id", pig["name"]))
+    rarity_color = RARITIES.get(rarity, RARITIES["普通"])["color"]
+    _draw_rarity_frame(canvas.draw, 56, 222, 968, 602, rarity, radius=32)
     canvas.draw.rounded_rectangle((84, 244, 994, 704), radius=25, fill="#f9f4ed")
     with Image.open(root / "assets" / pig["asset"]) as original:
         art = original.convert("RGBA")
         art.thumbnail((580, 418), Image.Resampling.LANCZOS)
         canvas.image.paste(art, ((WIDTH - art.width) // 2, 265 + (418 - art.height) // 2), art)
         art.close()
-    canvas.text(f"【{rarity_for(pig.get('id', pig['name']))}】", 88, 714, 18, ACCENT, True)
-    canvas.text(pig["name"], 88, 738, 39, bold=True, width=566)
+    badge_width = math.ceil(canvas.measure(rarity, 16, True)) + 22
+    canvas.draw.rounded_rectangle((88, 714, 88 + badge_width, 741), radius=13, fill=rarity_color)
+    canvas.text(rarity, 99, 716, 16, "#ffffff", True)
+    canvas.text(pig["name"], 88, 746, 36, bold=True, width=566)
+    _draw_tags(
+        canvas,
+        pig.get("tags") or [pig.get("role", "输出")],
+        88,
+        793,
+        550,
+        size=13,
+        max_lines=1,
+    )
     canvas.text(state, 674, 755, 22, ACCENT, width=314)
     canvas.draw.rounded_rectangle((56, description_y, 1024, panel_bottom), radius=28, fill=PANEL)
     for i, line in enumerate(lines):
@@ -503,47 +582,42 @@ def render_today(
         canvas.text("本次还获得", 58, grid_top, 30, bold=True)
         canvas.text(f"共 {len(extras)} 只", 900, grid_top + 8, 20, SUB)
         for index, item in enumerate(extras):
-            x = 56 + (index % columns) * 248
-            y = grid_top + 62 + (index // columns) * 246
+            x = 56 + (index % columns) * PEN_COLUMN_STEP
+            y = grid_top + 62 + (index // columns) * PEN_ROW_STEP
+            extra = item["pig"]
+            extra_rarity = extra.get("rarity") or rarity_for(extra.get("id", extra["name"]))
+            extra_color = RARITIES.get(extra_rarity, RARITIES["普通"])["color"]
+            _draw_rarity_frame(canvas.draw, x, y, tile_w, tile_h, extra_rarity)
             canvas.draw.rounded_rectangle(
-                (x, y + 3, x + tile_w, y + tile_h + 3), radius=23, fill=BORDER
+                (x + 10, y + 10, x + 174, y + 105), radius=12, fill="#f9f4ed"
             )
-            canvas.draw.rounded_rectangle((x, y, x + tile_w, y + tile_h), radius=23, fill="#ffffff")
-            canvas.draw.rounded_rectangle(
-                (x + 12, y + 12, x + 212, y + 154), radius=17, fill="#f9f4ed"
-            )
-            _paste_art(canvas, root, item["pig"]["asset"], (x + 32, y + 19, 160, 128))
+            _paste_art(canvas, root, extra["asset"], (x + 21, y + 15, 142, 85))
             badge = "聚集" if item["kind"] == "gather" else "连抽"
             canvas.draw.rounded_rectangle(
-                (x + 150, y + 18, x + 206, y + 46),
-                radius=14,
+                (x + 124, y + 16, x + 172, y + 40),
+                radius=12,
                 fill=ACCENT if badge == "连抽" else TEXT,
             )
-            canvas.text(badge, x + 158, y + 19, 18, "#ffffff", True)
+            canvas.text(badge, x + 132, y + 17, 14, "#ffffff", True)
             if item["new"]:
                 canvas.draw.rounded_rectangle(
-                    (x + 18, y + 18, x + 74, y + 46), radius=14, fill="#d9a441"
+                    (x + 16, y + 16, x + 64, y + 40), radius=12, fill="#d9a441"
                 )
-                canvas.text("NEW", x + 26, y + 20, 17, "#ffffff", True)
-            canvas.text(
-                f"【{rarity_for(item['pig'].get('id', item['pig']['name']))}】",
-                x + 18,
-                y + 142,
-                15,
-                ACCENT,
-                True,
+                canvas.text("NEW", x + 23, y + 17, 14, "#ffffff", True)
+            extra_badge_width = math.ceil(canvas.measure(extra_rarity, 12, True)) + 18
+            canvas.draw.rounded_rectangle(
+                (x + 10, y + 111, x + 10 + extra_badge_width, y + 131),
+                radius=10,
+                fill=extra_color,
             )
-            label = item["pig"]["name"]
-            if canvas.measure(label, 23, True) > 198:
-                while label and canvas.measure(label + "…", 23, True) > 198:
-                    label = label[:-1]
-                label += "…"
-            canvas.text(
-                label,
-                x + 112 - canvas.measure(label, 23, True) / 2,
-                y + 168,
-                23,
-                bold=True,
+            canvas.text(extra_rarity, x + 19, y + 112, 12, "#ffffff", True)
+            canvas.text(extra["name"], x + 10, y + 136, 17, TEXT, True, tile_w - 20)
+            _draw_tags(
+                canvas,
+                extra.get("tags") or [extra.get("role", "输出")],
+                x + 9,
+                y + 165,
+                tile_w - 18,
             )
     y = grid_bottom + 35
     if summary:
@@ -584,13 +658,21 @@ def render_wild(root: Path, wild: dict, unit: dict, describe) -> Card:
         SUB,
         width=960,
     )
-    canvas.draw.rounded_rectangle(
-        (56, 222, 1024, 780), radius=32, fill="#efe9e2" if tamed else "#ffffff"
+    _draw_rarity_frame(
+        canvas.draw, 56, 222, 968, 558, unit["rarity"], radius=32, sold=tamed
     )
     canvas.draw.rounded_rectangle((84, 244, 994, 664), radius=25, fill="#f9f4ed")
     _paste_art(canvas, root, wild["pig"]["asset"], (250, 262, 580, 384), faded=tamed)
-    canvas.text(f"【{unit['rarity']}】", 88, 674, 18, ACCENT, True)
+    rarity_color = RARITIES.get(unit["rarity"], RARITIES["普通"])["color"]
+    rarity_width = math.ceil(canvas.measure(unit["rarity"], 16, True)) + 22
+    canvas.draw.rounded_rectangle(
+        (88, 674, 88 + rarity_width, 701),
+        radius=13,
+        fill=SUB if tamed else rarity_color,
+    )
+    canvas.text(unit["rarity"], 99, 676, 16, "#ffffff", True)
     canvas.text(wild["pig"]["name"], 88, 698, 38, bold=True, width=640)
+    _draw_tags(canvas, unit.get("tags") or [unit.get("role", "输出")], 88, 748, 650, muted=tamed)
     canvas.draw.rounded_rectangle((780, 690, 994, 746), radius=28, fill=SUB if tamed else ACCENT)
     role = unit.get("role") or ""
     level = f"Lv{wild['level']} · {role + ' · ' if role else ''}{unit['style']}"
@@ -630,9 +712,9 @@ def render_wild(root: Path, wild: dict, unit: dict, describe) -> Card:
 
 
 def render_shop(root: Path, name: str, shop: dict, level_cap: int) -> Card:
-    """Today's shelf: five tiles with art, name and what the viewer gains."""
+    """Today's shelf: five dense tiles with rarity frames and build tags."""
     items = shop["items"]
-    columns, tile_w, tile_h, gap = 3, 304, 408, 28
+    columns, tile_w, tile_h, gap = 5, 184, 302, 12
     top = 262
     rows = max(1, math.ceil(len(items) / columns))
     canvas = Canvas(root, WIDTH, top + rows * (tile_h + gap) + 104)
@@ -642,43 +724,53 @@ def render_shop(root: Path, name: str, shop: dict, level_cap: int) -> Card:
     canvas.text(f"{name} · {shop['day']}", 58, 158, 25, SUB, width=700)
     canvas.draw.rounded_rectangle((56, 206, 1024, 240), radius=17, fill=PANEL)
     canvas.text(f"剩余 {left}/{len(items)} 件 · 每件限量 1 只，先到先得", 80, 210, 20, TEXT)
+
     for index, item in enumerate(items):
         x = 56 + (index % columns) * (tile_w + gap)
         y = top + (index // columns) * (tile_h + gap)
         sold = bool(item["buyer"])
+        pig = item["pig"]
+        rarity = pig.get("rarity") or rarity_for(pig.get("id", pig["name"]))
+        rarity_color = RARITIES.get(rarity, RARITIES["普通"])["color"]
+        _draw_rarity_frame(canvas.draw, x, y, tile_w, tile_h, rarity, sold=sold)
         canvas.draw.rounded_rectangle(
-            (x, y + 3, x + tile_w, y + tile_h + 3), radius=24, fill=BORDER
+            (x + 10, y + 10, x + tile_w - 10, y + 112), radius=12, fill="#f9f4ed"
         )
-        canvas.draw.rounded_rectangle(
-            (x, y, x + tile_w, y + tile_h), radius=24, fill="#efe9e2" if sold else "#ffffff"
-        )
-        canvas.draw.rounded_rectangle(
-            (x + 14, y + 14, x + tile_w - 14, y + 250), radius=18, fill="#f9f4ed"
-        )
-        with Image.open(root / "assets" / item["pig"]["asset"]) as original:
+        with Image.open(root / "assets" / pig["asset"]) as original:
             art = ImageOps.exif_transpose(original).convert("RGBA")
-        art.thumbnail((tile_w - 52, 214), Image.Resampling.LANCZOS)
+        art.thumbnail((142, 88), Image.Resampling.LANCZOS)
         if sold:
             art = ImageOps.grayscale(art.convert("RGB")).convert("RGBA")
             art.putalpha(110)
         canvas.image.paste(
-            art, (x + (tile_w - art.width) // 2, y + 32 + (214 - art.height) // 2), art
+            art, (x + (tile_w - art.width) // 2, y + 17 + (88 - art.height) // 2), art
         )
         art.close()
-        canvas.draw.ellipse((x + 22, y + 22, x + 66, y + 66), fill=SUB if sold else ACCENT)
+        canvas.draw.ellipse((x + 16, y + 16, x + 50, y + 50), fill=SUB if sold else ACCENT)
         badge = str(item["slot"])
-        face = canvas.font(24, True)
+        face = canvas.font(18, True)
         canvas.draw.text(
-            (x + 44 - canvas.draw.textlength(badge, font=face) / 2, y + 28),
+            (x + 33 - canvas.draw.textlength(badge, font=face) / 2, y + 20),
             badge,
             font=face,
             fill="#ffffff",
         )
-        lines = canvas.wrap(item["pig"]["name"], 26, tile_w - 40)
-        if len(lines) > 2:
-            lines = [lines[0], lines[1][:-1] + "…"]
-        for row, line in enumerate(lines):
-            canvas.text(line, x + 20, y + 264 + row * 36, 26, SUB if sold else TEXT, True)
+        badge_width = math.ceil(canvas.measure(rarity, 12, True)) + 18
+        canvas.draw.rounded_rectangle(
+            (x + 10, y + 119, x + 10 + badge_width, y + 139),
+            radius=10,
+            fill=SUB if sold else rarity_color,
+        )
+        canvas.text(rarity, x + 19, y + 120, 12, "#ffffff", True)
+        canvas.text(pig["name"], x + 10, y + 144, 18, SUB if sold else TEXT, True, tile_w - 20)
+        _draw_tags(
+            canvas,
+            pig.get("tags") or [pig.get("role", "输出")],
+            x + 9,
+            y + 173,
+            tile_w - 18,
+            muted=sold,
+        )
         if sold:
             status, color = f"已被 {display(item['buyer'])} 换走", SUB
         elif item["owned"]:
@@ -686,7 +778,8 @@ def render_shop(root: Path, name: str, shop: dict, level_cap: int) -> Card:
             status, color = f"已有 {item['owned']} 只 · 换后 Lv{level}", TEXT
         else:
             status, color = "新图鉴！换到即解锁", ACCENT
-        canvas.text(status, x + 20, y + tile_h - 50, 20, color, width=tile_w - 40)
+        canvas.draw.line((x + 10, y + 251, x + tile_w - 10, y + 251), fill=BORDER, width=1)
+        canvas.text(status, x + 10, y + 260, 14, color, True, width=tile_w - 20)
     footer = canvas.image.height - 78
     canvas.draw.line((56, footer, 1024, footer), fill=BORDER, width=2)
     canvas.text(

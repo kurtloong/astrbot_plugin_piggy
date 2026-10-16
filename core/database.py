@@ -397,6 +397,18 @@ class Database:
 
             def finish(session, created):
                 items = json.loads(session["items"])
+                # Old same-day snapshots predate visual role/tag metadata. Rehydrate it from
+                # the current catalog so repeat views render exactly like fresh draws.
+                for item in items:
+                    pig = item["pig"]
+                    current = conn.execute(
+                        "SELECT battle FROM pigs WHERE id=?", (pig["id"],)
+                    ).fetchone()
+                    battle = entry_for(current["battle"] if current else None)
+                    pig["role"] = battle.get("role", "输出")
+                    pig["style"] = battle.get("style", "均衡")
+                    pig["tags"] = battle.get("tags", [pig["role"]])
+                    pig["rarity"] = rarity_for(pig["id"])
                 first = items[0]["pig"]
                 sessions_today = conn.execute(
                     "SELECT count(*) FROM draw_sessions WHERE user_id=? AND day=? AND id<=?",
@@ -453,7 +465,11 @@ class Database:
             if not available:
                 raise PiggyError("猪库没有启用的小猪，请联系管理员检查。")
             for pig in available:
-                pig.pop("battle", None)
+                battle = entry_for(pig.pop("battle", None))
+                pig["role"] = battle.get("role", "输出")
+                pig["style"] = battle.get("style", "均衡")
+                pig["tags"] = battle.get("tags", [pig["role"]])
+                pig["rarity"] = rarity_for(pig["id"])
             owned_ids = {
                 row[0]
                 for row in conn.execute(
@@ -1897,7 +1913,10 @@ class Database:
         for row in rows:
             item = dict(row)
             pig = dict(conn.execute("SELECT * FROM pigs WHERE id=?", (row["pig_id"],)).fetchone())
-            pig.pop("battle", None)
+            battle = entry_for(pig.pop("battle", None))
+            pig["role"] = battle.get("role", "输出")
+            pig["tags"] = battle.get("tags", [pig["role"]])
+            pig["rarity"] = rarity_for(pig["id"])
             item["pig"] = pig
             item["buyer"] = (
                 dict(conn.execute("SELECT * FROM users WHERE id=?", (row["sold_to"],)).fetchone())

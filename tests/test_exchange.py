@@ -457,6 +457,10 @@ class ShopTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("已被 阿离 换走", labels)
         self.assertIn("新图鉴！换到即解锁", labels)
         self.assertTrue(any("剩余 4/5 件" in label for label in labels))
+        self.assertIn("输出", labels)
+        expected_tags = {tag for item in shop["items"] for tag in item["pig"]["tags"]}
+        self.assertTrue(expected_tags.issubset(labels))
+        self.assertTrue(any(label in {"普通", "稀有", "史诗", "传说", "神话"} for label in labels))
         hosted = await shop_message(Settings(display={"shop": True}), self.root, self.bob, shop)
         self.assertFalse(hosted.local)
         self.assertIn("今日小猪商店", hosted.text)
