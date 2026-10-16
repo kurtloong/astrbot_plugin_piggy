@@ -820,20 +820,30 @@ def fighter(
 
 def _target_label(target: str | None) -> str:
     return {
-        None: "",
+        None: "自身",
         "self": "自身",
-        "enemy": "对手",
+        "enemy": "敌方",
         "ally_lowest": "生命最低队友",
         "ally_random": "随机队友",
         "ally_all": "全体队友",
         "ally_missing": "缺血最多队友",
         "ally_tank": "坦克队友",
-    }.get(target or "self", "")
+    }.get(target or "self", "自身")
 
 
-def describe_effect(effect: dict) -> str:
+def _duration_text(effect: dict, default: int, passive: bool) -> str:
+    if "turns" in effect:
+        return f"，持续 {effect['turns']} 回合"
+    return "，常驻" if passive else f"，持续 {default} 回合"
+
+
+def _chance_text(effect: dict, text: str) -> str:
+    chance = effect.get("chance", 100)
+    return f"{chance}% 概率触发：{text}" if chance < 100 else text
+
+
+def describe_effect(effect: dict, *, passive: bool = False) -> str:
     kind = effect["type"]
-    chance = f"{effect['chance']}% 概率" if effect.get("chance", 100) < 100 else ""
     if kind == "damage":
         power = f"{effect['power']:g}"
         if "power_max" in effect:
@@ -841,9 +851,9 @@ def describe_effect(effect: dict) -> str:
         base = {"atk": "攻击", "def": "防御", "spd": "速度", "hp": "生命"}[
             effect.get("scale", "atk")
         ]
-        text = f"{power} 倍{base}伤害"
+        text = f"对敌方造成 {power} 倍{base}伤害"
         if effect.get("hits", 1) > 1:
-            text = f"{effect['hits']} 段 × {text}"
+            text = f"对敌方攻击 {effect['hits']} 段，每段造成 {power} 倍{base}伤害"
         extras = []
         if effect.get("true"):
             extras.append("真实伤害")
@@ -852,183 +862,277 @@ def describe_effect(effect: dict) -> str:
         if effect.get("sure"):
             extras.append("必中")
         if effect.get("drain"):
-            extras.append(f"吸血 {effect['drain']:g}%")
+            extras.append(f"按伤害的 {effect['drain']:g}% 回复自身生命")
         if effect.get("execute"):
-            extras.append(f"对手低于 {effect['execute']:g}% 生命时伤害提高")
+            extras.append(f"敌方生命不高于 {effect['execute']:g}% 时伤害提高")
         if effect.get("threshold"):
-            extras.append(f"按已损生命追加（阈值 {effect['threshold']:g}%）")
+            extras.append(f"按敌方已损生命额外提高伤害（系数 {effect['threshold']:g}%）")
         if effect.get("cleave"):
-            extras.append(f"溅射 {effect['cleave']:g}%")
+            extras.append(f"向其他敌人溅射 {effect['cleave']:g}%")
         if effect.get("overflow"):
-            extras.append("击杀溢出")
+            extras.append("击杀后的溢出伤害转向其他敌人")
         if effect.get("combo_bonus"):
-            extras.append(f"消耗连击强化 {effect['combo_bonus']:g}%/层")
+            extras.append(f"消耗全部连击，每层增伤 {effect['combo_bonus']:g}%")
         if extras:
-            text += "，" + "，".join(extras)
+            text += "（" + "；".join(extras) + "）"
     elif kind == "heal":
         who = _target_label(effect.get("target"))
-        text = f"{who + '：' if who and who != '自身' else ''}回复 {effect['pct']:g}% 生命"
+        text = f"为{who}回复 {effect['pct']:g}% 最大生命"
         if effect.get("overheal_shield"):
-            text += "，溢出转护盾"
+            text += "（溢出治疗转为护盾）"
         if effect.get("crit_heal"):
-            text += "，可暴击治疗"
+            text += "（可暴击）"
     elif kind == "shield":
         who = _target_label(effect.get("target"))
-        text = f"{who + '：' if who and who != '自身' else ''}获得 {effect['pct']:g}% 生命的护盾"
+        text = f"为{who}施加相当于其 {effect['pct']:g}% 最大生命的护盾"
     elif kind == "stun":
-        who = "自己" if effect.get("target") == "self" else "对手"
-        text = f"使{who}{effect.get('label', '眩晕')} {effect.get('turns', 1)} 回合"
+        who = "自身" if effect.get("target") == "self" else "敌方"
+        text = f"使{who}陷入{effect.get('label', '眩晕')}，持续 {effect.get('turns', 1)} 回合"
     elif kind == "dot":
         text = (
-            f"{effect['label'] if 'label' in effect else '持续伤害'}：每回合 {effect['pct']:g}% 生命，"
+            f"使敌方获得{effect.get('label', '持续伤害')}：每回合损失 {effect['pct']:g}% 最大生命，"
             f"持续 {effect['turns']} 回合"
         )
-        if effect.get("stacks"):
-            text += f"，叠加 {effect['stacks']}"
+        if effect.get("stacks", 1) > 1:
+            text += f"，一次叠加 {effect['stacks']} 层"
+        if effect.get("max_stacks"):
+            text += f"，最多 {effect['max_stacks']} 层"
         if effect.get("spread"):
-            text += "，可扩散"
+            text += "，并以半数效果扩散给一名其他敌人"
     elif kind == "buff":
-        who = _target_label(effect.get("target")) or "自身"
-        if effect.get("target") == "enemy":
-            who = "对手"
+        who = _target_label(effect.get("target"))
         sign = "+" if effect["pct"] >= 0 else ""
         unit = "%" if effect["stat"] in ("atk", "def", "spd") else " 点"
-        turns = f"，{effect['turns']} 回合" if effect.get("turns", 99) < 99 else ""
-        text = f"{who}{STAT_NAMES[effect['stat']]} {sign}{effect['pct']:g}{unit}{turns}"
+        text = (
+            f"使{who}{STAT_NAMES[effect['stat']]} {sign}{effect['pct']:g}{unit}"
+            + _duration_text(effect, 2, passive)
+        )
     elif kind == "thorns":
-        turns = f"，{effect['turns']} 回合" if effect.get("turns", 99) < 99 else ""
-        text = f"反弹 {effect['pct']:g}% 受到的伤害{turns}"
+        text = f"自身反弹 {effect['pct']:g}% 受到的伤害" + _duration_text(effect, 2, passive)
     elif kind == "crit_amp":
-        text = f"暴击伤害提高到 {effect['multiplier']:g} 倍"
+        text = f"使自身暴击伤害倍率提高到 {effect['multiplier']:g} 倍"
     elif kind == "regen":
-        turns = f"，{effect['turns']} 回合" if effect.get("turns", 99) < 99 else ""
-        text = f"每回合回复 {effect['pct']:g}% 生命{turns}"
+        who = _target_label(effect.get("target"))
+        text = f"使{who}每回合回复 {effect['pct']:g}% 最大生命" + _duration_text(effect, 3, passive)
+        if effect.get("stacks", 1) > 1:
+            text += f"，效果按 {effect['stacks']} 层结算"
     elif kind == "evade":
-        text = f"完全躲开接下来 {effect.get('count', 1)} 次攻击"
+        text = (
+            f"使{_target_label(effect.get('target'))}完全躲开接下来 {effect.get('count', 1)} 次攻击"
+        )
     elif kind == "cleanse":
-        text = "清除负面状态"
+        text = f"清除{_target_label(effect.get('target'))}的所有可净化负面状态"
     elif kind == "dispel":
-        text = "驱散对手增益和护盾"
+        text = "驱散敌方的增益与护盾"
     elif kind == "copy":
-        text = "复制对手上一个技能"
+        text = "复制敌方上一次施放的技能"
         if effect.get("pct", 100) != 100:
             text += f"（效果 {effect['pct']:g}%）"
     elif kind == "recoil":
-        text = f"自身损失 {effect['pct']:g}% 生命"
+        text = f"自身损失 {effect['pct']:g}% 最大生命"
     elif kind == "revive":
-        text = f"倒下时以 {effect['pct']:g}% 生命复活一次"
+        text = f"首次倒下时以 {effect['pct']:g}% 最大生命复活"
     elif kind == "taunt":
-        text = f"嘲讽 {effect['turns']} 回合"
+        text = f"自身嘲讽敌方，持续 {effect['turns']} 回合"
     elif kind == "redirect":
-        text = f"强制吸引攻击 {effect['turns']} 回合"
+        text = f"自身强制吸引单体攻击，持续 {effect['turns']} 回合"
     elif kind == "guard":
-        text = f"守护队友，转移 {effect['pct']:g}% 伤害，{effect['turns']} 回合"
+        text = (
+            f"守护{_target_label(effect.get('target') or 'ally_lowest')}，由自身承受其 "
+            f"{effect['pct']:g}% 伤害，持续 {effect['turns']} 回合"
+        )
     elif kind == "share":
-        text = f"灵魂链接，分摊 {effect['pct']:g}% 伤害，{effect['turns']} 回合"
+        text = f"链接全体队友并分摊 {effect['pct']:g}% 伤害，持续 {effect['turns']} 回合"
     elif kind == "aura":
         parts = []
         if "stat" in effect:
-            parts.append(f"队友{STAT_NAMES[effect['stat']]}+{effect['pct']:g}%")
+            parts.append(f"全体队友{STAT_NAMES[effect['stat']]} +{effect['pct']:g}%")
         if "heal_pct" in effect:
-            parts.append(f"每回合治疗 {effect['heal_pct']:g}%")
-        text = "光环：" + "，".join(parts)
+            parts.append(f"全体队友每回合回复 {effect['heal_pct']:g}% 最大生命")
+        text = "展开常驻光环：" + "；".join(parts)
     elif kind == "mitigate":
-        text = f"减伤 {effect['pct']:g}%，{effect.get('turns', 2)} 回合"
+        text = f"自身受到的伤害降低 {effect['pct']:g}%" + _duration_text(effect, 2, passive)
     elif kind == "block":
-        text = f"格挡 {effect['count']} 次（减免 {effect.get('pct', 100):g}%）"
+        text = f"自身格挡接下来 {effect['count']} 次伤害（每次减免 {effect.get('pct', 100):g}%）"
     elif kind == "absorb":
-        text = f"吸收盾 {effect['pct']:g}% 生命"
+        text = f"自身获得相当于 {effect['pct']:g}% 最大生命的吸收盾"
         if effect.get("break_power"):
-            text += f"，破碎反击 {effect['break_power']:g} 倍"
+            text += f"，护盾破碎时对敌方造成 {effect['break_power']:g} 倍攻击伤害"
     elif kind == "reflect":
-        text = f"反射 {effect['pct']:g}% 伤害，{effect.get('turns', 2)} 回合"
+        text = f"自身反射 {effect['pct']:g}% 受到的伤害" + _duration_text(effect, 2, passive)
+        if effect.get("stun_turns"):
+            text += f"，反射成功时眩晕攻击者 {effect['stun_turns']} 回合"
+        if effect.get("dot_pct"):
+            text += f"，并施加每回合 {effect['dot_pct']:g}% 最大生命的反噬（2 回合）"
     elif kind == "fortify":
-        text = f"固化 {effect['pct']:g}% 护盾/防御为护盾池"
+        text = f"将自身现有护盾与防御按 {effect['pct']:g}% 固化为额外护盾"
     elif kind == "last_stand":
-        text = f"生命低于 {effect['threshold']:g}% 时触发减伤 {effect['pct']:g}%"
+        text = (
+            f"自身生命首次降至 {effect['threshold']:g}% 以下时，受到的伤害降低 "
+            f"{effect['pct']:g}%" + _duration_text(effect, 1, False)
+        )
     elif kind == "sacrifice":
-        text = f"自损 {effect['pct']:g}% 生命换取守护效果"
+        parts = [f"自身损失 {effect['pct']:g}% 最大生命"]
+        target = _target_label(effect.get("target") or "ally_lowest")
+        if effect.get("shield_pct"):
+            parts.append(f"为{target}施加 {effect['shield_pct']:g}% 最大生命的护盾")
+        if effect.get("heal_pct"):
+            parts.append(f"为{target}回复 {effect['heal_pct']:g}% 最大生命")
+        if effect.get("mitigate_pct"):
+            parts.append(f"使自身获得 {effect['mitigate_pct']:g}% 减伤（2 回合）")
+        text = "，".join(parts)
     elif kind == "rewind":
-        text = f"回溯至 {effect.get('turns', 1)} 回合前生命"
+        text = f"将自身生命回溯至 {effect.get('turns', 1)} 回合前（若有快照则优先回到快照）"
     elif kind == "snapshot":
-        text = "记录当前生命快照"
+        text = "记录自身当前生命快照"
     elif kind == "delay_heal":
-        text = f"{effect['turns']} 回合后回复 {effect['pct']:g}% 生命"
+        text = (
+            f"{effect['turns']} 回合后为{_target_label(effect.get('target'))}回复 "
+            f"{effect['pct']:g}% 最大生命"
+        )
     elif kind == "delay_damage":
-        text = f"{effect['turns']} 回合后引爆 {effect['pct']:g}% 生命伤害"
+        text = f"{effect['turns']} 回合后使敌方损失 {effect['pct']:g}% 最大生命"
+        if effect.get("label"):
+            text += f"（{effect['label']}）"
     elif kind == "charge":
-        text = f"蓄力 {effect['turns']} 回合后造成 {effect['power']:g} 倍伤害"
+        power = f"{effect['power']:g}"
+        if "power_max" in effect:
+            power += f"~{effect['power_max']:g}"
+        base = {"atk": "攻击", "def": "防御", "spd": "速度", "hp": "生命"}[
+            effect.get("scale", "atk")
+        ]
+        text = f"蓄力 {effect['turns']} 回合后对敌方造成 {power} 倍{base}伤害"
         if effect.get("interrupt"):
             text += "（可被打断）"
     elif kind == "channel":
         text = f"引导 {effect['turns']} 回合"
         if effect.get("power"):
-            text += f"，每回合 {effect['power']:g} 倍伤害"
+            text += f"，每回合对敌方造成 {effect['power']:g} 倍攻击伤害"
         if effect.get("heal_pct"):
-            text += f"，每回合治疗 {effect['heal_pct']:g}%"
+            text += f"，每回合为自身回复 {effect['heal_pct']:g}% 最大生命"
     elif kind == "mark":
-        text = f"标记：承伤 +{effect['pct']:g}%，{effect.get('turns', 3)} 回合"
+        text = f"标记敌方，使其受到的伤害 +{effect['pct']:g}%，持续 {effect.get('turns', 3)} 回合"
+        if effect.get("stacks", 1) > 1:
+            text += f"，一次叠加 {effect['stacks']} 层"
+        if effect.get("max_stacks"):
+            text += f"，最多 {effect['max_stacks']} 层"
+        if effect.get("burst_power") and effect.get("max_stacks"):
+            text += f"，满层时引爆 {effect['burst_power']:g} 倍攻击伤害"
     elif kind == "detonate":
-        text = "引爆目标持续伤害与延迟伤害"
+        text = "立即结算并清除敌方的全部持续伤害与延迟伤害"
     elif kind == "combo":
-        text = f"获得 {effect.get('gain', 1)} 点连击"
+        text = f"自身获得 {effect.get('gain', 1)} 点连击（最多 {effect.get('max', 5)} 点）"
     elif kind == "leech":
-        text = f"将 {effect['pct']:g}% 伤害转化为治疗"
+        text = (
+            f"将本技能已造成伤害的 {effect['pct']:g}% 转化为"
+            f"{_target_label(effect.get('target'))}的治疗"
+        )
+        if effect.get("delay"):
+            text += f"，延迟 {effect['delay']} 回合生效"
     elif kind == "hot_boost":
-        text = f"持续治疗增强 {effect['pct']:g}%"
+        text = (
+            f"使{_target_label(effect.get('target'))}受到的持续治疗增强 {effect['pct']:g}%"
+            + _duration_text(effect, 3, passive)
+        )
     elif kind == "corrupting":
-        text = f"反治疗 {effect['pct']:g}%，{effect['turns']} 回合"
+        text = f"使敌方受到的治疗降低 {effect['pct']:g}%，持续 {effect['turns']} 回合"
     elif kind == "bleed_burst":
-        text = f"层数达 {effect['stacks']} 时爆发结算"
+        text = f"若敌方任一持续伤害达到 {effect['stacks']} 层，立即结算并清除该效果"
     elif kind == "silence":
-        text = f"沉默 {effect['turns']} 回合"
+        text = f"沉默敌方，持续 {effect['turns']} 回合"
     elif kind == "root":
-        text = f"禁锢 {effect['turns']} 回合（无法闪避）"
+        text = f"禁锢敌方，持续 {effect['turns']} 回合（期间无法闪避）"
     elif kind == "weaken":
-        text = f"造成伤害降低 {effect['pct']:g}%，{effect['turns']} 回合"
+        text = f"使敌方造成的伤害降低 {effect['pct']:g}%，持续 {effect['turns']} 回合"
     elif kind == "expose":
-        text = f"易伤 {effect['pct']:g}%，{effect['turns']} 回合"
+        text = f"使敌方受到的伤害提高 {effect['pct']:g}%，持续 {effect['turns']} 回合"
     elif kind == "purge":
         mode = {"buffs": "增益", "shield": "护盾", "all": "增益与护盾"}.get(
             effect.get("mode", "all"), "增益与护盾"
         )
-        text = f"驱散对手{mode}"
+        text = f"驱散敌方的{mode}"
     elif kind == "transfer":
-        text = "转移负面状态" if effect["mode"] == "debuff" else "偷取增益"
+        text = (
+            "将自身一个负面状态转移给敌方"
+            if effect["mode"] == "debuff"
+            else "偷取敌方一个增益（没有增益时改为偷取一半护盾）"
+        )
     elif kind == "immunity":
-        text = f"免疫{effect['kind']} {effect.get('turns', 2)} 回合"
+        # Keep the player-facing promise aligned with the checks made by
+        # ``_Unit.immune_to``.  ``all`` is the union of the three supported
+        # immunity families; it does not cover silence, root or expose.
+        names = {
+            "stun": "眩晕",
+            "dot": "持续伤害",
+            "weaken": "虚弱",
+            "all": "眩晕、持续伤害与虚弱",
+        }
+        text = f"使自身免疫{names.get(effect['kind'], effect['kind'])}" + _duration_text(
+            effect, 2, passive
+        )
     elif kind == "mass_heal":
-        text = f"群体回复 {effect['pct']:g}% 生命"
+        text = f"为全体队友各回复 {effect['pct']:g}% 最大生命"
     elif kind == "triage":
-        text = f"急救生命最低队友 {effect['pct']:g}% 生命"
+        text = f"为生命最低队友回复 {effect['pct']:g}% 最大生命"
+        if effect.get("bonus"):
+            text += (
+                f"；其生命不高于 {effect.get('threshold', 40):g}% 时，额外回复 "
+                f"{effect['bonus']:g}% 最大生命"
+            )
     elif kind == "cleanse_heal":
-        text = f"驱散并回复 {effect['pct']:g}% 生命"
+        text = (
+            f"清除{_target_label(effect.get('target') or 'ally_lowest')}的所有可净化负面状态，"
+            f"并回复 {effect['pct']:g}% 最大生命"
+        )
     elif kind == "life_link":
-        text = f"生命链接治疗 {effect['pct']:g}%"
+        target = _target_label(effect.get("target") or "ally_lowest")
+        parts = [f"为{target}回复 {effect['pct']:g}% 最大生命"]
+        if effect.get("self_pct", 0) > 0:
+            parts.append(f"自身回复 {effect['self_pct']:g}% 最大生命")
+        elif effect.get("self_pct", 0) < 0:
+            parts.append(f"自身损失 {abs(effect['self_pct']):g}% 最大生命")
+        text = "生命链接：" + "，".join(parts)
     elif kind == "energy":
-        text = f"回复 {effect['gain']} 点能量"
+        text = f"使{_target_label(effect.get('target'))}获得 {effect['gain']} 点能量"
     elif kind == "pick":
-        labels = [opt.get("text") or f"选项{i+1}" for i, opt in enumerate(effect.get("options", []))]
-        text = "随机：" + "/".join(labels)
+        options = []
+        for index, option in enumerate(effect.get("options", []), 1):
+            label = option.get("text") or f"选项 {index}"
+            weight = f"，权重 {option['weight']}" if "weight" in option else ""
+            effects = "；".join(describe_effect(item) for item in option.get("effects", []))
+            options.append(f"{label}{weight}（{effects}）")
+        text = "随机选择一项：" + " / ".join(options)
     else:
         text = kind
-    return chance + text
+    return _chance_text(effect, text)
 
 
 def describe_skill(skill: dict) -> str:
-    parts = ["；".join(describe_effect(e) for e in skill["effects"])]
-    if skill["passive"]:
-        parts.insert(0, "被动")
-    if skill["cd"]:
-        parts.append(f"冷却 {skill['cd']}")
-    if skill.get("cost"):
-        parts.append(f"消耗能量 {skill['cost']}")
-    if skill.get("gain"):
-        parts.append(f"回复能量 {skill['gain']}")
+    passive = skill["passive"]
+    parts = ["被动（开战生效）" if passive else "主动"]
     if skill["when"]:
-        parts.append(WHEN[skill["when"]])
+        parts.append(f"触发：{WHEN[skill['when']]}")
+    parts.append(
+        "效果：" + "；然后".join(describe_effect(e, passive=passive) for e in skill["effects"])
+    )
+    if not passive:
+        parts.append(f"冷却：{skill['cd']} 回合" if skill["cd"] else "冷却：无")
+    energy = []
+    if skill.get("cost"):
+        energy.append(f"消耗 {skill['cost']}")
+    if skill.get("gain"):
+        energy.append(f"获得 {skill['gain']}")
+    if energy:
+        parts.append("能量：" + "，".join(energy))
     if "fail" in skill:
-        parts.append(f"{skill['fail']['chance']}% 失手")
+        failure = f"失败：{skill['fail']['chance']}% 概率，{skill['fail']['text']}"
+        if skill["fail"]["effects"]:
+            failure += (
+                "（"
+                + "；然后".join(describe_effect(effect) for effect in skill["fail"]["effects"])
+                + "）"
+            )
+        parts.append(failure)
     return " · ".join(parts)
 
 
@@ -1243,7 +1347,9 @@ class _Battle:
             unit.crit_multiplier = max(unit.crit_multiplier, effect["multiplier"])
         elif kind == "regen":
             for target in self.resolve_targets(unit, self.other(unit), effect.get("target", "self")):
-                target.regens.append({"pct": effect["pct"], "turns": effect.get("turns", 99)})
+                target.regens.append(
+                    {"pct": effect["pct"], "turns": effect.get("turns", 99), "source": unit}
+                )
         elif kind == "evade":
             for target in self.resolve_targets(unit, self.other(unit), effect.get("target", "self")):
                 target.evade += effect.get("count", 1)
@@ -1256,7 +1362,7 @@ class _Battle:
         elif kind == "redirect":
             unit.redirect = max(unit.redirect, effect["turns"])
         elif kind == "aura":
-            unit.auras.append(dict(effect))
+            unit.auras.append({**effect, "source": unit})
         elif kind == "last_stand":
             unit.last_stand = dict(effect)
         elif kind == "immunity":
@@ -1372,7 +1478,7 @@ class _Battle:
             unit.dots.clear()
             self.say(f"{unit.label} 倒下后又站了起来！恢复 {round(unit.hp)} 生命")
 
-    def heal(self, unit: _Unit, amount: float) -> int:
+    def heal(self, unit: _Unit, amount: float, source: _Unit | None = None) -> int:
         if amount <= 0 or not unit.alive:
             return 0
         boost = sum(h["pct"] for h in unit.hot_boost)
@@ -1386,11 +1492,13 @@ class _Battle:
         unit.hp = min(unit.max_hp, unit.hp + amount)
         return round(unit.hp - before)
 
-    def heal_with_options(self, unit: _Unit, amount: float, effect: dict) -> tuple[int, int]:
+    def heal_with_options(
+        self, unit: _Unit, amount: float, effect: dict, source: _Unit | None = None
+    ) -> tuple[int, int]:
         if effect.get("crit_heal") and self.rng.random() * 100 < unit.stat("crit"):
             amount *= CRIT_MULTIPLIER
         before = unit.hp
-        healed = self.heal(unit, amount)
+        healed = self.heal(unit, amount, source=source)
         over = 0
         if effect.get("overheal_shield"):
             overflow = before + amount - unit.max_hp
@@ -1420,7 +1528,11 @@ class _Battle:
                 return
         for regen in list(unit.regens):
             stacks = max(1, regen.get("stacks", 1))
-            healed = self.heal(unit, unit.max_hp * regen["pct"] / 100 * stacks)
+            healed = self.heal(
+                unit,
+                unit.max_hp * regen["pct"] / 100 * stacks,
+                source=regen.get("source"),
+            )
             regen["turns"] -= 1
             if regen["turns"] <= 0:
                 unit.regens.remove(regen)
@@ -1429,7 +1541,9 @@ class _Battle:
         for leech in list(unit.pending_leech):
             leech["turns"] -= 1
             if leech["turns"] <= 0:
-                healed = self.heal(leech["target"], leech["amount"])
+                healed = self.heal(
+                    leech["target"], leech["amount"], source=leech.get("source", unit)
+                )
                 if healed:
                     self.say(f"{leech['target'].label} 吸收 {healed} 生命")
                 unit.pending_leech.remove(leech)
@@ -1452,7 +1566,10 @@ class _Battle:
             item["turns"] -= 1
             if item["turns"] <= 0:
                 healed, _ = self.heal_with_options(
-                    item["target"], item["target"].max_hp * item["pct"] / 100, item.get("opts", {})
+                    item["target"],
+                    item["target"].max_hp * item["pct"] / 100,
+                    item.get("opts", {}),
+                    source=item.get("source", unit),
                 )
                 if healed:
                     self.say(f"{item['target'].label} 延迟回复 {healed} 生命")
@@ -1460,7 +1577,15 @@ class _Battle:
         for item in list(unit.delay_damages):
             item["turns"] -= 1
             if item["turns"] <= 0:
-                lost = self.hurt(unit, unit.max_hp * item["pct"] / 100)
+                # Keep accounting ownership separate from combat semantics.
+                # Supplying the planter as ``attacker`` here would change
+                # shield-break retaliation and reactive target selection.
+                previous_source = getattr(self, "_stat_source", None)
+                self._stat_source = item.get("source")
+                try:
+                    lost = self.hurt(unit, unit.max_hp * item["pct"] / 100)
+                finally:
+                    self._stat_source = previous_source
                 self.say(f"{unit.label} 遭受{item['label']}，损失 {round(lost)} 生命")
                 # Lethal delayed damage may clear the unit's statuses inside
                 # ``hurt``.  Only remove the timer when it still exists.
@@ -1477,7 +1602,11 @@ class _Battle:
                         {"stat": aura["stat"], "pct": aura["pct"], "turns": 1}
                     )
                 if "heal_pct" in aura:
-                    healed = self.heal(ally, ally.max_hp * aura["heal_pct"] / 100)
+                    healed = self.heal(
+                        ally,
+                        ally.max_hp * aura["heal_pct"] / 100,
+                        source=aura.get("source", unit),
+                    )
                     if healed:
                         self.say(f"{ally.label} 受到光环治疗 {healed}")
 
@@ -1500,7 +1629,11 @@ class _Battle:
                 self.say(f"{unit.label} 引导中，{note}")
             if unit.channel.get("heal_pct"):
                 for ally in self.resolve_targets(unit, enemy, "ally_lowest"):
-                    healed = self.heal(ally, ally.max_hp * unit.channel["heal_pct"] / 100)
+                    healed = self.heal(
+                        ally,
+                        ally.max_hp * unit.channel["heal_pct"] / 100,
+                        source=unit.channel.get("source", unit),
+                    )
                     if healed:
                         self.say(f"{unit.label} 引导治疗 {ally.label} {healed}")
             if unit.channel["turns"] <= 0:
@@ -1572,6 +1705,195 @@ class _Battle:
     def _is_basic_action(self, unit: _Unit, skill: dict) -> bool:
         return skill is unit.actives[0] or self._is_healing_basic(unit, skill)
 
+    def _preview_targets(self, unit: _Unit, enemy: _Unit, spec: str | None) -> list[_Unit]:
+        """Resolve utility targets without consuming RNG during planning."""
+        if spec == "ally_random":
+            return [ally for ally in self.allies_of(unit) if ally.alive]
+        return self.resolve_targets(unit, enemy, spec)
+
+    def _has_removable_benefit(self, enemy: _Unit | None, mode: str = "all") -> bool:
+        buffs = bool(
+            enemy
+            and (
+                enemy.evade
+                or enemy.thorns
+                or enemy.reflects
+                or enemy.mitigates
+                or enemy.hot_boost
+                or any(buff.get("pct", 0) > 0 for buff in enemy.buffs)
+            )
+        )
+        shield = bool(enemy and enemy.shield)
+        return bool(
+            enemy
+            and ((mode in {"all", "buffs"} and buffs) or (mode in {"all", "shield"} and shield))
+        )
+
+    def _effect_useful(self, unit: _Unit, enemy: _Unit, effect: dict) -> bool:
+        """Whether an effect can materially change the current battle state."""
+        kind = effect["type"]
+        spec = effect.get("target", "self")
+        targets = self._preview_targets(unit, enemy, spec)
+        if kind in {"damage", "charge", "channel", "recoil", "combo"}:
+            return enemy is not None and enemy.alive
+        if kind == "dot":
+            if enemy is None or not enemy.alive:
+                return False
+            label = effect.get("label", "持续伤害")
+            current = next((dot for dot in enemy.dots if dot.get("label") == label), None)
+            if current is None:
+                return True
+            return current.get("stacks", 1) < effect.get("max_stacks", 9) or current.get(
+                "turns", 0
+            ) < effect.get("turns", 1)
+        if kind == "heal":
+            return any(target.hp < target.max_hp * 0.97 for target in targets)
+        if kind == "mass_heal":
+            allies = [ally for ally in self.allies_of(unit) if ally.alive]
+            missing = sum(max(0.0, ally.max_hp - ally.hp) for ally in allies)
+            total = sum(ally.max_hp for ally in allies) or 1
+            return missing / total >= 0.06 or any(ally.ratio < 0.75 for ally in allies)
+        if kind == "triage":
+            allies = [ally for ally in self.allies_of(unit) if ally.alive]
+            return bool(allies) and min(ally.ratio for ally in allies) < 0.92
+        if kind in {"cleanse", "cleanse_heal"}:
+            return any(self._cleanse_urgency(target) > 0 for target in targets) or (
+                kind == "cleanse_heal" and any(target.ratio < 0.92 for target in targets)
+            )
+        if kind == "shield":
+            desired = effect["pct"] / 100
+            return any(
+                target.shield / target.max_hp < min(0.18, desired * 0.7)
+                and (target.ratio < 0.95 or target.role == "坦克")
+                for target in targets
+            )
+        if kind == "regen":
+            return any(target.ratio < 0.9 and not target.regens for target in targets)
+        if kind == "evade":
+            return any(target.evade < effect.get("count", 1) for target in targets)
+        if kind == "buff":
+            stat, pct = effect["stat"], effect["pct"]
+            if pct < 0:
+                return enemy is not None and not any(
+                    buff["stat"] == stat and buff["pct"] <= pct and buff["turns"] > 1
+                    for buff in enemy.buffs
+                )
+            return any(
+                not any(
+                    buff["stat"] == stat and buff["pct"] >= pct and buff["turns"] > 1
+                    for buff in target.buffs
+                )
+                for target in targets
+            )
+        if kind in {"dispel", "purge"}:
+            return self._has_removable_benefit(enemy, effect.get("mode", "all"))
+        if kind == "stun":
+            target = unit if effect.get("target") == "self" else enemy
+            return bool(
+                target
+                and not target.immune_to("stun")
+                and target.stun < effect.get("turns", 1)
+            )
+        if kind == "silence":
+            return bool(enemy and enemy.silence < effect["turns"])
+        if kind == "root":
+            return bool(enemy and enemy.root < effect["turns"])
+        if kind == "weaken":
+            return bool(enemy and not enemy.weaken)
+        if kind == "expose":
+            return bool(enemy and not enemy.expose)
+        if kind == "corrupting":
+            return bool(enemy and not enemy.corrupting)
+        if kind == "mark":
+            current = sum(mark.get("stacks", 1) for mark in enemy.marks) if enemy else 0
+            return bool(enemy and current < effect.get("max_stacks", 9))
+        if kind in {"taunt", "redirect"}:
+            return getattr(unit, kind) < effect["turns"]
+        if kind == "guard":
+            wards = self._preview_targets(unit, enemy, effect.get("target", "ally_lowest"))
+            return any(
+                ward is not unit
+                and not any(guard["ward"] is ward and guard["turns"] > 1 for guard in unit.guards)
+                for ward in wards
+            )
+        if kind == "share":
+            return any(ally.share is None for ally in self.allies_of(unit) if ally.alive)
+        if kind == "mitigate":
+            current = sum(item["pct"] for item in unit.mitigates)
+            return current < effect["pct"] * 0.7
+        if kind == "block":
+            return unit.block_count < effect["count"]
+        if kind == "absorb":
+            return unit.shield < unit.max_hp * effect["pct"] / 100 * 0.7
+        if kind in {"thorns", "reflect"}:
+            active = unit.thorns if kind == "thorns" else unit.reflects
+            return not any(item["turns"] > 1 for item in active)
+        if kind == "immunity":
+            return unit.immunity.get(effect["kind"], 0) <= 1
+        if kind == "aura":
+            return not any(
+                aura.get("stat") == effect.get("stat")
+                and aura.get("heal_pct") == effect.get("heal_pct")
+                for aura in unit.auras
+            )
+        if kind == "last_stand":
+            return not unit.last_stand and not unit.last_stand_used
+        if kind == "snapshot":
+            return unit.snapshot is None
+        if kind == "rewind":
+            recoverable = max(max(unit.hp_history, default=unit.hp), unit.snapshot or 0) - unit.hp
+            return recoverable > unit.max_hp * 0.05
+        if kind == "delay_heal":
+            return any(target.ratio < 0.85 for target in targets) and not unit.delay_heals
+        if kind == "delay_damage":
+            label = effect.get("label", "延时炸弹")
+            return bool(
+                enemy
+                and not any(item.get("label", "延时炸弹") == label for item in enemy.delay_damages)
+            )
+        if kind == "detonate":
+            return bool(enemy and (enemy.dots or enemy.delay_damages))
+        if kind == "bleed_burst":
+            return bool(
+                enemy
+                and any(dot.get("stacks", 1) >= effect["stacks"] for dot in enemy.dots)
+            )
+        if kind == "leech":
+            return any(item["type"] == "damage" for item in getattr(self, "_planning_effects", ()))
+        if kind == "hot_boost":
+            return any(target.ratio < 0.9 and not target.hot_boost for target in targets)
+        if kind == "transfer":
+            if effect["mode"] == "debuff":
+                return bool(unit.dots or any(buff.get("pct", 0) < 0 for buff in unit.buffs))
+            return self._has_removable_benefit(enemy)
+        if kind == "energy":
+            return any(target.uses_energy and target.energy < ENERGY_MAX for target in targets)
+        if kind == "crit_amp":
+            return unit.crit_multiplier < effect["multiplier"]
+        if kind == "life_link":
+            return any(target.ratio < 0.92 for target in targets)
+        if kind == "sacrifice":
+            wards = self._preview_targets(unit, enemy, effect.get("target", "ally_lowest"))
+            return unit.ratio > 0.35 and any(target.ratio < 0.75 for target in wards)
+        if kind == "fortify":
+            return unit.shield > 0 or unit.stat("def") > 0
+        if kind == "copy":
+            return bool(enemy and enemy.last)
+        if kind == "pick":
+            return any(
+                self._effect_useful(unit, enemy, nested)
+                for option in effect.get("options", [])
+                for nested in option.get("effects", [])
+            )
+        return True
+
+    def _skill_useful(self, unit: _Unit, enemy: _Unit, skill: dict) -> bool:
+        self._planning_effects = skill["effects"]
+        try:
+            return any(self._effect_useful(unit, enemy, effect) for effect in skill["effects"])
+        finally:
+            self._planning_effects = ()
+
     def _healing_basic_needed(self, unit: _Unit, enemy: _Unit, skill: dict) -> bool:
         allies = [ally for ally in self.allies_of(unit) if ally.alive]
         for effect in skill["effects"]:
@@ -1617,7 +1939,11 @@ class _Battle:
             return False
         if any(e["type"] == "copy" for e in skill["effects"]) and (enemy is None or not enemy.last):
             return False
-        if self._is_healing_basic(unit, skill) and not self._healing_basic_needed(unit, enemy, skill):
+        if self._is_healing_basic(unit, skill) and not self._healing_basic_needed(
+            unit, enemy, skill
+        ):
+            return False
+        if not self._skill_useful(unit, enemy, skill):
             return False
         return True
 
@@ -1635,6 +1961,7 @@ class _Battle:
         kinds = {effect["type"] for effect in skill["effects"]}
         allies = [ally for ally in self.allies_of(unit) if ally.alive]
         lowest = min((ally.ratio for ally in allies), default=unit.ratio)
+        missing = sum(max(0.0, 1 - ally.ratio) for ally in allies)
         if kinds & {
             "heal",
             "mass_heal",
@@ -1643,13 +1970,13 @@ class _Battle:
             "life_link",
             "regen",
         }:
-            score += (1 - lowest) * 70
+            score += min(75, missing * 28) + (1 - lowest) * 65
             if lowest < 0.4:
-                score += 35
+                score += 55
+            if unit.role == "治疗":
+                score += 18
         cleanse_effects = [
-            effect
-            for effect in skill["effects"]
-            if effect["type"] in {"cleanse", "cleanse_heal"}
+            effect for effect in skill["effects"] if effect["type"] in {"cleanse", "cleanse_heal"}
         ]
         if cleanse_effects:
             # Value only statuses this skill can actually reach.  The previous
@@ -1673,6 +2000,17 @@ class _Battle:
             score += (1 - lowest) * 35
             if lowest < 0.4:
                 score += 30
+            if unit.role == "坦克":
+                score += 18
+            protected = [
+                target
+                for effect in skill["effects"]
+                if effect["type"] in {"shield", "guard"}
+                for target in self._preview_targets(
+                    unit, enemy, effect.get("target", "ally_lowest")
+                )
+            ]
+            score += max((1 - target.ratio) * 70 for target in protected) if protected else 0
         if "rewind" in kinds:
             history_best = max(unit.hp_history, default=unit.hp)
             recoverable = max(history_best, unit.snapshot or 0) - unit.hp
@@ -1686,20 +2024,17 @@ class _Battle:
             for effect in skill["effects"]
         ):
             score += 30
+            if unit.role == "辅助" and any(ally.role == "输出" for ally in allies):
+                score += 24
         if enemy is not None:
             if kinds & {"dispel", "purge"}:
-                removable = bool(
-                    enemy.shield
-                    or enemy.evade
-                    or enemy.thorns
-                    or enemy.reflects
-                    or enemy.mitigates
-                    or enemy.hot_boost
-                    or any(buff.get("pct", 0) > 0 for buff in enemy.buffs)
-                )
+                removable = self._has_removable_benefit(enemy)
                 score += 55 if removable else -25
             if kinds & {"damage", "bleed_burst", "detonate"}:
                 score += (1 - enemy.ratio) * 25
+                window, _ = self._offense_window_state(enemy)
+                if window:
+                    score += 45 + self._burst_value(skill) * 12
             if any(effect.get("execute") for effect in skill["effects"]):
                 score += (1 - enemy.ratio) * 60
             if "detonate" in kinds:
@@ -1708,9 +2043,70 @@ class _Battle:
                 score += 30
             if kinds & {"weaken", "expose"}:
                 score += 28
+                if unit.role == "辅助":
+                    score += 22
             if kinds & {"mark", "dot", "corrupting"}:
                 score += 12
+                if unit.role == "辅助" and kinds & {"mark", "corrupting"}:
+                    score += 15
         return score
+
+    def _burst_value(self, skill: dict) -> float:
+        value = 0.0
+        for effect in skill["effects"]:
+            if effect["type"] in {"damage", "charge"}:
+                power = effect.get("power_max", effect.get("power", 0))
+                value += power * effect.get("hits", 1)
+                value += 1.0 if effect.get("execute") or effect.get("combo_bonus") else 0.0
+            elif effect["type"] in {"detonate", "bleed_burst"}:
+                value += 2.5
+        return value
+
+    def _offense_window_state(self, enemy: _Unit | None) -> tuple[bool, int | None]:
+        """Read generic and raid-provided burst-window hints without coupling engines."""
+        if enemy is None:
+            return False, None
+        active = bool(
+            enemy.expose
+            or enemy.marks
+            or any(buff.get("stat") == "def" and buff.get("pct", 0) < 0 for buff in enemy.buffs)
+            or getattr(enemy, "mods", {}).get("def", 0) < 0
+            or getattr(enemy, "vuln", 0)
+            or getattr(enemy, "break_window", False)
+            or getattr(enemy, "broken", False)
+            or getattr(enemy, "staggered", False)
+            or getattr(enemy, "vulnerable", False)
+            or getattr(self, "poise_broken", False)
+        )
+        eta = None
+        sources = (enemy, getattr(self, "mech", None))
+        for source in sources:
+            if source is None:
+                continue
+            for name in ("break_in", "break_eta", "turns_to_break", "turns_until_break"):
+                value = getattr(source, name, None)
+                if type(value) is int and value >= 0:
+                    eta = value if eta is None else min(eta, value)
+        poise = getattr(self, "poise", None)
+        poise_max = getattr(self, "poise_max", None)
+        if (
+            not active
+            and isinstance(poise, (int, float))
+            and isinstance(poise_max, (int, float))
+            and poise_max > 0
+            and poise <= poise_max * 0.25
+            and not getattr(self, "poise_locked", False)
+        ):
+            eta = 1 if eta is None else min(eta, 1)
+        return active, eta
+
+    def _hold_for_window(self, unit: _Unit, enemy: _Unit, skill: dict) -> bool:
+        if unit.role != "输出" or skill.get("when") or not skill.get("cd"):
+            return False
+        active, eta = self._offense_window_state(enemy)
+        if active or eta != 1 or enemy.ratio < 0.25:
+            return False
+        return self._burst_value(skill) >= 1.8
 
     def _cleanse_urgency(self, unit: _Unit) -> float:
         """Estimate how costly it is to leave one ally's removable debuffs up."""
@@ -1767,6 +2163,11 @@ class _Battle:
                 "stun",
                 "silence",
                 "root",
+                "dispel",
+                "purge",
+                "cleanse",
+                "cleanse_heal",
+                "transfer",
                 "shield",
                 "guard",
                 "share",
@@ -1842,7 +2243,10 @@ class _Battle:
         ]
         if not ready:
             return basic
-        return max(ready, key=lambda skill: self._skill_score(unit, enemy, skill))
+        available = [skill for skill in ready if not self._hold_for_window(unit, enemy, skill)]
+        if not available:
+            return basic
+        return max(available, key=lambda skill: self._skill_score(unit, enemy, skill))
 
     def _try_triggers(self, unit: _Unit, enemy: _Unit, when: str):
         if self._in_trigger or not unit.alive:
@@ -2050,6 +2454,7 @@ class _Battle:
                         "pct": effect["pct"] * self._cast_output_scale,
                         "turns": effect.get("turns", 3),
                         "stacks": effect.get("stacks", 1),
+                        "source": unit,
                     }
                 )
             return "开始持续回复"
@@ -2116,6 +2521,7 @@ class _Battle:
             for key in ("pct", "heal_pct"):
                 if key in aura:
                     aura[key] *= self._cast_output_scale
+            aura["source"] = unit
             unit.auras.append(aura)
             return "展开光环"
         if kind == "mitigate":
@@ -2203,6 +2609,7 @@ class _Battle:
                             "overheal_shield": effect.get("overheal_shield", False),
                             "crit_heal": effect.get("crit_heal", False),
                         },
+                        "source": unit,
                     }
                 )
             return f"延迟治疗 {effect['turns']} 回合"
@@ -2212,6 +2619,7 @@ class _Battle:
                     "pct": effect["pct"] * self._cast_output_scale,
                     "turns": effect["turns"],
                     "label": effect.get("label", "延时炸弹"),
+                    "source": unit,
                 }
             )
             return f"给{enemy.label}安装延时炸弹"
@@ -2228,6 +2636,7 @@ class _Battle:
                 "turns": effect["turns"],
                 "power": effect.get("power", 0) * self._cast_output_scale,
                 "heal_pct": effect.get("heal_pct", 0) * self._cast_output_scale,
+                "source": unit,
             }
             return f"开始引导 {effect['turns']} 回合"
         if kind == "mark":
@@ -2265,7 +2674,9 @@ class _Battle:
             targets = self.resolve_targets(unit, enemy, effect.get("target", "self"))
             target = targets[0] if targets else unit
             if delay:
-                unit.pending_leech.append({"target": target, "amount": amount, "turns": delay})
+                unit.pending_leech.append(
+                    {"target": target, "amount": amount, "turns": delay, "source": unit}
+                )
                 return f"延迟吸血 {round(amount)}"
             healed = self.heal(target, amount)
             return f"吸血 {healed}"

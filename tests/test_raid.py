@@ -54,6 +54,9 @@ def outcome(won=True, dead=(), rounds=6, timeout=False):
                     "hp": 0 if h.get("seat") in dead else h["stats"]["hp"] // 2,
                     "max_hp": h["stats"]["hp"],
                     "alive": h.get("seat") not in dead,
+                    "dealt": 100 + (h.get("seat") or 0),
+                    "healed": 20 + (h.get("seat") or 0),
+                    "taken": 40 + (h.get("seat") or 0),
                 }
                 for h in heroes
             ],
@@ -385,7 +388,17 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(quiet.video)
         self.assertEqual(quiet.notice, "")
         joined = "".join(labels)
-        for text in ("BOSS", "援军", "野生援军", "伤害统计", "/回合", "战斗过程", "结算"):
+        for text in (
+            "BOSS",
+            "援军",
+            "野生援军",
+            "战斗统计",
+            "有效治疗",
+            "承受伤害",
+            "DPS",
+            "战斗过程",
+            "结算",
+        ):
             self.assertIn(text, joined)
         status = await self.db.raid_status("app", "group", self.users[0]["id"], NOW)
         for message in (
@@ -641,6 +654,46 @@ class RaidEngineTests(unittest.TestCase):
         self.assertTrue(all(isinstance(value, int) for value in dealt))
         self.assertGreater(sum(dealt), 0)
 
+    def test_delayed_damage_healing_and_taken_are_credited(self):
+        fight = battle("goblin-pig")
+        nebula, healer, target = fight.heroes[:3]
+
+        # Countdown damage keeps the pig that planted it, even though it
+        # resolves at the start of the boss's later turn.
+        bomb = {
+            "type": "delay_damage",
+            "pct": 5,
+            "turns": 1,
+            "label": "测试星云",
+        }
+        fight.effect(nebula, fight.boss, bomb, {})
+        fight._tick_delays(fight.boss, nebula)
+        delayed = fight.dealt.get(id(nebula), 0)
+        self.assertGreater(delayed, 0)
+
+        # An explicit detonation is also attributed to its current caster.
+        fight.effect(nebula, fight.boss, {**bomb, "turns": 3, "label": "待爆星核"}, {})
+        detonate = {"name": "星云引爆", "text": "测试", "effects": [{"type": "detonate"}]}
+        fight.apply(nebula, fight.boss, detonate["effects"], detonate)
+        self.assertGreater(fight.dealt[id(nebula)], delayed)
+
+        target.hp = target.max_hp * 0.4
+        healing = {
+            "name": "测试治疗",
+            "text": "测试",
+            "effects": [{"type": "heal", "pct": 30, "target": "ally_lowest"}],
+        }
+        fight.apply(healer, fight.boss, healing["effects"], healing)
+        self.assertGreater(fight.healed.get(id(healer), 0), 0)
+
+        fight.hurt(target, 25, attacker=fight.boss)
+        self.assertEqual(fight.taken[id(target)], 25)
+
+        result = fight.run()
+        rows = {row["seat"]: row for row in result["heroes"]}
+        for key in ("dealt", "healed", "taken"):
+            self.assertIsInstance(rows[nebula.seat][key], int)
+
     def test_zombie_poisons_and_raises_its_victims(self):
         fight = battle("zombie-pig")
         hero = fight.heroes[0]
@@ -648,7 +701,7 @@ class RaidEngineTests(unittest.TestCase):
         for _ in range(4):
             fight.mech.outgoing(fight, hero, 1)
         poison = [d for d in hero.dots if d.get("stacks")]
-        self.assertEqual([(d["pct"], d["label"]) for d in poison], [(4, "尸毒×3")])
+        self.assertEqual([(d["pct"], d["label"]) for d in poison], [(6, "尸毒×3")])
         self.assertEqual(hero.dots[0]["pct"], 5)
         self.assertEqual(fight.mech.heal_factor(fight, hero), 0.25)
         self.assertIs(fight.order()[-1], fight.boss)
@@ -668,10 +721,10 @@ class RaidEngineTests(unittest.TestCase):
             fight.mech.outgoing(fight, hero, 1)
         poison = fight.mech.poison(hero)
 
-        self.assertEqual(fight.dot_amount(hero, poison) * poison["stacks"], hero.max_hp * 0.12)
+        self.assertEqual(fight.dot_amount(hero, poison) * poison["stacks"], hero.max_hp * 0.18)
         before = hero.hp
         text = fight.effect(fight.boss, hero, {"type": "bleed_burst", "stacks": 3}, {})
-        self.assertLessEqual(before - hero.hp, hero.max_hp * 0.12 + 1)
+        self.assertLessEqual(before - hero.hp, hero.max_hp * 0.18 + 1)
         self.assertIn("层数爆发", text)
         self.assertIsNone(fight.mech.poison(hero))
 

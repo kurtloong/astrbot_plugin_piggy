@@ -1264,6 +1264,8 @@ class Database:
                     "max_hp": state["max_hp"],
                     "alive": state["alive"],
                     "dealt": state.get("dealt", 0),
+                    "healed": state.get("healed", 0),
+                    "taken": state.get("taken", 0),
                 }
             )
         copies = 2 if rewards["mimic"] else 1
@@ -1395,6 +1397,8 @@ class Database:
                     "max_hp": result["heroes"][-1]["max_hp"],
                     "alive": result["heroes"][-1]["alive"],
                     "dealt": result["heroes"][-1].get("dealt", 0),
+                    "healed": result["heroes"][-1].get("healed", 0),
+                    "taken": result["heroes"][-1].get("taken", 0),
                 }
                 if ally and result
                 else None
@@ -2065,7 +2069,12 @@ class Database:
             "stage": stage,
             "result": result,
             "fighters": [
-                {"seat": h["seat"], "dealt": h["dealt"]}
+                {
+                    "seat": h["seat"],
+                    "dealt": h["dealt"],
+                    "healed": h.get("healed", 0),
+                    "taken": h.get("taken", 0),
+                }
                 for h in result["heroes"]
                 if h["seat"] is not None
             ],

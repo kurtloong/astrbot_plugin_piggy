@@ -939,7 +939,7 @@ def render_raid_poster(root: Path, poster: dict) -> Card:
     headline_top = events_bottom + (30 if events else 0)
     dps = poster.get("dps") or []
     dps_top = headline_top + 110
-    log_top = dps_top + (70 + len(dps) * 48 + 30 if dps else 0)
+    log_top = dps_top + (70 + len(dps) * 58 + 30 if dps else 0)
     settle_top = log_top + 70 + len(log) * log_step + 40
     next_top = settle_top + 70 + len(settlement) * 38 + 30
     height = next_top + 40 + len(next_lines) * 40 + 130
@@ -1041,22 +1041,30 @@ def render_raid_poster(root: Path, poster: dict) -> Card:
     canvas.text(poster["headline"], 86, headline_top + 18, 32, ACCENT, True, width=908)
 
     if dps:
-        canvas.text("伤害统计", 58, dps_top, 28, bold=True)
-        canvas.text("总伤害 · 每回合伤害（DPS）· 占比", 200, dps_top + 8, 20, SUB)
+        canvas.text("战斗统计", 58, dps_top, 28, bold=True)
+        canvas.text("总伤害 · 有效治疗 · 承受伤害", 200, dps_top + 8, 20, SUB)
         best = max(row["dealt"] for row in dps) or 1
         for index, row in enumerate(dps):
-            y = dps_top + 60 + index * 48
+            y = dps_top + 60 + index * 58
             top = index == 0
-            canvas.text(f"{row['owner']}·{row['pig']}", 70, y, 22, TEXT, top, width=340)
-            _hp_bar(canvas, 424, y + 9, 300, row["dealt"], best, ACCENT if top else SUB)
+            canvas.text(f"{row['owner']}·{row['pig']}", 70, y, 21, TEXT, top, width=315)
+            _hp_bar(canvas, 390, y + 10, 220, row["dealt"], best, ACCENT if top else SUB)
             canvas.text(
-                f"{row['dealt']} · {row['per_round']:.0f}/回合 · {row['share']:.0%}",
-                740,
+                f"伤 {row['dealt']} · 治 {row['healed']} · 承 {row['taken']}",
+                630,
                 y,
-                21,
+                20,
                 ACCENT if top else TEXT,
                 top,
-                width=280,
+                width=390,
+            )
+            canvas.text(
+                f"DPS {row['per_round']:.0f} · 伤害占比 {row['share']:.0%}",
+                630,
+                y + 27,
+                16,
+                SUB,
+                width=390,
             )
 
     canvas.text("战斗过程", 58, log_top, 28, bold=True)
