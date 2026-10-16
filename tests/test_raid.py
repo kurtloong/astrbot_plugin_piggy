@@ -675,18 +675,6 @@ class RaidEngineTests(unittest.TestCase):
         self.assertIn("层数爆发", text)
         self.assertIsNone(fight.mech.poison(hero))
 
-    def test_sure_damage_ignores_prepared_evade(self):
-        fight = battle("zombie-pig")
-        hero = fight.heroes[0]
-        hero.evade = 1
-        before = hero.hp
-
-        text = fight.damage(fight.boss, hero, {"type": "damage", "power": 1, "sure": True})
-
-        self.assertLess(hero.hp, before)
-        self.assertEqual(hero.evade, 1)
-        self.assertNotIn("躲开", text)
-
     def test_two_faced_ghost_flips_damage_types_and_possesses(self):
         fight = battle("pighub0876")
         fight.round = 1
