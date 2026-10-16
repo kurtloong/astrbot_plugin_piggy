@@ -2,12 +2,19 @@ import asyncio
 import math
 import re
 import time
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from . import replay, video
-from .battle import ROLES, STAT_NAMES, STATS, TAGS, describe_skill, entry_for, fighter, level_for
+from .battle import (
+    ROLES,
+    STAT_NAMES,
+    STATS,
+    TAGS,
+    describe_skill,
+    entry_for,
+    fighter,
+    level_for,
+)
 from .config import PiggyError, Settings
 from .database import EAST_ASIA
 from .delivery import Message
@@ -38,8 +45,6 @@ from .rendering import (
     render_today,
     render_wild,
 )
-
-VIDEO_FPS = 15
 
 
 def md(text: str) -> str:
@@ -556,29 +561,7 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
         buttons=buttons,
         mention=raid["leader_user"] if status == "waiting" and settings.use_host("raid") else None,
     )
-    video = raid_video_job(settings, root, battle)
-    notice = (
-        f"副本进行中……「{info['name']}」第 {battle['stage']}/{stages} 关对阵 {boss['label']}，"
-        "正在生成战斗回放，视频和战报稍后发出。"
-        if video
-        else ""
-    )
-    return replace(message, video=video, notice=notice)
-
-
-def raid_video_job(settings: Settings, root: Path, battle: dict):
-    """A thread-safe builder for this stage's MP4 replay, or None when it cannot be made."""
-    data = replay.replay_data(battle)
-    if not settings.raid_video or data is None or not video.available():
-        return None
-    seconds = settings.raid_video_seconds
-
-    def build() -> bytes:
-        return video.render(
-            lambda: replay.frames(root, data, seconds, VIDEO_FPS), VIDEO_FPS, seconds
-        )
-
-    return build
+    return message
 
 
 def _pen_entries(progress: dict, filters: tuple[str, ...] = ()) -> list[dict]:
@@ -745,6 +728,14 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
             "每关打赢：每位队员各得 1 只 boss 猪，全群各得 1 次再抽；倒下的猪，主人失去 1 只",
             "打完一关由队长发送「继续副本」或「撤退副本」（继续时随机救回一只倒下的猪）；每个副本每人每天 1 次",
         ],
+        "【绝境战】",
+        [
+            "永久通关全部 7 个普通副本后解锁；发送「绝境战」查看进度与本周奖励",
+            f"开启绝境战 {example} 另一只猪 —— 每人上阵 2 只，四人凑齐 8 只后自动开战",
+            "全队必须恰好 2 坦克 / 2 输出 / 2 治疗 / 2 辅助，且 8 个猪种不能重复",
+            "万相猪皇只有一条血条但会连续进入 5 个阶段；失败不扣猪，可重新挑战",
+            "每周首次通关每人获得真正十连，并保证一只尚未觉醒的猪获得性格；全觉醒后改为神话保底",
+        ],
     ]
     if favorite:
         blocks.append(f"你的「{example}」有 {favorite['count']} 只，是你现在最强的出战选择。")
@@ -752,7 +743,7 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
         settings,
         "小猪玩法：养成、副本与交换",
         blocks,
-        buttons=[("小猪属性", "小猪属性 "), ("猪副本", "猪副本"), ("小猪交换", "小猪交换 ")],
+        buttons=[("小猪属性", "小猪属性 "), ("猪副本", "猪副本"), ("绝境战", "绝境战")],
     )
 
 

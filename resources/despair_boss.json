@@ -1,0 +1,64 @@
+{
+  "id": "despair-emperor",
+  "name": "万相猪皇",
+  "max_rounds": 20,
+  "phase_thresholds": [80, 60, 40, 20, 0],
+  "phases": [
+    {
+      "id": 1,
+      "name": "王座重压",
+      "actions": 2,
+      "skills": [
+        {"name": "御前裁决", "power": 1.0, "cooldown": 0},
+        {"name": "裂甲獠牙", "power": 1.3, "cooldown": 2},
+        {"name": "震地三连", "power": 0.55, "hits": 3, "cooldown": 3}
+      ],
+      "signature": {"name": "王座冲锋", "power": 2.1, "warning": 1}
+    },
+    {
+      "id": 2,
+      "name": "七灾回响",
+      "actions": 2,
+      "skills": [
+        {"name": "灾厄吐息", "power": 0.7, "targets": 2, "cooldown": 0},
+        {"name": "颠倒敕令", "power": 0.0, "targets": 3, "cooldown": 2},
+        {"name": "禁声钟鸣", "power": 0.4, "targets": 8, "cooldown": 3}
+      ],
+      "signature": {"name": "万疫归一", "warning": 1}
+    },
+    {
+      "id": 3,
+      "name": "血月同命",
+      "actions": 3,
+      "skills": [
+        {"name": "血税征收", "power": 0.3, "targets": 8, "cooldown": 0},
+        {"name": "同命撕咬", "power": 0.85, "targets": 2, "cooldown": 2},
+        {"name": "饥荒凝视", "power": 0.0, "targets": 1, "cooldown": 3}
+      ],
+      "signature": {"name": "赤月收割", "power": 0.95, "warning": 1}
+    },
+    {
+      "id": 4,
+      "name": "破冠攻坚",
+      "actions": 3,
+      "skills": [
+        {"name": "裂界连爪", "power": 0.5, "hits": 3, "cooldown": 0},
+        {"name": "断生獠牙", "power": 1.35, "cooldown": 2},
+        {"name": "王冠震荡", "power": 0.55, "targets": 8, "cooldown": 3}
+      ],
+      "signature": {"name": "帝威坠落", "power": 1.0, "warning": 1}
+    },
+    {
+      "id": 5,
+      "name": "万相归一",
+      "actions": 3,
+      "skills": [
+        {"name": "万相轮舞", "power": 0.5, "targets": 4, "cooldown": 0},
+        {"name": "生灭倒转", "power": 0.8, "targets": 2, "cooldown": 2},
+        {"name": "绝境剥夺", "power": 1.1, "targets": 1, "cooldown": 3},
+        {"name": "四职崩坏", "power": 0.65, "targets": 4, "cooldown": 3}
+      ],
+      "signature": {"name": "终局裁定", "power": 1.35, "warning": 1, "repeat": 3}
+    }
+  ]
+}

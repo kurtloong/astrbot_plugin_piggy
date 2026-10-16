@@ -60,7 +60,7 @@ class UltimateTests(unittest.TestCase):
         self.assertFalse(fight._try_ultimate())
         self.assertEqual(fight.boss.hp, first_hp)
 
-    def test_damage_is_large_capped_and_replayed(self):
+    def test_damage_is_large_capped_and_recorded(self):
         fight = ready(make_battle())
         dps = next(hero for hero in fight.heroes if hero.role == "输出")
         before = fight.boss.hp
@@ -68,7 +68,9 @@ class UltimateTests(unittest.TestCase):
         dealt = before - fight.boss.hp
         self.assertGreater(dealt, dps.stat("atk") * 2)
         self.assertLessEqual(dealt, fight.boss.max_hp * 0.22 + 0.01)
-        self.assertTrue(any(cue["t"] == "ultimate" for cue in fight.timeline[-1]["cues"]))
+        self.assertTrue(fight.ultimate_used)
+        self.assertEqual(fight.ultimate_round, fight.round)
+        self.assertIn("极限技", fight.log[-1])
 
     def test_healer_answers_critical_party_health(self):
         fight = ready(make_battle())
