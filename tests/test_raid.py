@@ -648,7 +648,7 @@ class RaidEngineTests(unittest.TestCase):
         for _ in range(4):
             fight.mech.outgoing(fight, hero, 1)
         poison = [d for d in hero.dots if d.get("stacks")]
-        self.assertEqual([(d["pct"], d["label"]) for d in poison], [(12, "尸毒×3")])
+        self.assertEqual([(d["pct"], d["label"]) for d in poison], [(4, "尸毒×3")])
         self.assertEqual(hero.dots[0]["pct"], 5)
         self.assertEqual(fight.mech.heal_factor(fight, hero), 0.25)
         self.assertIs(fight.order()[-1], fight.boss)
@@ -660,6 +660,32 @@ class RaidEngineTests(unittest.TestCase):
         fight.acting = None
         fight.hurt(fight.heroes[2], 10_000)
         self.assertEqual(len(fight.foes), 2)
+
+    def test_zombie_poison_ticks_and_bursts_once_per_stack(self):
+        fight = battle("zombie-pig")
+        hero = fight.heroes[0]
+        for _ in range(3):
+            fight.mech.outgoing(fight, hero, 1)
+        poison = fight.mech.poison(hero)
+
+        self.assertEqual(fight.dot_amount(hero, poison) * poison["stacks"], hero.max_hp * 0.12)
+        before = hero.hp
+        text = fight.effect(fight.boss, hero, {"type": "bleed_burst", "stacks": 3}, {})
+        self.assertLessEqual(before - hero.hp, hero.max_hp * 0.12 + 1)
+        self.assertIn("层数爆发", text)
+        self.assertIsNone(fight.mech.poison(hero))
+
+    def test_sure_damage_ignores_prepared_evade(self):
+        fight = battle("zombie-pig")
+        hero = fight.heroes[0]
+        hero.evade = 1
+        before = hero.hp
+
+        text = fight.damage(fight.boss, hero, {"type": "damage", "power": 1, "sure": True})
+
+        self.assertLess(hero.hp, before)
+        self.assertEqual(hero.evade, 1)
+        self.assertNotIn("躲开", text)
 
     def test_two_faced_ghost_flips_damage_types_and_possesses(self):
         fight = battle("pighub0876")
@@ -821,6 +847,21 @@ class RaidEngineTests(unittest.TestCase):
             },
         ]
         ally.glitch = True
+        self.assertEqual(fight.choose(support, fight.boss)["name"], "团队净化")
+
+        # A self-only cleanse cannot answer a teammate's debuff and must not
+        # steal the cast from an actually useful party cleanse.
+        support.actives.insert(
+            1,
+            {
+                "name": "自我净化",
+                "text": "只净化自己。",
+                "cd": 0,
+                "when": None,
+                "passive": False,
+                "effects": [{"type": "cleanse", "target": "self"}],
+            },
+        )
         self.assertEqual(fight.choose(support, fight.boss)["name"], "团队净化")
 
         ally.glitch = False
