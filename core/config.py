@@ -157,8 +157,6 @@ class Settings:
     draw_chain_chance: int = 50
     wild_level_max: int = 20
     wild_announce: bool = True
-    raid_video: bool = True
-    raid_video_seconds: int = 60
 
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":
@@ -238,7 +236,6 @@ class Settings:
             ("draw_gather_chance", 0, 90),
             ("draw_chain_chance", 0, 90),
             ("wild_level_max", 1, 100),
-            ("raid_video_seconds", 20, 90),
         ):
             value = getattr(obj, key)
             if type(value) is not int or not low <= value <= high:
@@ -250,7 +247,7 @@ class Settings:
             value = getattr(obj, key)
             if type(value) not in (int, float) or not low <= value <= high:
                 raise PiggyError(f"配置 {key} 必须在 {low}–{high} 之间。")
-        for key in ("battle_markdown", "wild_announce", "raid_video"):
+        for key in ("battle_markdown", "wild_announce"):
             if type(getattr(obj, key)) is not bool:
                 raise PiggyError(f"配置 {key} 必须为布尔值。")
         if obj.provider not in {"s3", "http"}:

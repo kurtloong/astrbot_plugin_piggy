@@ -1,10 +1,8 @@
 import asyncio
 import contextlib
-import random
 import re
 import sqlite3
 import time
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,6 +25,11 @@ from .core.catalog import (
 from .core.config import PiggyError, Settings, migrate_host_config
 from .core.database import Database, player_name
 from .core.delivery import Message, QQError, QQTransport, Sender, message_key
+from .core.despair_views import (
+    despair_battle_message,
+    despair_lobby_message,
+    despair_status_message,
+)
 from .core.diagnostics import exception_detail
 from .core.raid import DUNGEONS, dungeon
 from .core.rendering import clean_cards
@@ -44,7 +47,6 @@ from .core.views import (
     raid_detail_message,
     raid_list_message,
     raid_lobby_message,
-    raid_video_job,
     ranking_message,
     request_message,
     requests_message,
@@ -92,6 +94,10 @@ BATTLE_COMMANDS = {
     "raid_leave",
     "raid_continue",
     "raid_retreat",
+    "despair",
+    "despair_open",
+    "despair_join",
+    "despair_leave",
     "grant_pig",
     "grant_draw",
 }
@@ -104,10 +110,6 @@ USAGE = {
 GRANT_MAX = 999
 RAID_NAMES = " / ".join(f"{item['key']} {item['name']}" for item in DUNGEONS)
 RAID_USAGE = f"用法：开启副本 编号 你的小猪，例如：开启副本 1 猪人（{RAID_NAMES}）"
-VIDEO_TEST_USAGE = f"用法：小猪视频测试 [副本编号] [关卡 1-3]（{RAID_NAMES}）"
-VIDEO_TEST_LEVEL = 10
-# The test video replies to the command before the text report, which starts at sequence 100.
-VIDEO_TEST_SEQUENCE = 90
 NAME_USAGE = {
     "duel": "斗猪 #编号 你的小猪",
     "trade": "小猪交换 #编号 你的小猪 对方的小猪",
@@ -209,7 +211,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与副本", "1.13.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与副本", "1.15.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -463,8 +465,6 @@ class PiggyPlugin(Star):
                 message = Message("备份已保存到插件数据目录 backups，包含数据库、猪库及历史素材。")
             elif command in BATTLE_COMMANDS:
                 message = await self._battle(event, app_id, user, command, args)
-            elif command == "video_test":
-                message = await self._video_test(event, args, deadline)
             else:
                 self.settings.check_host()
                 progress = await self.db.collection(user["id"])
@@ -549,9 +549,7 @@ class PiggyPlugin(Star):
             pig = await self.db.find_pig(" ".join(words))
             count = await self.db.pig_count(user["id"], pig["id"])
             personality = await self.db.pig_personality(user["id"], pig["id"])
-            return stats_message(
-                settings, user, pig, count, settings.battle_level_cap, personality
-            )
+            return stats_message(settings, user, pig, count, settings.battle_level_cap, personality)
         if command in ("grant_pig", "grant_draw"):
             return await self._grant(event, app_id, command, words)
         if command in ("duel", "trade"):
@@ -596,6 +594,8 @@ class PiggyPlugin(Star):
             return await wild_battle_message(settings, self.root, result)
         if command.startswith("raid"):
             return await self._raid(app_id, group, user, command, words)
+        if command.startswith("despair"):
+            return await self._despair(app_id, group, user, command, words)
         if command == "shop":
             shop = await self.db.shop(app_id, group, user["id"])
             if settings.use_host("shop"):
@@ -687,24 +687,6 @@ class PiggyPlugin(Star):
             f"已给 {name} 发放 {amount} 只{pig['name']}，现有 {change['count_after']} 只（{level}）。"
         )
 
-    async def _video_test(self, event, words: tuple, deadline: float) -> Message:
-        try:
-            info = dungeon(words[0] if words else DUNGEONS[-1]["key"])
-            stage = int(words[1]) if len(words) > 1 else 1
-        except (KeyError, ValueError):
-            raise PiggyError(VIDEO_TEST_USAGE) from None
-        if not 1 <= stage <= len(info["bosses"]):
-            raise PiggyError(VIDEO_TEST_USAGE)
-        battle = await self.db.raid_sample(
-            info["key"], stage, VIDEO_TEST_LEVEL, random.randrange(2**32)
-        )
-        build = raid_video_job(replace(self.settings, raid_video=True), self.root, battle)
-        if build is None:
-            raise PiggyError("没有安装 PyAV，无法生成回放视频。")
-        lines = await self.sender.check_video(event, build, VIDEO_TEST_SEQUENCE, deadline)
-        title = f"回放视频测试 · {info['name']} 第 {stage} 关（模拟战斗，不影响任何数据）"
-        return Message("\n".join((title, *lines)))
-
     async def _raid(self, app_id: str, group: str, user: dict, command: str, words: tuple):
         settings, uid = self.settings, user["id"]
         if command == "raid":
@@ -755,6 +737,37 @@ class PiggyPlugin(Star):
         if result["started"]:
             return await raid_battle_message(settings, self.root, result["battle"])
         return raid_lobby_message(settings, result, "join")
+
+    async def _despair(self, app_id: str, group: str, user: dict, command: str, words: tuple):
+        settings, uid = self.settings, user["id"]
+        if command == "despair":
+            status = await self.db.despair_status(app_id, group, uid)
+            return despair_status_message(settings, user, status)
+        if command == "despair_leave":
+            result = await self.db.leave_despair(app_id, group, uid)
+            return despair_lobby_message(
+                settings, result, "cancelled" if result["cancelled"] else "leave"
+            )
+        if len(words) != 2:
+            verb = "开启" if command == "despair_open" else "加入"
+            raise PiggyError(f"用法：{verb}绝境战 小猪A 小猪B（每人必须选择两只不同的小猪）")
+        pigs = [await self.db.find_pig(name) for name in words]
+        pig_ids = [pig["id"] for pig in pigs]
+        if command == "despair_open":
+            result = await self.db.open_despair(app_id, group, uid, pig_ids)
+            return despair_lobby_message(settings, result, "open")
+        if settings.use_host("raid"):
+            settings.check_host()
+        result = await self.db.join_despair(
+            app_id,
+            group,
+            uid,
+            pig_ids,
+            level_cap=settings.battle_level_cap,
+        )
+        if result["started"]:
+            return await despair_battle_message(settings, self.root, result["battle"])
+        return despair_lobby_message(settings, result, "join")
 
     async def _failure(self, event, text: str):
         try:
@@ -868,6 +881,26 @@ class PiggyPlugin(Star):
         """队长：打完一关后带着奖励撤退。"""
         await self._handle(event, "raid_retreat")
 
+    @filter.command("绝境战")
+    async def despair(self, event: AstrMessageEvent):
+        """查看绝境战解锁、周奖励和当前组队状态。"""
+        await self._handle(event, "despair")
+
+    @filter.command("开启绝境战")
+    async def despair_open(self, event: AstrMessageEvent):
+        """发起四人八猪绝境战。用法：开启绝境战 小猪A 小猪B"""
+        await self._handle(event, "despair_open", command_words(event, ("开启绝境战",)))
+
+    @filter.command("加入绝境战")
+    async def despair_join(self, event: AstrMessageEvent):
+        """加入绝境战。用法：加入绝境战 小猪A 小猪B"""
+        await self._handle(event, "despair_join", command_words(event, ("加入绝境战",)))
+
+    @filter.command("退出绝境战")
+    async def despair_leave(self, event: AstrMessageEvent):
+        """组队期间退出绝境战；队长退出会解散整队。"""
+        await self._handle(event, "despair_leave")
+
     async def duel_ranking(self, event: AstrMessageEvent):
         """查看本群玩家的斗猪胜率排行，至少 3 场上榜。"""
         await self._handle(event, "duel_ranking")
@@ -939,12 +972,6 @@ class PiggyPlugin(Star):
     async def diagnose(self, event: AstrMessageEvent):
         """仅管理员：绕过缓存上传测试猪图，发送消息并检查 QQ 图片转存链路。"""
         await self._handle(event, "diagnose")
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("小猪视频测试")
-    async def video_test(self, event: AstrMessageEvent):
-        """仅管理员：模拟一场副本战斗并发送回放视频，报告渲染、上传、发送各步结果。"""
-        await self._handle(event, "video_test", command_words(event, ("小猪视频测试",)))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("发小猪")

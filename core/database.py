@@ -36,6 +36,10 @@ _SYSTEM_RANDOM = secrets.SystemRandom()
 SHOP_SIZE = 5
 REQUEST_LABELS = {"duel": "斗猪", "trade": "交换"}
 RAID_ACTIVE = ("forming", "waiting")
+DESPAIR_PARTY_SIZE = 4
+DESPAIR_PIGS_PER_PLAYER = 2
+DESPAIR_TIMEOUT_MINUTES = 10
+
 
 def player_name(user) -> str:
     return user["alias"] or user["nickname"] or f"玩家 {user['id']:04d}"
@@ -91,6 +95,12 @@ def _level_change(pig: dict, before: int, after: int, cap: int) -> dict:
     }
 
 
+def _week_key(now: datetime) -> str:
+    """Monday in the player's UTC+8 calendar week."""
+    local_day = now.astimezone(EAST_ASIA).date()
+    return (local_day - timedelta(days=local_day.weekday())).isoformat()
+
+
 class Database:
     def __init__(self, root: Path):
         self.root = root
@@ -114,7 +124,7 @@ class Database:
             if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise PiggyError("数据库检查失败，已停止写入；请检查备份，数据库不会被自动清空。")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4):
+            if version not in (0, 1, 2, 3, 4, 5):
                 raise PiggyError("数据库版本高于当前插件支持版本，请勿降级运行。")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
@@ -252,6 +262,49 @@ class Database:
                     raid_id INTEGER REFERENCES raids(id), acquired_at REAL NOT NULL,
                     PRIMARY KEY(user_id,pig_id)
                 );
+                CREATE TABLE IF NOT EXISTS despair_raids (
+                    id INTEGER PRIMARY KEY, app_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                    week TEXT NOT NULL, leader INTEGER NOT NULL REFERENCES users(id),
+                    status TEXT NOT NULL DEFAULT 'forming' CHECK(status IN
+                        ('forming','cleared','failed','cancelled')),
+                    seed INTEGER NOT NULL, created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL, updated_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS despair_raids_group
+                    ON despair_raids(app_id,group_id,status);
+                CREATE INDEX IF NOT EXISTS despair_raids_status
+                    ON despair_raids(status,expires_at);
+                CREATE TABLE IF NOT EXISTS despair_members (
+                    raid_id INTEGER NOT NULL REFERENCES despair_raids(id),
+                    user_id INTEGER NOT NULL REFERENCES users(id), seat INTEGER NOT NULL,
+                    joined_at REAL NOT NULL, PRIMARY KEY(raid_id,user_id),
+                    UNIQUE(raid_id,seat)
+                );
+                CREATE INDEX IF NOT EXISTS despair_members_user ON despair_members(user_id);
+                CREATE TABLE IF NOT EXISTS despair_member_pigs (
+                    raid_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                    pig_id TEXT NOT NULL REFERENCES pigs(id), slot INTEGER NOT NULL,
+                    PRIMARY KEY(raid_id,user_id,slot), UNIQUE(raid_id,pig_id),
+                    FOREIGN KEY(raid_id,user_id) REFERENCES despair_members(raid_id,user_id)
+                );
+                CREATE TABLE IF NOT EXISTS despair_battles (
+                    id INTEGER PRIMARY KEY, raid_id INTEGER NOT NULL UNIQUE
+                        REFERENCES despair_raids(id),
+                    won INTEGER NOT NULL, seed INTEGER NOT NULL, log TEXT NOT NULL,
+                    summary TEXT NOT NULL, fought_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS despair_rewards (
+                    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+                    week TEXT NOT NULL, raid_id INTEGER NOT NULL REFERENCES despair_raids(id),
+                    granted_at REAL NOT NULL, personality_pig TEXT REFERENCES pigs(id),
+                    personality TEXT, UNIQUE(user_id,week)
+                );
+                CREATE TABLE IF NOT EXISTS despair_reward_items (
+                    reward_id INTEGER NOT NULL REFERENCES despair_rewards(id),
+                    slot INTEGER NOT NULL, pig_id TEXT NOT NULL REFERENCES pigs(id),
+                    count_before INTEGER NOT NULL, count_after INTEGER NOT NULL,
+                    PRIMARY KEY(reward_id,slot)
+                );
             """)
             columns = {row[1] for row in conn.execute("PRAGMA table_info(pigs)")}
             if "battle" not in columns:
@@ -262,7 +315,7 @@ class Database:
                 conn.execute(
                     "ALTER TABLE battle_records ADD COLUMN summary TEXT NOT NULL DEFAULT ''"
                 )
-            conn.execute("PRAGMA user_version=4")
+            conn.execute("PRAGMA user_version=5")
             conn.execute("COMMIT")
 
         try:
@@ -599,6 +652,563 @@ class Database:
         ).fetchone()
 
     @staticmethod
+    def _despair_expire(conn, app_id: str, group_id: str, stamp: float) -> list[dict]:
+        rows = conn.execute(
+            "SELECT * FROM despair_raids WHERE status='forming' AND expires_at<=?", (stamp,)
+        ).fetchall()
+        expired = []
+        for row in rows:
+            conn.execute(
+                "UPDATE despair_raids SET status='cancelled',updated_at=? WHERE id=?",
+                (stamp, row["id"]),
+            )
+            if row["app_id"] == app_id and row["group_id"] == group_id:
+                expired.append({**dict(row), "status": "cancelled"})
+        return expired
+
+    async def _despair_sweep(self, app_id: str, group_id: str, stamp: float) -> list[dict]:
+        def sweep(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            return self._despair_expire(conn, app_id, group_id, stamp)
+
+        return await self.run(sweep)
+
+    @staticmethod
+    def _group_despair(conn, app_id: str, group_id: str):
+        return conn.execute(
+            "SELECT * FROM despair_raids WHERE app_id=? AND group_id=? AND status='forming' "
+            "ORDER BY id DESC LIMIT 1",
+            (app_id, group_id),
+        ).fetchone()
+
+    @staticmethod
+    def _despair_unlock(conn, user_id: int) -> set[int]:
+        keys = {item["key"] for item in DUNGEONS}
+        return {
+            row[0]
+            for row in conn.execute(
+                "SELECT DISTINCT r.dungeon FROM raids r "
+                "JOIN raid_members m ON m.raid_id=r.id "
+                "WHERE m.user_id=? AND r.status='cleared'",
+                (user_id,),
+            )
+            if row[0] in keys
+        }
+
+    @classmethod
+    def _despair_require_unlocked(cls, conn, user_id: int):
+        cleared = cls._despair_unlock(conn, user_id)
+        missing = [item["name"] for item in DUNGEONS if item["key"] not in cleared]
+        if missing:
+            raise PiggyError(f"绝境战尚未解锁，还需通关：{'、'.join(missing)}。")
+
+    @staticmethod
+    def _despair_pigs(conn, user_id: int, pig_ids) -> list[dict]:
+        pig_ids = tuple(pig_ids)
+        if len(pig_ids) != DESPAIR_PIGS_PER_PLAYER or len(set(pig_ids)) != len(pig_ids):
+            raise PiggyError("绝境战每人必须选择 2 只不同的小猪。")
+        pigs = []
+        for pig_id in pig_ids:
+            row = conn.execute("SELECT * FROM pigs WHERE id=? AND enabled=1", (pig_id,)).fetchone()
+            if not row:
+                raise PiggyError("所选小猪不存在或当前未启用。")
+            if _owned(conn, user_id, pig_id) < 1:
+                raise PiggyError(f"你的猪圈里没有「{row['name']}」。")
+            pig = dict(row)
+            role = entry_for(pig.get("battle")).get("role", "输出")
+            pig["role"] = role if role in ROLES else "输出"
+            pigs.append(pig)
+        return pigs
+
+    @classmethod
+    def _despair_member_check(cls, conn, user_id: int, pig_ids) -> list[dict]:
+        cls._despair_require_unlocked(conn, user_id)
+        regular = conn.execute(
+            "SELECT r.dungeon FROM raid_members m JOIN raids r ON r.id=m.raid_id "
+            "WHERE m.user_id=? AND r.status IN ('forming','waiting')",
+            (user_id,),
+        ).fetchone()
+        if regular:
+            raise PiggyError(
+                f"你已经在「{dungeon(regular['dungeon'])['name']}」队伍里，不能同时参加绝境战。"
+            )
+        active = conn.execute(
+            "SELECT 1 FROM despair_members m JOIN despair_raids r ON r.id=m.raid_id "
+            "WHERE m.user_id=? AND r.status='forming'",
+            (user_id,),
+        ).fetchone()
+        if active:
+            raise PiggyError("你已经在一支绝境战队伍里了。")
+        return cls._despair_pigs(conn, user_id, pig_ids)
+
+    @staticmethod
+    def _despair_role_counts(conn, raid_id: int) -> dict[str, int]:
+        counts = {role: 0 for role in ROLES}
+        for row in conn.execute(
+            "SELECT p.battle FROM despair_member_pigs mp JOIN pigs p ON p.id=mp.pig_id "
+            "WHERE mp.raid_id=?",
+            (raid_id,),
+        ):
+            role = entry_for(row["battle"]).get("role", "输出")
+            counts[role if role in counts else "输出"] += 1
+        return counts
+
+    @classmethod
+    def _despair_view(cls, conn, row) -> dict:
+        raid = dict(row)
+        raid["leader_user"] = dict(
+            conn.execute("SELECT * FROM users WHERE id=?", (row["leader"],)).fetchone()
+        )
+        members = []
+        for member in conn.execute(
+            "SELECT * FROM despair_members WHERE raid_id=? ORDER BY seat", (row["id"],)
+        ):
+            pigs = []
+            for selected in conn.execute(
+                "SELECT mp.slot,p.* FROM despair_member_pigs mp JOIN pigs p ON p.id=mp.pig_id "
+                "WHERE mp.raid_id=? AND mp.user_id=? ORDER BY mp.slot",
+                (row["id"], member["user_id"]),
+            ):
+                pig = dict(selected)
+                pig["role"] = entry_for(pig.pop("battle", None)).get("role", "输出")
+                pigs.append(pig)
+            members.append(
+                {
+                    **dict(member),
+                    "user": dict(
+                        conn.execute(
+                            "SELECT * FROM users WHERE id=?", (member["user_id"],)
+                        ).fetchone()
+                    ),
+                    "pigs": pigs,
+                }
+            )
+        raid["members"] = members
+        raid["roles"] = cls._despair_role_counts(conn, row["id"])
+        return raid
+
+    @staticmethod
+    def _despair_reward_view(conn, row) -> dict:
+        reward = dict(row)
+        reward["user"] = dict(
+            conn.execute("SELECT * FROM users WHERE id=?", (row["user_id"],)).fetchone()
+        )
+        items = []
+        for item in conn.execute(
+            "SELECT i.*,p.* FROM despair_reward_items i JOIN pigs p ON p.id=i.pig_id "
+            "WHERE i.reward_id=? ORDER BY i.slot",
+            (row["id"],),
+        ):
+            data = dict(item)
+            pig = {
+                key: data[key]
+                for key in ("pig_id", "name", "description", "analysis", "asset")
+                if key in data
+            }
+            pig["id"] = pig.pop("pig_id")
+            pig["rarity"] = rarity_for(pig["id"])
+            items.append(
+                {
+                    "slot": data["slot"],
+                    "pig": pig,
+                    "rarity": pig["rarity"],
+                    "count_before": data["count_before"],
+                    "count_after": data["count_after"],
+                }
+            )
+        reward["items"] = items
+        reward["personality_detail"] = None
+        if row["personality"]:
+            nature = PERSONALITIES[row["personality"]]
+            pig = conn.execute(
+                "SELECT name FROM pigs WHERE id=?", (row["personality_pig"],)
+            ).fetchone()
+            reward["personality_detail"] = {
+                "pig_id": row["personality_pig"],
+                "pig": pig["name"],
+                "id": row["personality"],
+                "name": nature["name"],
+                "skill": nature["skill"]["text"],
+            }
+        return reward
+
+    async def despair_status(
+        self, app_id: str, group_id: str, user_id: int, now: datetime | None = None
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        stamp, week = now.timestamp(), _week_key(now)
+
+        def read(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            expired = self._despair_expire(conn, app_id, group_id, stamp)
+            row = self._group_despair(conn, app_id, group_id)
+            cleared = self._despair_unlock(conn, user_id)
+            reward = conn.execute(
+                "SELECT * FROM despair_rewards WHERE user_id=? AND week=?", (user_id, week)
+            ).fetchone()
+            return {
+                "raid": self._despair_view(conn, row) if row else None,
+                "expired": expired,
+                "week": week,
+                "unlocked": len(cleared) == len(DUNGEONS),
+                "cleared": cleared,
+                "missing": [item for item in DUNGEONS if item["key"] not in cleared],
+                "reward": self._despair_reward_view(conn, reward) if reward else None,
+                "now": stamp,
+            }
+
+        return await self.run(read)
+
+    @staticmethod
+    def _insert_despair_member(conn, raid_id: int, user_id: int, seat: int, pigs, stamp: float):
+        conn.execute(
+            "INSERT INTO despair_members(raid_id,user_id,seat,joined_at) VALUES(?,?,?,?)",
+            (raid_id, user_id, seat, stamp),
+        )
+        conn.executemany(
+            "INSERT INTO despair_member_pigs(raid_id,user_id,pig_id,slot) VALUES(?,?,?,?)",
+            [(raid_id, user_id, pig["id"], slot) for slot, pig in enumerate(pigs)],
+        )
+
+    async def open_despair(
+        self,
+        app_id: str,
+        group_id: str,
+        user_id: int,
+        pig_ids,
+        now: datetime | None = None,
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        stamp, week = now.timestamp(), _week_key(now)
+        expired = await self._despair_sweep(app_id, group_id, stamp)
+
+        def create(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._despair_expire(conn, app_id, group_id, stamp)
+            self._raid_expire(conn, app_id, group_id, stamp)
+            if self._group_despair(conn, app_id, group_id):
+                raise PiggyError("本群已经有一支绝境战队伍正在组队。")
+            regular = self._group_raid(conn, app_id, group_id)
+            if regular:
+                raise PiggyError("本群已有普通副本队伍，结束后才能开启绝境战。")
+            pigs = self._despair_member_check(conn, user_id, pig_ids)
+            cursor = conn.execute(
+                "INSERT INTO despair_raids(app_id,group_id,week,leader,seed,created_at,"
+                "expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    app_id,
+                    group_id,
+                    week,
+                    user_id,
+                    secrets.randbits(32),
+                    stamp,
+                    stamp + DESPAIR_TIMEOUT_MINUTES * 60,
+                    stamp,
+                ),
+            )
+            self._insert_despair_member(conn, cursor.lastrowid, user_id, 0, pigs, stamp)
+            row = conn.execute(
+                "SELECT * FROM despair_raids WHERE id=?", (cursor.lastrowid,)
+            ).fetchone()
+            return {"raid": self._despair_view(conn, row), "expired": expired, "now": stamp}
+
+        return await self.run(create)
+
+    async def join_despair(
+        self,
+        app_id: str,
+        group_id: str,
+        user_id: int,
+        pig_ids,
+        *,
+        level_cap: int = 20,
+        now: datetime | None = None,
+        seed: int | None = None,
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        stamp = now.timestamp()
+        expired = await self._despair_sweep(app_id, group_id, stamp)
+
+        def join(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._despair_expire(conn, app_id, group_id, stamp)
+            self._raid_expire(conn, app_id, group_id, stamp)
+            raid = self._group_despair(conn, app_id, group_id)
+            if not raid:
+                note = "上一支队伍 10 分钟内没凑满 4 人，已自动取消。" if expired else ""
+                raise PiggyError(f"{note}本群目前没有绝境战队伍。")
+            pigs = self._despair_member_check(conn, user_id, pig_ids)
+            count = conn.execute(
+                "SELECT count(*) FROM despair_members WHERE raid_id=?", (raid["id"],)
+            ).fetchone()[0]
+            if count >= DESPAIR_PARTY_SIZE:
+                raise PiggyError("绝境战队伍已经满员。")
+            selected_ids = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT pig_id FROM despair_member_pigs WHERE raid_id=?", (raid["id"],)
+                )
+            }
+            duplicate = next((pig for pig in pigs if pig["id"] in selected_ids), None)
+            if duplicate:
+                raise PiggyError(f"全队不能重复选择「{duplicate['name']}」。")
+            self._insert_despair_member(conn, raid["id"], user_id, count, pigs, stamp)
+            roles = self._despair_role_counts(conn, raid["id"])
+            if any(value > 2 for value in roles.values()):
+                raise PiggyError("绝境战阵容每种职业必须恰好 2 只，当前选择会使某职业超过 2 只。")
+            if count + 1 < DESPAIR_PARTY_SIZE:
+                row = conn.execute(
+                    "SELECT * FROM despair_raids WHERE id=?", (raid["id"],)
+                ).fetchone()
+                return {
+                    "raid": self._despair_view(conn, row),
+                    "started": False,
+                    "expired": expired,
+                    "now": stamp,
+                }
+            if any(value != 2 for value in roles.values()):
+                raise PiggyError("绝境战需要恰好 2 坦克、2 输出、2 治疗、2 辅助。")
+            battle = self._despair_fight(conn, raid["id"], stamp, level_cap, seed)
+            return {
+                "raid": battle["raid"],
+                "started": True,
+                "battle": battle,
+                "rewards": battle["rewards"],
+                "expired": expired,
+            }
+
+        return await self.run(join)
+
+    async def leave_despair(
+        self, app_id: str, group_id: str, user_id: int, now: datetime | None = None
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        stamp = now.timestamp()
+        await self._despair_sweep(app_id, group_id, stamp)
+
+        def leave(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._despair_expire(conn, app_id, group_id, stamp)
+            raid = self._group_despair(conn, app_id, group_id)
+            if (
+                not raid
+                or not conn.execute(
+                    "SELECT 1 FROM despair_members WHERE raid_id=? AND user_id=?",
+                    (raid["id"], user_id),
+                ).fetchone()
+            ):
+                raise PiggyError("你不在本群正在组队的绝境战队伍里。")
+            if raid["leader"] == user_id:
+                conn.execute(
+                    "UPDATE despair_raids SET status='cancelled',updated_at=? WHERE id=?",
+                    (stamp, raid["id"]),
+                )
+                cancelled = True
+            else:
+                conn.execute(
+                    "DELETE FROM despair_member_pigs WHERE raid_id=? AND user_id=?",
+                    (raid["id"], user_id),
+                )
+                conn.execute(
+                    "DELETE FROM despair_members WHERE raid_id=? AND user_id=?",
+                    (raid["id"], user_id),
+                )
+                remaining = conn.execute(
+                    "SELECT user_id FROM despair_members WHERE raid_id=? ORDER BY joined_at,seat",
+                    (raid["id"],),
+                ).fetchall()
+                for seat, member in enumerate(remaining):
+                    conn.execute(
+                        "UPDATE despair_members SET seat=? WHERE raid_id=? AND user_id=?",
+                        (seat, raid["id"], member["user_id"]),
+                    )
+                cancelled = False
+            row = conn.execute("SELECT * FROM despair_raids WHERE id=?", (raid["id"],)).fetchone()
+            return {"raid": self._despair_view(conn, row), "cancelled": cancelled, "now": stamp}
+
+        return await self.run(leave)
+
+    @classmethod
+    def _grant_despair_reward(
+        cls, conn, user_id: int, week: str, raid_id: int, stamp: float, rng
+    ) -> dict:
+        existing = conn.execute(
+            "SELECT * FROM despair_rewards WHERE user_id=? AND week=?", (user_id, week)
+        ).fetchone()
+        if existing:
+            view = cls._despair_reward_view(conn, existing)
+            view["created"] = False
+            return view
+        available = [dict(row) for row in conn.execute("SELECT * FROM pigs WHERE enabled=1")]
+        if not available:
+            raise PiggyError("猪库没有启用的小猪，无法发放绝境战十连奖励。")
+        picks = [dict(rng.choice(available)) for _ in range(10)]
+        awakened = {
+            row[0]
+            for row in conn.execute(
+                "SELECT pig_id FROM pig_personalities WHERE user_id=?", (user_id,)
+            )
+        }
+        unawakened = [pig for pig in available if pig["id"] not in awakened]
+        personality_pig = personality_id = None
+        if unawakened:
+            eligible_slots = [i for i, pig in enumerate(picks) if pig["id"] not in awakened]
+            if not eligible_slots:
+                picks[-1] = dict(rng.choice(unawakened))
+                personality_slot = 9
+            else:
+                personality_slot = rng.choice(eligible_slots)
+            chosen = picks[personality_slot]
+            role = entry_for(chosen.get("battle")).get("role", "输出")
+            personality_pig = chosen["id"]
+            personality_id = rng.choice(choices_for(role if role in ROLES else "输出"))
+        else:
+            mythic = [pig for pig in available if rarity_for(pig["id"]) == "神话"]
+            if mythic:
+                picks[-1] = dict(rng.choice(mythic))
+        cursor = conn.execute(
+            "INSERT INTO despair_rewards(user_id,week,raid_id,granted_at,personality_pig,"
+            "personality) VALUES(?,?,?,?,?,?)",
+            (user_id, week, raid_id, stamp, personality_pig, personality_id),
+        )
+        reward_id = cursor.lastrowid
+        for slot, pig in enumerate(picks):
+            before = _owned(conn, user_id, pig["id"])
+            _give(conn, user_id, pig["id"], stamp)
+            conn.execute(
+                "INSERT INTO despair_reward_items VALUES(?,?,?,?,?)",
+                (reward_id, slot, pig["id"], before, before + 1),
+            )
+        if personality_id:
+            conn.execute(
+                "INSERT INTO pig_personalities(user_id,pig_id,personality,raid_id,acquired_at) "
+                "VALUES(?,?,?,?,?)",
+                (user_id, personality_pig, personality_id, None, stamp),
+            )
+        row = conn.execute("SELECT * FROM despair_rewards WHERE id=?", (reward_id,)).fetchone()
+        view = cls._despair_reward_view(conn, row)
+        view["created"] = True
+        return view
+
+    @classmethod
+    def _despair_fight(
+        cls, conn, raid_id: int, stamp: float, level_cap: int, seed: int | None
+    ) -> dict:
+        from .despair import simulate_despair
+
+        raid = conn.execute("SELECT * FROM despair_raids WHERE id=?", (raid_id,)).fetchone()
+        fight_seed = raid["seed"] if seed is None else seed
+        party, fighter_meta = [], []
+        selected = conn.execute(
+            "SELECT m.seat member_seat,m.user_id,mp.slot,p.* "
+            "FROM despair_members m JOIN despair_member_pigs mp "
+            "ON mp.raid_id=m.raid_id AND mp.user_id=m.user_id "
+            "JOIN pigs p ON p.id=mp.pig_id WHERE m.raid_id=? "
+            "ORDER BY m.seat,mp.slot",
+            (raid_id,),
+        ).fetchall()
+        for seat, row in enumerate(selected):
+            pig = dict(row)
+            user = dict(
+                conn.execute("SELECT * FROM users WHERE id=?", (row["user_id"],)).fetchone()
+            )
+            count = _owned(conn, row["user_id"], row["id"])
+            personality = conn.execute(
+                "SELECT personality FROM pig_personalities WHERE user_id=? AND pig_id=?",
+                (row["user_id"], row["id"]),
+            ).fetchone()
+            level = level_for(count, level_cap)
+            hero = fighter(
+                pig,
+                entry_for(row["battle"]),
+                level,
+                f"{player_name(user)}的{row['name']}",
+                personality=personality[0] if personality else None,
+            )
+            hero["seat"] = seat
+            hero["owner_seat"] = row["member_seat"]
+            hero["owner_id"] = row["user_id"]
+            party.append(hero)
+            fighter_meta.append((user, pig, level, hero))
+        result = simulate_despair(party, seed=fight_seed)
+        won = bool(result.get("won"))
+        status = "cleared" if won else "failed"
+        settlement_week = _week_key(datetime.fromtimestamp(stamp, timezone.utc))
+        conn.execute(
+            "UPDATE despair_raids SET status=?,week=?,updated_at=? WHERE id=?",
+            (status, settlement_week, stamp, raid_id),
+        )
+        outcome = {item["seat"]: item for item in result.get("heroes", [])}
+        fighters = []
+        for seat, (user, pig, level, hero) in enumerate(fighter_meta):
+            state = outcome.get(seat, {})
+            fighters.append(
+                {
+                    "seat": seat,
+                    "owner_seat": hero["owner_seat"],
+                    "user": user,
+                    "pig": {key: value for key, value in pig.items() if key != "battle"},
+                    "level": level,
+                    "role": hero.get("role", "输出"),
+                    "style": hero.get("style", "均衡"),
+                    "rarity": hero.get("rarity", rarity_for(pig["id"])),
+                    "personality": hero.get("personality_name", ""),
+                    "hp": state.get("hp", hero["stats"]["hp"]),
+                    "max_hp": state.get("max_hp", hero["stats"]["hp"]),
+                    "alive": state.get("alive", True),
+                    "dealt": state.get("dealt", 0),
+                    "healed": state.get("healed", 0),
+                    "taken": state.get("taken", 0),
+                    "poise": state.get("poise", 0),
+                }
+            )
+        summary = {
+            "rounds": result.get("rounds", 0),
+            "boss": result.get("boss"),
+            "heroes": result.get("heroes", []),
+            "timeout": bool(result.get("timeout")),
+            "phases": result.get("phases", result.get("phase", [])),
+            "ultimate": result.get("ultimate", []),
+        }
+        cursor = conn.execute(
+            "INSERT INTO despair_battles(raid_id,won,seed,log,summary,fought_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (
+                raid_id,
+                int(won),
+                fight_seed,
+                json.dumps(result.get("log", []), ensure_ascii=False),
+                json.dumps(summary, ensure_ascii=False),
+                stamp,
+            ),
+        )
+        rewards = []
+        if won:
+            rng = random.Random(fight_seed ^ 0xD35FA17)
+            for member in conn.execute(
+                "SELECT user_id FROM despair_members WHERE raid_id=? ORDER BY seat", (raid_id,)
+            ):
+                reward = cls._grant_despair_reward(
+                    conn, member["user_id"], settlement_week, raid_id, stamp, rng
+                )
+                if not reward["created"]:
+                    reward = {**reward, "items": [], "personality_detail": None}
+                rewards.append(reward)
+        view = cls._despair_view(
+            conn, conn.execute("SELECT * FROM despair_raids WHERE id=?", (raid_id,)).fetchone()
+        )
+        return {
+            "id": cursor.lastrowid,
+            "raid": view,
+            "won": won,
+            "status": status,
+            "week": settlement_week,
+            "result": result,
+            "fighters": fighters,
+            "rewards": rewards,
+        }
+
+    @staticmethod
     def _wild_view(conn, row) -> dict:
         wild = dict(row)
         wild["pig"] = dict(
@@ -850,6 +1460,13 @@ class Database:
                 f"你已经在「{dungeon(busy['dungeon'])['name']}」的队伍里了，"
                 "同一时间只能参加一支队伍。"
             )
+        despair = conn.execute(
+            "SELECT 1 FROM despair_members m JOIN despair_raids r ON r.id=m.raid_id "
+            "WHERE m.user_id=? AND r.status='forming'",
+            (user_id,),
+        ).fetchone()
+        if despair:
+            raise PiggyError("你已经在绝境战队伍里了，同一时间只能参加一支队伍。")
         if conn.execute(
             "SELECT 1 FROM raid_entries WHERE user_id=? AND day=? AND dungeon=?",
             (user_id, day, dungeon_key),
@@ -906,6 +1523,9 @@ class Database:
         def create(conn):
             conn.execute("BEGIN IMMEDIATE")
             self._raid_expire(conn, app_id, group_id, stamp)
+            self._despair_expire(conn, app_id, group_id, stamp)
+            if self._group_despair(conn, app_id, group_id):
+                raise PiggyError("本群已有绝境战队伍，结束后才能开启普通副本。")
             active = self._group_raid(conn, app_id, group_id)
             if active:
                 name = dungeon(active["dungeon"])["name"]
@@ -1320,7 +1940,11 @@ class Database:
                     "SELECT 1 FROM pig_personalities WHERE user_id=? AND pig_id=?",
                     (user_id, pig_id),
                 ).fetchone()
-                if member["seat"] not in alive_seats or exists or rng.random() >= PERSONALITY_CHANCE:
+                if (
+                    member["seat"] not in alive_seats
+                    or exists
+                    or rng.random() >= PERSONALITY_CHANCE
+                ):
                     continue
                 personality = rng.choice(choices_for(hero["role"]))
                 conn.execute(
@@ -1460,10 +2084,12 @@ class Database:
         return await self.run(
             lambda conn: (
                 row[0]
-                if (row := conn.execute(
-                    "SELECT personality FROM pig_personalities WHERE user_id=? AND pig_id=?",
-                    (user_id, pig_id),
-                ).fetchone())
+                if (
+                    row := conn.execute(
+                        "SELECT personality FROM pig_personalities WHERE user_id=? AND pig_id=?",
+                        (user_id, pig_id),
+                    ).fetchone()
+                )
                 else None
             )
         )

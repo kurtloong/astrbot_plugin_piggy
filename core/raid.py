@@ -23,8 +23,10 @@ POISE_SECOND_CYCLE_FACTOR = 0.65
 POISE_BREAK_DAMAGE = 1.10
 # Bosses ignore party level: full kit + base stats, scaled by stage, dungeon and boss multipliers.
 STAGE_HP = (7.0, 8.2, 9.6)
-# Raised so boss auto-attacks threaten tanks that now soak focus fire.
-STAGE_ATK = (2.20, 2.45, 2.75)
+# Recalibrated after lethal hits began correctly triggering last-stand effects:
+# the small increase preserves each dungeon's established clear-rate band
+# without weakening the defensive mechanic or relaxing the balance gates.
+STAGE_ATK = (2.31, 2.57, 2.89)
 
 DUNGEONS = (
     {
@@ -98,33 +100,6 @@ BOSS_ENCOUNTER_SCALE = {
     "skeleton-pig": (1.08, 1.03),
     "pighub0116": (1.10, 1.03),
 }
-
-# Effect types the replay animates on their own (damage and heals have their own cues).
-STATUS_CUES = frozenset(
-    {
-        "shield",
-        "stun",
-        "dot",
-        "buff",
-        "thorns",
-        "regen",
-        "evade",
-        "cleanse",
-        "dispel",
-        "copy",
-        "taunt",
-        "mitigate",
-        "mark",
-        "silence",
-        "weaken",
-        "expose",
-        "absorb",
-        "block",
-        "share",
-        "guard",
-        "immunity",
-    }
-)
 
 GUARD_SKILL = {
     "name": "守护之光",
@@ -222,36 +197,6 @@ class _RaidUnit(_Unit):
         return max(1.0 if key != "def" else 0.0, value * (1 + max(-90, bonus) / 100))
 
 
-def _statuses(unit) -> list:
-    """Badges for the replay: [glyph, kind], kind being bad, good or control."""
-    badges = []
-    if unit.stun:
-        badges.append([(unit.stun_label or "晕")[0], "control"])
-    for dot in unit.dots:
-        badges.append([dot.get("label", "毒")[0], "bad"])
-    if any(b["pct"] < 0 for b in unit.buffs if b.get("tag") != "stench"):
-        badges.append(["↓", "bad"])
-    stench = sum(1 for b in unit.buffs if b.get("tag") == "stench")
-    if stench:
-        badges.append([f"臭{stench}", "bad"])
-    if any(b["pct"] > 0 for b in unit.buffs):
-        badges.append(["↑", "good"])
-    flags = (
-        (unit.thorns, "刺", "good"),
-        (unit.regens, "愈", "good"),
-        (unit.evade, "闪", "good"),
-        (unit.chill, f"寒{unit.chill}", "bad"),
-        (unit.vuln, "易", "bad"),
-        (unit.possessed, "附", "control"),
-        (unit.lured or unit.marked, "饵", "control"),
-        (unit.glitch, "错", "control"),
-        (unit.blind, "盲", "bad"),
-        (unit.charm, "符", "good"),
-    )
-    badges += [[glyph, kind] for active, glyph, kind in flags if active]
-    return badges[:6]
-
-
 class _RaidBattle(_Battle):
     def __init__(self, heroes: list[dict], boss: dict, slot_id: str, cfg: dict, seed: int):
         self.rng = random.Random(seed)
@@ -283,13 +228,8 @@ class _RaidBattle(_Battle):
         # Effective HP restored and damage actually borne (including shields).
         self.healed = {}
         self.taken = {}
-        # Replay data: every unit that ever took the field, and one step per log line
-        # with the cues (who hit whom, which mechanic fired) and everyone's state after it.
+        # Stable internal ordering is also used as an AI tie-breaker.
         self.everyone = []
-        self.timeline = []
-        self.cues = []
-        self._crit = False
-        self._dot = ""
         # A balanced four-role party earns one automatic limit break per boss.
         # Eligibility is fixed from the starting roster; deaths and temporary
         # removal only affect who is currently able to cast it.
@@ -318,8 +258,6 @@ class _RaidBattle(_Battle):
         unit.uid = len(self.everyone)
         unit.kind = "ally" if kind == "hero" and unit.seat is None else kind
         self.everyone.append(unit)
-        if self.round or self.log:
-            self.cue("summon", dst=unit.uid)
 
     def _configure(self):
         cfg, boss = self.cfg, self.boss
@@ -346,37 +284,12 @@ class _RaidBattle(_Battle):
     def note(self, text: str, mech: int | None = None, field: str = "", targets=(), tag: str = ""):
         self.notes.append((text, mech, field, tuple(targets), tag))
 
-    def cue(self, kind: str, **data):
-        self.cues.append({"t": kind, **data})
-
-    def say(self, text: str):
-        super().say(text)
-        self.timeline.append(
-            {"round": self.round, "text": text, "cues": self.cues, "state": self.snapshot()}
-        )
-        self.cues = []
-
-    def snapshot(self) -> list:
-        """[hp, shield, stunned, away, statuses] for every unit, indexed by uid."""
-        return [
-            [round(max(0.0, u.hp)), round(u.shield), bool(u.stun), bool(u.away), _statuses(u)]
-            for u in self.everyone
-        ]
-
     def flush(self):
         notes, falls = self.notes, self.falls
         self.notes, self.falls = [], []
-        for text, mech, field, targets, tag in notes:
-            if mech is not None:
-                extra = {"targets": [u.uid for u in targets]} if targets else {}
-                if tag:
-                    extra["tag"] = tag
-                self.cue("mech", index=mech, name=self.mech.MECHANICS[mech][0], **extra)
-            if field:
-                self.cue("field", name=field)
+        for text, _mech, _field, _targets, _tag in notes:
             self.say(text)
-        for text, uid in falls:
-            self.cue("fall", dst=uid)
+        for text in falls:
             self.say(text)
         if self.notes or self.falls:
             self.flush()
@@ -412,14 +325,6 @@ class _RaidBattle(_Battle):
             return 0.0
         self.poise -= loss
         self.poise_contributions[id(unit)] = self.poise_contributions.get(id(unit), 0.0) + loss
-        self.cue(
-            "poise",
-            src=unit.uid,
-            amt=round(loss, 1),
-            value=round(self.poise, 1),
-            max=round(self.poise_max, 1),
-            reason=reason,
-        )
         if unit.role in ("坦克", "辅助"):
             self.note(f"{unit.label} 的{reason}削减 {loss:.1f} 点韧性（{self.poise:.1f}/{self.poise_max:.0f}）")
         if self.poise <= 0:
@@ -429,12 +334,6 @@ class _RaidBattle(_Battle):
             # boss action is interrupted; round hooks and signature mechanics remain.
             self.poise_broken_until = self.round + 1
             self._poise_interrupt_pending = True
-            self.cue(
-                "poise_break",
-                dst=self.boss.uid,
-                until=self.poise_broken_until,
-                count=self.poise_breaks,
-            )
             self.note(
                 f"{self.boss.label} 韧性归零，进入破防窗口！受到伤害提高 10%，下一次行动被打断"
             )
@@ -447,13 +346,6 @@ class _RaidBattle(_Battle):
         self._poise_interrupt_pending = False
         self.poise = self.poise_max
         self.poise_locked = self.poise_breaks >= POISE_MAX_BREAKS
-        self.cue(
-            "poise_recover",
-            dst=self.boss.uid,
-            value=round(self.poise, 1),
-            max=round(self.poise_max, 1),
-            locked=self.poise_locked,
-        )
         if self.poise_locked:
             self.say(f"{self.boss.label} 恢复韧性，并适应了队伍战术；本场不会再次破防")
         else:
@@ -536,8 +428,13 @@ class _RaidBattle(_Battle):
         healer = available.get("治疗")
         living = self.alive_heroes()
         if healer is not None and living:
-            missing = sum(1 - hero.ratio for hero in living)
-            lowest = min(hero.ratio for hero in living)
+            healable = [
+                (hero, max(0.0, self.mech.heal_factor(self, hero)))
+                for hero in living
+            ]
+            healable = [(hero, factor) for hero, factor in healable if factor > 0]
+            missing = sum((1 - hero.ratio) * factor for hero, factor in healable)
+            lowest = min((hero.ratio for hero, _ in healable), default=1.0)
             if lowest <= 0.30:
                 score = 175.0 + (0.30 - lowest) * 100
             elif missing >= 1.0:
@@ -640,13 +537,6 @@ class _RaidBattle(_Battle):
         self.ultimate_used = True
         self.ultimate_round = self.round
         self.ultimate_role = role
-        self.cue(
-            "ultimate",
-            src=caster.uid,
-            role=role,
-            targets=[hero.uid for hero in living] if role != "输出" else [self.boss.uid],
-        )
-
         if role == "输出":
             effect = {"type": "damage", "power": ULTIMATE_DAMAGE_POWER, "ultimate": True}
             raw = caster.stat("atk") * ULTIMATE_DAMAGE_POWER * self.fury()
@@ -701,7 +591,6 @@ class _RaidBattle(_Battle):
         raw *= 60 / (60 + target.stat("def"))
         raw *= 1 + target.vuln / 100
         acting, self.acting = self.acting, attacker
-        self._crit = crit
         try:
             return self.hurt(target, max(1.0, raw))
         finally:
@@ -807,7 +696,6 @@ class _RaidBattle(_Battle):
             and self._ultimate_guard_round == self.round
             and self.round >= ULTIMATE_ROUND
         ):
-            self.cue("blocked", dst=unit.uid, ultimate=True)
             return 0.0
         was_alive = unit.alive
         dealt = super().hurt(unit, amount, source=source, attacker=attacker)
@@ -817,14 +705,6 @@ class _RaidBattle(_Battle):
         if credited is not None and credited.side != unit.side:
             self.dealt[id(credited)] = self.dealt.get(id(credited), 0.0) + dealt
         if dealt > 0:
-            self.cue(
-                "hit",
-                src=credited.uid if credited is not None else None,
-                dst=unit.uid,
-                amt=round(dealt),
-                crit=self._crit,
-                dot=self._dot,
-            )
             if (
                 unit.side == 0
                 and unit.role == "坦克"
@@ -833,17 +713,20 @@ class _RaidBattle(_Battle):
             ):
                 value = min(6.0, 1.0 + dealt / max(1, unit.max_hp) * 10)
                 self._reduce_poise(unit, value, "坚守承伤")
-        self._crit, self._dot = False, ""
+        # Damage-threshold hooks must observe lethal crossings too.  Some bosses
+        # (notably Error404) restore themselves at a mandatory threshold; calling
+        # this before fall handling lets that recovery happen without teaching
+        # the generic engine about individual encounters.
+        if unit is self.boss and was_alive and dealt > 0:
+            self.mech.damaged(self)
         if was_alive and not unit.alive and unit is self.boss and self.mech.prevent_fall(self):
             return dealt
         if was_alive and not unit.alive and unit.charm:
             unit.charm = False
             unit.hp = 1.0
             self.note(f"平安符护住了 {unit.label}，保留 1 点生命")
-        if unit is self.boss and unit.alive:
-            self.mech.damaged(self)
         if was_alive and not unit.alive:
-            self.falls.append((f"{unit.label} 倒下了", unit.uid))
+            self.falls.append(f"{unit.label} 倒下了")
             if unit.side == 0 and unit.seat is not None:
                 self.mech.hero_fell(self, unit)
         return dealt
@@ -854,7 +737,6 @@ class _RaidBattle(_Battle):
     def dot_amount(self, unit, dot):
         # The tick is hurt right after this; credit it to whoever applied the dot.
         self.acting = dot.get("source")
-        self._dot = dot.get("label", "持续伤害")
         amount = unit.dot_basis * dot["pct"] / 100 * self.mech.dot_factor(self, unit)
         if unit is self.boss:
             amount *= self.mech.build_incoming_factor(self)
@@ -871,18 +753,13 @@ class _RaidBattle(_Battle):
         credited = source if source is not None else self._stat_source or self.acting
         if healed > 0 and credited is not None and credited.side == 0:
             self.healed[id(credited)] = self.healed.get(id(credited), 0.0) + healed
-        if healed > 0:
-            self.cue("heal", dst=unit.uid, amt=healed)
         return healed
 
     def check_revive(self, unit):
-        if unit.hp <= 0 and unit.revive:
-            self.cue("revive", dst=unit.uid)
         super().check_revive(unit)
 
     def crit_roll(self, unit, enemy) -> bool:
-        self._crit = self._judge_crit(unit, enemy)
-        return self._crit
+        return self._judge_crit(unit, enemy)
 
     def _judge_crit(self, unit, enemy) -> bool:
         crit = super().crit_roll(unit, enemy)
@@ -894,14 +771,6 @@ class _RaidBattle(_Battle):
         return crit
 
     def apply(self, unit, enemy, effects, skill):
-        self.cue(
-            "skill",
-            src=unit.uid,
-            dst=enemy.uid,
-            name=skill["name"],
-            text=skill.get("text", ""),
-            style=unit.data.get("style", ""),
-        )
         previous_skill = self._poise_skill
         previous_awarded = self._poise_damage_awarded
         previous_source = self._stat_source
@@ -914,13 +783,6 @@ class _RaidBattle(_Battle):
             self._poise_skill = previous_skill
             self._poise_damage_awarded = previous_awarded
             self._stat_source = previous_source
-
-    def damage(self, unit, enemy, effect):
-        before = len(self.cues)
-        text = super().damage(unit, enemy, effect)
-        if not any(c["t"] == "hit" and c["dst"] == enemy.uid for c in self.cues[before:]):
-            self.cue("miss", src=unit.uid, dst=enemy.uid, void=bool(self.void_note))
-        return text
 
     def pierce(self, unit, enemy, effect):
         value = super().pierce(unit, enemy, effect)
@@ -944,7 +806,7 @@ class _RaidBattle(_Battle):
         return raw
 
     def after_hit(self, unit, enemy, dealt):
-        if unit is self.boss and enemy.side == 0:
+        if unit is self.boss and enemy.side == 0 and dealt > 0:
             self.mech.outgoing(self, enemy, dealt)
         elif enemy is self.boss and unit.side == 0 and dealt > 0:
             self.mech.boss_struck(self, unit, dealt)
@@ -962,7 +824,6 @@ class _RaidBattle(_Battle):
 
     def effect(self, unit, enemy, effect, skill):
         if self.mech.blocks_effect(self, unit, effect):
-            self.cue("blocked", dst=unit.uid)
             return "被禁令挡下了"
         cleansed = []
         cleanse_worked = False
@@ -1006,16 +867,6 @@ class _RaidBattle(_Battle):
             restored = max(0.0, unit.hp - hero_hp.get(id(unit), unit.hp))
             if restored:
                 self.healed[id(unit)] = self.healed.get(id(unit), 0.0) + restored
-        if kind == "dot" and enemy.dots:
-            enemy.dots[-1]["source"] = unit
-        if kind in STATUS_CUES and text:
-            if kind == "stun":
-                target = unit if effect.get("target") == "self" else enemy
-            elif kind == "buff":
-                target = enemy if effect.get("target") == "enemy" else unit
-            else:
-                target = enemy if kind in ("dot", "dispel") else unit
-            self.cue(kind, src=unit.uid, dst=target.uid, up=effect.get("pct", 0) >= 0)
         if effect["type"] in ("cleanse", "cleanse_heal"):
             # Raid-only control flags live outside the base battle status lists.
             # Clear them on the effect's actual targets (not merely its caster),
@@ -1126,7 +977,6 @@ class _RaidBattle(_Battle):
         self.acting = unit
         if unit is self.boss and self.poise_broken and self._poise_interrupt_pending:
             self._poise_interrupt_pending = False
-            self.cue("poise_interrupt", src=self.boss.uid)
             self.say(f"{self.boss.label} 的行动被破防冲击打断了")
             return
         if unit is self.boss and self.mech.before_act(self):
@@ -1188,6 +1038,9 @@ class _RaidBattle(_Battle):
                 hero.blind = False
             self.mech.round_start(self)
             self.flush()
+            winner = self.decided()
+            if winner is not None:
+                break
             field_event(self)
             self.flush()
             winner = self.decided()
@@ -1305,22 +1158,6 @@ class _RaidBattle(_Battle):
                 "round": self.ultimate_round,
                 "role": self.ultimate_role,
             },
-            "roster": [
-                {
-                    "uid": u.uid,
-                    "label": u.label,
-                    "name": u.data.get("name", u.label),
-                    "asset": u.data.get("asset", ""),
-                    "side": u.side,
-                    "seat": u.seat,
-                    "kind": u.kind,
-                    "max_hp": u.max_hp,
-                    "level": u.data.get("level", 1),
-                    "style": u.data.get("style", ""),
-                }
-                for u in self.everyone
-            ],
-            "timeline": self.timeline,
         }
 
 

@@ -357,6 +357,8 @@ def field_event(battle):
     event = _pick(rng, FIELD_EVENTS)
     units = battle.alive_units()
     heroes = battle.alive_heroes()
+    if not units:
+        return
     kind = event["id"]
     if kind == "quake":
         for unit in units:

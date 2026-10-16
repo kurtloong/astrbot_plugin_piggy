@@ -381,12 +381,6 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(ImageDraw.ImageDraw, "text", record):
             poster = await raid_battle_message(Settings(), self.root, battle)
         self.assertTrue(poster.local)
-        if poster.video is not None:
-            self.assertIn("副本进行中", poster.notice)
-            self.assertIn("第 1/3 关", poster.notice)
-        quiet = await raid_battle_message(Settings(raid_video=False), self.root, battle)
-        self.assertIsNone(quiet.video)
-        self.assertEqual(quiet.notice, "")
         joined = "".join(labels)
         for text in (
             "BOSS",
@@ -693,6 +687,119 @@ class RaidEngineTests(unittest.TestCase):
         rows = {row["seat"]: row for row in result["heroes"]}
         for key in ("dealt", "healed", "taken"):
             self.assertIsInstance(rows[nebula.seat][key], int)
+
+    def test_refreshing_a_dot_updates_the_correct_damage_owner(self):
+        fight = battle("goblin-pig")
+        first, second = fight.heroes[:2]
+        burn = {"type": "dot", "pct": 5, "turns": 2, "label": "灼烧"}
+        poison = {"type": "dot", "pct": 4, "turns": 2, "label": "中毒"}
+
+        fight.effect(first, fight.boss, burn, {})
+        fight.effect(first, fight.boss, poison, {})
+        fight.effect(second, fight.boss, burn, {})
+
+        by_label = {dot["label"]: dot for dot in fight.boss.dots}
+        self.assertIs(by_label["灼烧"]["source"], second)
+        self.assertIs(by_label["中毒"]["source"], first)
+
+    def test_reactive_and_corrupted_damage_reach_raid_statistics(self):
+        fight = battle("goblin-pig")
+        defender, patient = fight.heroes[:2]
+
+        defender.shield = 1
+        defender.absorb_break = 1
+        fight.hurt(defender, 2, attacker=fight.boss)
+        self.assertGreater(fight.dealt.get(id(defender), 0), 0)
+
+        patient.hp = patient.max_hp * 0.5
+        patient.corrupting.append({"pct": 100, "turns": 2})
+        before_taken = fight.taken.get(id(patient), 0)
+        fight.heal(patient, 25, source=patient)
+        self.assertEqual(fight.taken[id(patient)] - before_taken, 25)
+
+        defender.reflects.append(
+            {"pct": 10, "turns": 2, "dot_pct": 5, "stun_turns": None}
+        )
+        fight.damage(fight.boss, defender, {"type": "damage", "power": 0.1, "sure": True})
+        backlash = next(dot for dot in fight.boss.dots if dot["label"] == "反噬")
+        self.assertIs(backlash["source"], defender)
+
+    def test_corrupted_heal_cannot_create_a_phantom_overheal_shield(self):
+        fight = battle("goblin-pig")
+        target = fight.heroes[0]
+        target.corrupting.append({"pct": 100, "turns": 2})
+
+        healed, overflow = fight.heal_with_options(
+            target,
+            50,
+            {"overheal_shield": True},
+            source=target,
+        )
+
+        self.assertEqual(healed, 0)
+        self.assertEqual(overflow, 0)
+        self.assertEqual(target.shield, 0)
+
+    def test_multihit_stops_when_retaliation_kills_the_attacker(self):
+        fight = battle("goblin-pig")
+        attacker = fight.heroes[0]
+        attacker.hp = 1
+        fight.boss.thorns.append({"pct": 10_000, "turns": 2})
+
+        note = fight.damage(
+            attacker,
+            fight.boss,
+            {"type": "damage", "power": 1, "hits": 3, "sure": True},
+        )
+
+        self.assertFalse(attacker.alive)
+        self.assertTrue(note.startswith("1 段命中"), note)
+
+    def test_overkill_only_counts_actual_health_lost(self):
+        fight = battle("goblin-pig")
+        target = fight.heroes[0]
+        target.hp = 10
+
+        dealt = fight.hurt(target, 100, attacker=fight.boss)
+
+        self.assertEqual(dealt, 10)
+        self.assertEqual(target.hp, 0)
+        self.assertEqual(fight.taken[id(target)], 10)
+        self.assertEqual(fight.dealt[id(fight.boss)], 10)
+
+    def test_share_conserves_damage_and_credits_every_recipient(self):
+        fight = battle("goblin-pig")
+        target, partner = fight.heroes[:2]
+        target.hp = partner.hp = 100
+        link = {"pct": 40, "turns": 2, "members": [target, partner]}
+        target.share = partner.share = link
+
+        dealt = fight.hurt(target, 100, attacker=fight.boss)
+
+        self.assertEqual(dealt, 80)
+        self.assertEqual(target.hp, 20)
+        self.assertEqual(partner.hp, 80)
+        self.assertEqual(fight.taken[id(target)], 80)
+        self.assertEqual(fight.taken[id(partner)], 20)
+        self.assertEqual(fight.dealt[id(fight.boss)], 100)
+
+    def test_share_duration_ticks_once_for_the_shared_link(self):
+        fight = battle("goblin-pig")
+        source = fight.heroes[0]
+        link = {
+            "pct": 40,
+            "turns": 3,
+            "members": fight.heroes,
+            "source": source,
+        }
+        for hero in fight.heroes:
+            hero.share = link
+
+        for hero in fight.heroes:
+            fight._decay_status(hero)
+
+        self.assertEqual(link["turns"], 2)
+        self.assertTrue(all(hero.share is link for hero in fight.heroes))
 
     def test_zombie_poisons_and_raises_its_victims(self):
         fight = battle("zombie-pig")
@@ -1103,10 +1210,8 @@ class RaidEventTests(unittest.TestCase):
         self.assertEqual([skill["name"] for skill in actions], ["猪突猛进", "群体护理"])
         fight.act(healer, fight.boss)
         self.assertGreater(wounded.hp, wounded.max_hp / 2)
-        replayed = [
-            cue["name"] for step in fight.timeline for cue in step["cues"] if cue["t"] == "skill"
-        ]
-        self.assertEqual(replayed[-2:], ["猪突猛进", "群体护理"])
+        self.assertIn("猪突猛进", fight.log[-2])
+        self.assertIn("群体护理", fight.log[-1])
 
         for hero in fight.heroes:
             hero.hp = hero.max_hp

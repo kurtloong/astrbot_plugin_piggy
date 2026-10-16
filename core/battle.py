@@ -1153,6 +1153,9 @@ class _Unit:
         self.stun_label = ""
         self.evade = 0
         self.revive = None
+        # A unit revived during a round stays in the fight, but does not also
+        # take its scheduled action in that same round.
+        self.revived_round = -1
         self.cooldowns = {}
         self.last = None
         self.actives = [s for s in data["skills"] if not s["passive"]]
@@ -1231,6 +1234,7 @@ class _Battle:
         self._copy_scale = 1.0
         self._cast_output_scale = 1.0
         self._leech_pool = 0.0
+        self._last_heal_overflow = 0.0
         self.void_note = ""
         self._in_trigger = False
         self._turn_triggered = set()
@@ -1407,16 +1411,20 @@ class _Battle:
                         share = amount * guard["pct"] / 100
                         amount -= share
                         self.hurt(ally, share, source="guard", attacker=attacker)
-        # Share link
-        if unit.share and unit.share["turns"] > 0:
+        # Share link.  The shared portion is split across every linked member,
+        # including the original target.  Route the other slices through
+        # ``hurt`` so raid damage/taken accounting and defensive effects still
+        # run, while the source marker prevents the link from redistributing
+        # the same slice again.
+        if source != "share" and unit.share and unit.share["turns"] > 0:
             members = [m for m in unit.share["members"] if m.alive]
             if len(members) > 1:
                 portion = amount * unit.share["pct"] / 100
-                amount -= portion
                 each = portion / len(members)
+                amount = amount - portion + each
                 for member in members:
                     if member is not unit:
-                        self._raw_hurt(member, each, attacker=attacker)
+                        self.hurt(member, each, source="share", attacker=attacker)
             else:
                 # 1v1 / alone: partial mitigation
                 amount *= 1 - unit.share["pct"] / 200
@@ -1438,15 +1446,22 @@ class _Battle:
         if shield_broke:
             if unit.absorb_break and attacker and attacker.alive:
                 break_raw = unit.stat("atk") * unit.absorb_break * self.fury()
-                self._raw_hurt(attacker, max(1.0, break_raw))
                 unit.absorb_break = 0.0
-        unit.hp -= amount
-        if unit.lock_hp and unit.hp < unit.max_hp * unit.lock_hp / 100:
-            unit.hp = unit.max_hp * unit.lock_hp / 100
+                self.hurt(
+                    attacker,
+                    max(1.0, break_raw),
+                    source="absorb_break",
+                    attacker=unit,
+                )
+        before_hp = unit.hp
+        unit.hp = max(0.0, unit.hp - amount)
+        if unit.lock_hp:
+            floor = min(before_hp, unit.max_hp * unit.lock_hp / 100)
+            if unit.hp < floor:
+                unit.hp = floor
         if (
             unit.last_stand
             and not unit.last_stand_used
-            and unit.hp > 0
             and unit.ratio * 100 <= unit.last_stand["threshold"]
         ):
             unit.last_stand_used = True
@@ -1455,9 +1470,13 @@ class _Battle:
             )
             unit.lock_hp = 1
             unit.lock_hp_turns = 1
+            unit.hp = max(unit.hp, min(before_hp, unit.max_hp * 0.01))
             self.say(f"{unit.label} 进入绝境坚守！")
+        hp_lost = before_hp - unit.hp
         self.check_revive(unit)
-        dealt = amount + absorbed
+        # Report only damage that was actually absorbed or removed.  This
+        # keeps overkill and HP-lock prevention out of damage/taken totals.
+        dealt = hp_lost + absorbed
         event_enemy = self._event_enemy(unit, attacker)
         if event_enemy is not None:
             if shield_broke:
@@ -1475,10 +1494,12 @@ class _Battle:
         if unit.hp <= 0 and unit.revive:
             unit.hp = unit.max_hp * unit.revive / 100
             unit.revive = None
+            unit.revived_round = self.round
             unit.dots.clear()
             self.say(f"{unit.label} 倒下后又站了起来！恢复 {round(unit.hp)} 生命")
 
     def heal(self, unit: _Unit, amount: float, source: _Unit | None = None) -> int:
+        self._last_heal_overflow = 0.0
         if amount <= 0 or not unit.alive:
             return 0
         boost = sum(h["pct"] for h in unit.hot_boost)
@@ -1487,8 +1508,9 @@ class _Battle:
         if corrupt:
             converted = amount * corrupt / 100
             amount -= converted
-            self._raw_hurt(unit, converted)
+            self.hurt(unit, converted, source="corrupt")
         before = unit.hp
+        self._last_heal_overflow = max(0.0, before + amount - unit.max_hp)
         unit.hp = min(unit.max_hp, unit.hp + amount)
         return round(unit.hp - before)
 
@@ -1497,24 +1519,32 @@ class _Battle:
     ) -> tuple[int, int]:
         if effect.get("crit_heal") and self.rng.random() * 100 < unit.stat("crit"):
             amount *= CRIT_MULTIPLIER
-        before = unit.hp
         healed = self.heal(unit, amount, source=source)
         over = 0
         if effect.get("overheal_shield"):
-            overflow = before + amount - unit.max_hp
+            overflow = self._last_heal_overflow
             if overflow > 0:
                 unit.shield += overflow
                 over = round(overflow)
         return healed, over
 
     def turn(self, unit: _Unit, enemy: _Unit):
+        if unit.revived_round == self.round:
+            self.say(f"{unit.label} 刚刚复活，本回合无法行动")
+            return
         unit.flags = {k: False for k in unit.flags}
         unit.used_skills.clear()
         self._turn_triggered.clear()
         unit.record_hp()
         self._tick_delays(unit, enemy)
+        if unit.revived_round == self.round:
+            return
         self._tick_auras(unit)
+        if unit.revived_round == self.round:
+            return
         self._tick_charge_channel(unit, enemy)
+        if unit.revived_round == self.round:
+            return
         for dot in list(unit.dots):
             if unit.immune_to("dot"):
                 break
@@ -1524,6 +1554,8 @@ class _Battle:
             dot["turns"] -= 1
             if dot["turns"] <= 0 and dot in unit.dots:
                 unit.dots.remove(dot)
+            if unit.revived_round == self.round:
+                return
             if not unit.alive:
                 return
         for regen in list(unit.regens):
@@ -1659,7 +1691,7 @@ class _Battle:
             guard["turns"] -= 1
             if guard["turns"] <= 0:
                 unit.guards.remove(guard)
-        if unit.share:
+        if unit.share and unit is unit.share.get("source", unit.share["members"][0]):
             unit.share["turns"] -= 1
             if unit.share["turns"] <= 0:
                 for member in unit.share["members"]:
@@ -1720,10 +1752,14 @@ class _Battle:
                 or enemy.reflects
                 or enemy.mitigates
                 or enemy.hot_boost
+                or enemy.block_count
+                or enemy.immunity
+                or enemy.regens
+                or enemy.auras
                 or any(buff.get("pct", 0) > 0 for buff in enemy.buffs)
             )
         )
-        shield = bool(enemy and enemy.shield)
+        shield = bool(enemy and (enemy.shield or enemy.absorb_break))
         return bool(
             enemy
             and ((mode in {"all", "buffs"} and buffs) or (mode in {"all", "shield"} and shield))
@@ -1737,7 +1773,7 @@ class _Battle:
         if kind in {"damage", "charge", "channel", "recoil", "combo"}:
             return enemy is not None and enemy.alive
         if kind == "dot":
-            if enemy is None or not enemy.alive:
+            if enemy is None or not enemy.alive or enemy.immune_to("dot"):
                 return False
             label = effect.get("label", "持续伤害")
             current = next((dot for dot in enemy.dots if dot.get("label") == label), None)
@@ -1795,15 +1831,21 @@ class _Battle:
                 and target.stun < effect.get("turns", 1)
             )
         if kind == "silence":
-            return bool(enemy and enemy.silence < effect["turns"])
+            return bool(
+                enemy
+                and not enemy.immune_to("stun")
+                and enemy.silence < effect["turns"]
+            )
         if kind == "root":
-            return bool(enemy and enemy.root < effect["turns"])
+            return bool(
+                enemy and not enemy.immune_to("stun") and enemy.root < effect["turns"]
+            )
         if kind == "weaken":
-            return bool(enemy and not enemy.weaken)
+            return bool(enemy and not enemy.immune_to("weaken") and not enemy.weaken)
         if kind == "expose":
-            return bool(enemy and not enemy.expose)
+            return bool(enemy and not enemy.immune_to("weaken") and not enemy.expose)
         if kind == "corrupting":
-            return bool(enemy and not enemy.corrupting)
+            return bool(enemy and not enemy.immune_to("weaken") and not enemy.corrupting)
         if kind == "mark":
             current = sum(mark.get("stacks", 1) for mark in enemy.marks) if enemy else 0
             return bool(enemy and current < effect.get("max_stacks", 9))
@@ -1844,11 +1886,14 @@ class _Battle:
             recoverable = max(max(unit.hp_history, default=unit.hp), unit.snapshot or 0) - unit.hp
             return recoverable > unit.max_hp * 0.05
         if kind == "delay_heal":
-            return any(target.ratio < 0.85 for target in targets) and not unit.delay_heals
+            return any(
+                target.ratio < 0.85 and not target.delay_heals for target in targets
+            )
         if kind == "delay_damage":
             label = effect.get("label", "延时炸弹")
             return bool(
                 enemy
+                and not enemy.immune_to("dot")
                 and not any(item.get("label", "延时炸弹") == label for item in enemy.delay_damages)
             )
         if kind == "detonate":
@@ -2406,6 +2451,7 @@ class _Battle:
                 existing["stacks"] = min(max_stacks, existing.get("stacks", 1) + stacks)
                 existing["turns"] = max(existing["turns"], effect["turns"])
                 existing["pct"] = max(existing["pct"], pct)
+                existing["source"] = unit
             else:
                 enemy.dots.append(
                     {
@@ -2414,6 +2460,7 @@ class _Battle:
                         "label": label,
                         "stacks": stacks,
                         "max_stacks": max_stacks,
+                        "source": unit,
                     }
                 )
             if effect.get("spread"):
@@ -2426,6 +2473,7 @@ class _Battle:
                             "turns": effect["turns"],
                             "label": label,
                             "stacks": 1,
+                            "source": unit,
                         }
                     )
             return f"{enemy.label}陷入{label}"
@@ -2510,7 +2558,12 @@ class _Battle:
         if kind == "share":
             members = [u for u in self.allies_of(unit) if u.alive]
             pct = effect["pct"] * self._cast_output_scale
-            link = {"pct": pct, "turns": effect["turns"] + 1, "members": members}
+            link = {
+                "pct": pct,
+                "turns": effect["turns"] + 1,
+                "members": members,
+                "source": unit,
+            }
             for member in members:
                 member.share = link
             if len(members) == 1:
@@ -2600,7 +2653,10 @@ class _Battle:
             return f"记录快照 {round(unit.hp)}"
         if kind == "delay_heal":
             for target in self.resolve_targets(unit, enemy, effect.get("target", "self")):
-                unit.delay_heals.append(
+                # The countdown belongs to its recipient.  Keeping it on the
+                # caster made a promised heal disappear when the caster died
+                # and therefore stopped taking turns.
+                target.delay_heals.append(
                     {
                         "target": target,
                         "pct": effect["pct"] * self._cast_output_scale,
@@ -2614,6 +2670,8 @@ class _Battle:
                 )
             return f"延迟治疗 {effect['turns']} 回合"
         if kind == "delay_damage":
+            if enemy.immune_to("dot"):
+                return f"{enemy.label}免疫延迟伤害"
             enemy.delay_damages.append(
                 {
                     "pct": effect["pct"] * self._cast_output_scale,
@@ -2690,6 +2748,8 @@ class _Battle:
                 )
             return f"持续治疗增强 {effect['pct'] * self._cast_output_scale:g}%"
         if kind == "corrupting":
+            if enemy.immune_to("weaken"):
+                return f"{enemy.label}免疫反治疗"
             enemy.corrupting.append(
                 {"pct": effect["pct"] * self._cast_output_scale, "turns": effect["turns"] + 1}
             )
@@ -2708,9 +2768,13 @@ class _Battle:
                     return f"层数爆发 {round(dealt)} 伤害"
             return "层数不足"
         if kind == "silence":
+            if enemy.immune_to("stun"):
+                return f"{enemy.label}免疫控制"
             enemy.silence = max(enemy.silence, effect["turns"])
             return f"沉默{enemy.label}"
         if kind == "root":
+            if enemy.immune_to("stun"):
+                return f"{enemy.label}免疫控制"
             enemy.root = max(enemy.root, effect["turns"])
             enemy.evade = 0
             return f"禁锢{enemy.label}"
@@ -2722,6 +2786,8 @@ class _Battle:
             )
             return f"{enemy.label}造成伤害降低"
         if kind == "expose":
+            if enemy.immune_to("weaken"):
+                return f"{enemy.label}免疫易伤"
             enemy.expose.append(
                 {"pct": effect["pct"] * self._cast_output_scale, "turns": effect["turns"] + 1}
             )
@@ -2730,15 +2796,53 @@ class _Battle:
             return self._purge(enemy, effect.get("mode", "all"))
         if kind == "transfer":
             if effect["mode"] == "debuff":
-                if unit.dots:
-                    enemy.dots.append(unit.dots.pop(0))
-                    return "转移持续伤害"
-                negs = [b for b in unit.buffs if b["pct"] < 0]
-                if negs:
-                    enemy.buffs.append(negs[0])
-                    unit.buffs.remove(negs[0])
-                    return "转移减益"
-                return "没有可转移的负面"
+                moved = []
+
+                def move_group(attr, immunity_kind, label):
+                    source = getattr(unit, attr)
+                    if not source or enemy.immune_to(immunity_kind):
+                        return
+                    target = getattr(enemy, attr)
+                    for item in source:
+                        # Damage-over-time ownership follows the character who
+                        # transferred it, matching a newly applied hostile
+                        # effect while retaining its remaining duration.
+                        if attr in ("dots", "delay_damages"):
+                            item["source"] = unit
+                        target.append(item)
+                    source.clear()
+                    moved.append(label)
+
+                move_group("dots", "dot", "持续伤害")
+                move_group("delay_damages", "dot", "延迟伤害")
+                for attr, label in (
+                    ("weaken", "虚弱"),
+                    ("expose", "易伤"),
+                    ("corrupting", "反治疗"),
+                    ("marks", "标记"),
+                ):
+                    move_group(attr, "weaken", label)
+
+                if not enemy.immune_to("weaken"):
+                    negative = [buff for buff in unit.buffs if buff["pct"] < 0]
+                    if negative:
+                        enemy.buffs.extend(negative)
+                        unit.buffs = [buff for buff in unit.buffs if buff["pct"] >= 0]
+                        moved.append("属性减益")
+
+                if unit.stun and not enemy.immune_to("stun"):
+                    enemy.stun = max(enemy.stun, unit.stun)
+                    enemy.stun_label = unit.stun_label
+                    unit.stun = 0
+                    unit.stun_label = ""
+                    moved.append("控制")
+                for attr, label in (("silence", "沉默"), ("root", "禁锢")):
+                    remaining = getattr(unit, attr)
+                    if remaining and not enemy.immune_to("stun"):
+                        setattr(enemy, attr, max(getattr(enemy, attr), remaining))
+                        setattr(unit, attr, 0)
+                        moved.append(label)
+                return "转移" + "、".join(moved) if moved else "没有可转移的负面"
             buffs = [b for b in enemy.buffs if b["pct"] > 0]
             if buffs:
                 unit.buffs.append(buffs[0])
@@ -2855,8 +2959,16 @@ class _Battle:
             enemy.evade = 0
             enemy.mitigates.clear()
             enemy.hot_boost.clear()
+            enemy.block_count = 0
+            enemy.block_pct = 100
+            enemy.immunity.clear()
+            enemy.regens.clear()
+            enemy.auras.clear()
         if mode in ("shield", "all"):
             enemy.shield = 0
+            # absorb_break is the on-break payload of the absorb shield.  It
+            # must not survive after that shield has been explicitly removed.
+            enemy.absorb_break = 0.0
         return f"驱散了{enemy.label}的增益"
 
     def damage(self, unit: _Unit, enemy: _Unit, effect: dict) -> str:
@@ -2873,14 +2985,14 @@ class _Battle:
         else:
             base = unit.stat(scale) * 1.6
         hits = effect.get("hits", 1)
-        total, crits, misses, voids = 0.0, 0, 0, 0
+        total, crits, misses, voids, landed = 0.0, 0, 0, 0, 0
         self.void_note = ""
         combo_spent = 0
         if effect.get("combo_bonus") and unit.combo:
             combo_spent = unit.combo
             unit.combo = 0
         for _ in range(hits):
-            if not enemy.alive:
+            if not unit.alive or not enemy.alive:
                 break
             if not (true or effect.get("sure")) and self.rng.random() * 100 < enemy.stat("dodge"):
                 misses += 1
@@ -2913,6 +3025,7 @@ class _Battle:
             before_hp = enemy.hp
             dealt = self.hurt(enemy, max(1.0, raw), attacker=unit)
             total += dealt
+            landed += 1
             self.after_hit(unit, enemy, dealt)
             for thorn in enemy.thorns:
                 self.hurt(unit, dealt * thorn["pct"] / 100, attacker=enemy)
@@ -2928,6 +3041,7 @@ class _Battle:
                             "turns": 2,
                             "label": "反噬",
                             "stacks": 1,
+                            "source": enemy,
                         }
                     )
             if effect.get("overflow") and before_hp > 0 and not enemy.alive:
@@ -2948,7 +3062,7 @@ class _Battle:
             return f"打了个空（{self.void_note or enemy.label + '化解了攻击'}）"
         text = f"造成 {round(total)} 伤害"
         if hits > 1:
-            text = f"{hits - misses - voids} 段命中，共{text}"
+            text = f"{landed} 段命中，共{text}"
         if crits:
             text += "（暴击）"
         if effect.get("drain"):
