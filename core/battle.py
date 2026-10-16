@@ -2450,7 +2450,7 @@ class _Battle:
 
     def damage(self, unit: _Unit, enemy: _Unit, effect: dict) -> str:
         true = effect.get("true", False)
-        if enemy.evade and not (true or effect.get("sure")):
+        if enemy.evade and not true:
             enemy.evade -= 1
             self._dodge_reactions(enemy, unit)
             return f"被{enemy.label}完全躲开"
