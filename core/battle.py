@@ -1646,23 +1646,29 @@ class _Battle:
             score += (1 - lowest) * 70
             if lowest < 0.4:
                 score += 35
-        if "cleanse" in kinds or "cleanse_heal" in kinds:
-            dirty = any(
-                ally.dots
-                or ally.stun
-                or ally.silence
-                or ally.root
-                or ally.weaken
-                or ally.expose
-                or getattr(ally, "vuln", 0)
-                or getattr(ally, "chill", 0)
-                or getattr(ally, "glitch", False)
-                or getattr(ally, "possessed", False)
-                or getattr(ally, "lured", False)
-                or getattr(ally, "marked", False)
-                for ally in allies
+        cleanse_effects = [
+            effect
+            for effect in skill["effects"]
+            if effect["type"] in {"cleanse", "cleanse_heal"}
+        ]
+        if cleanse_effects:
+            # Value only statuses this skill can actually reach.  The previous
+            # party-wide boolean made a self-cleanse look useful when another
+            # pig was poisoned, and +55 was too small to answer dangerous raid
+            # mechanics before another attractive cooldown.
+            urgency = max(
+                (
+                    sum(
+                        self._cleanse_urgency(target)
+                        for target in self.resolve_targets(
+                            unit, enemy, effect.get("target", "self")
+                        )
+                    )
+                    for effect in cleanse_effects
+                ),
+                default=0.0,
             )
-            score += 55 if dirty else -25
+            score += 90 + min(120, urgency * 2) if urgency else -40
         if kinds & {"shield", "guard", "share", "mitigate", "block", "absorb", "immunity"}:
             score += (1 - lowest) * 35
             if lowest < 0.4:
@@ -1705,6 +1711,34 @@ class _Battle:
             if kinds & {"mark", "dot", "corrupting"}:
                 score += 12
         return score
+
+    def _cleanse_urgency(self, unit: _Unit) -> float:
+        """Estimate how costly it is to leave one ally's removable debuffs up."""
+        urgency = 0.0
+        for dot in unit.dots:
+            stacks = max(1, dot.get("stacks", 1))
+            remaining = min(3, max(1, dot.get("turns", 1)))
+            urgency += min(60, dot.get("pct", 0) * stacks * remaining)
+        urgency += 55 * bool(unit.stun)
+        urgency += 35 * bool(unit.silence)
+        urgency += 25 * bool(unit.root)
+        urgency += 18 * len(unit.weaken)
+        urgency += 18 * len(unit.expose)
+        urgency += 30 * len(unit.corrupting)
+        urgency += 30 * len(unit.delay_damages)
+        urgency += 15 * len(unit.marks)
+        urgency += 12 * sum(1 for buff in unit.buffs if buff.get("pct", 0) < 0)
+
+        # Raid mechanics keep several cleanseable states outside the generic
+        # status containers.  getattr keeps the base 1v1 engine independent.
+        urgency += min(45, float(getattr(unit, "vuln", 0)))
+        urgency += min(35, float(getattr(unit, "chill", 0)) * 10)
+        urgency += 45 * bool(getattr(unit, "glitch", False))
+        urgency += 65 * bool(getattr(unit, "possessed", False))
+        urgency += 45 * bool(getattr(unit, "lured", False))
+        urgency += 45 * bool(getattr(unit, "marked", False))
+        urgency += 40 * bool(getattr(unit, "blind", False))
+        return urgency
 
     def plan_actions(self, unit: _Unit, enemy: _Unit) -> list[dict]:
         basic = unit.actives[0]
@@ -2253,7 +2287,11 @@ class _Battle:
             need = effect["stacks"]
             for dot in list(enemy.dots):
                 if dot.get("stacks", 1) >= need:
-                    total = self.dot_amount(enemy, dot) * dot["stacks"] * max(1, dot["turns"])
+                    # Long-lived mechanic DoTs use a high sentinel duration so
+                    # they persist until cleansed.  They may explicitly cap
+                    # how many ticks a detonation settles via burst_turns.
+                    turns = dot.get("burst_turns", dot["turns"])
+                    total = self.dot_amount(enemy, dot) * dot["stacks"] * max(1, turns)
                     enemy.dots.remove(dot)
                     dealt = self.hurt(enemy, total * self._cast_output_scale)
                     return f"层数爆发 {round(dealt)} 伤害"

@@ -677,7 +677,11 @@ class Zombie(BossMechanics):
         ("尸变", "它亲手击倒的队员猪会变成僵尸小猪，站到敌方一起作战（生命为原来的 40%）"),
     )
     ATK = 0.92
-    HP = 0.84
+    # This encounter is deliberately a cleanse check.  The old, accidentally
+    # gigantic poison detonation was masking an undersized health pool; once
+    # that bug is removed the boss needs enough time for poison pressure to
+    # matter without one-shotting anyone.
+    HP = 1.5
     GUARDS_FIRST = False
 
     @staticmethod
@@ -694,10 +698,17 @@ class Zombie(BossMechanics):
             return
         dot = self.poison(target)
         if dot is None:
-            target.dots.append({"pct": 4, "turns": 99, "label": "尸毒×1", "stacks": 1})
+            target.dots.append(
+                {
+                    "pct": 4,
+                    "turns": 99,
+                    "burst_turns": 1,
+                    "label": "尸毒×1",
+                    "stacks": 1,
+                }
+            )
         elif dot["stacks"] < 3:
             dot["stacks"] += 1
-            dot["pct"] = 4 * dot["stacks"]
             dot["label"] = f"尸毒×{dot['stacks']}"
             if dot["stacks"] == 3:
                 self.say(battle, 0, f"{target.label} 身上的尸毒叠满了 3 层")
