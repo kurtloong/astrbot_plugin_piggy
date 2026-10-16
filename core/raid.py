@@ -92,7 +92,11 @@ _BOSS_DUNGEON_SCALE = {
 # moving toward its final boss instead of making an early attrition check the
 # only meaningful gate.
 BOSS_ENCOUNTER_SCALE = {
-    "cyberpunk-pig": (1.90, 1.00),
+    "cyberpunk-pig": (2.05, 1.00),
+    "everest-pig": (1.08, 1.03),
+    "pig_god": (1.08, 1.03),
+    "skeleton-pig": (1.08, 1.03),
+    "pighub0116": (1.10, 1.03),
 }
 
 # Effect types the replay animates on their own (damage and heals have their own cues).
@@ -504,8 +508,30 @@ class _RaidBattle(_Battle):
 
         dps = available.get("输出")
         if dps is not None and self.boss.alive and not self.boss.away:
-            # The damage limit break is the safe-state default.
-            candidates.append((10.0, 0, dps))
+            # Damage is the healthy-state default, especially during a break
+            # window or when the capped strike can finish the boss.  This must
+            # be a real score rather than a token fallback: ordinary cooldown
+            # churn is present in almost every round-five battle and used to
+            # make support win every neutral decision.
+            score = 90.0
+            estimated = min(
+                dps.stat("atk")
+                * ULTIMATE_DAMAGE_POWER
+                * self.fury()
+                * 60
+                / (60 + self.boss.stat("def")),
+                self.boss.max_hp * ULTIMATE_BOSS_HP_CAP,
+            )
+            if estimated >= self.boss.hp:
+                score = 190.0
+            else:
+                if self.poise_broken:
+                    score += 35.0
+                if self.boss.ratio <= 0.50:
+                    score += 15.0
+                if self.boss.ratio <= 0.25:
+                    score += 20.0
+            candidates.append((score, 0, dps))
 
         healer = available.get("治疗")
         living = self.alive_heroes()
@@ -513,11 +539,11 @@ class _RaidBattle(_Battle):
             missing = sum(1 - hero.ratio for hero in living)
             lowest = min(hero.ratio for hero in living)
             if lowest <= 0.30:
-                score = 150.0 + (0.30 - lowest) * 100
+                score = 175.0 + (0.30 - lowest) * 100
             elif missing >= 1.0:
-                score = 130.0 + missing
+                score = 150.0 + missing
             elif missing >= 0.65:
-                score = 70.0 + missing
+                score = 110.0 + missing
             else:
                 score = 0.0
             if score:
@@ -534,21 +560,48 @@ class _RaidBattle(_Battle):
                 * 60
                 / (60 + frailest.stat("def"))
             )
-            if expected >= frailest.hp * 0.80:
-                candidates.append((140.0 + expected / max(1, frailest.hp), 2, tank))
-            elif sum(hero.ratio <= 0.50 for hero in living) >= 2:
-                candidates.append((95.0, 2, tank))
+            if expected >= frailest.hp * 0.65:
+                candidates.append((155.0 + expected / max(1, frailest.hp), 2, tank))
+            elif sum(hero.ratio <= 0.55 for hero in living) >= 2:
+                candidates.append((120.0, 2, tank))
 
         support = available.get("辅助")
         if support is not None and living:
             debuffs = sum(self._ultimate_debuff_urgency(hero) for hero in living)
-            cooldowns = sum(
-                max(0, turns) for hero in living for turns in hero.cooldowns.values()
+            if debuffs >= 70:
+                candidates.append((145.0 + min(35.0, debuffs - 70), 1, support))
+            elif debuffs >= 45:
+                candidates.append((115.0 + min(25.0, debuffs - 45), 1, support))
+            elif debuffs >= 30:
+                candidates.append((98.0 + min(12.0, debuffs - 30), 1, support))
+
+            # Only count real, non-basic active skills.  A reset is worth the
+            # one-per-boss charge when several different heroes recover long
+            # cooldown techniques, not merely because two incidental cooldown
+            # turns exist somewhere in the party.
+            locked = []
+            for hero in living:
+                resettable = {skill["name"] for skill in hero.actives[1:]}
+                for name, turns in hero.cooldowns.items():
+                    if name in resettable and turns > 0:
+                        locked.append((hero, turns))
+            locked_heroes = {id(hero) for hero, _ in locked}
+            long_locks = sum(turns >= 2 for _, turns in locked)
+            saved_turns = sum(turns for _, turns in locked)
+            exceptional_reset = (
+                len(locked_heroes) >= 3
+                and (long_locks >= 3 or len(locked) >= 5)
             )
-            if debuffs:
-                candidates.append((100.0 + min(50.0, debuffs), 1, support))
-            elif cooldowns >= 2:
-                candidates.append((35.0 + min(50.0, cooldowns * 8), 1, support))
+            # A cooldown-only reset is reserved for an actual team burst
+            # window.  Outside it, every normal round-five rotation has many
+            # skills cooling down, so treating raw cooldown volume as urgent
+            # would still make support the permanent default.
+            if exceptional_reset and self.poise_broken:
+                reset_score = 95.0 + min(
+                    35.0,
+                    long_locks * 4.0 + max(0, len(locked) - 3) * 3.0 + saved_turns,
+                )
+                candidates.append((reset_score, 1, support))
 
         if not candidates:
             return None
@@ -613,7 +666,11 @@ class _RaidBattle(_Battle):
         elif role == "治疗":
             notes = []
             for hero in living:
-                healed = self.heal(hero, hero.max_hp * ULTIMATE_HEAL_PCT / 100)
+                healed = self.heal(
+                    hero,
+                    hero.max_hp * ULTIMATE_HEAL_PCT / 100,
+                    source=caster,
+                )
                 notes.append(f"{hero.label}+{healed}")
             self.say(f"{caster.label} 发动极限技「生命奇迹」，全体回复生命：{'、'.join(notes)}！")
         else:
