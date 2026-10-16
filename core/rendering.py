@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps, ImageStat
 
 from .battle import ROLES
-from .rarity import rarity_for
+from .rarity import RARITIES, rarity_for
 
 # One sheet contains the entire initial catalog. Limits keep future expansions
 # below QQ's practical image size and the renderer's memory budget.
@@ -28,6 +28,11 @@ PANEL = "#f5e8da"
 BORDER = "#ebdfd1"
 TRACK = "#e8d6c6"
 PEN_HEADER_STEP = 44
+PEN_COLUMNS = 5
+PEN_CARD_WIDTH = 184
+PEN_CARD_HEIGHT = 238
+PEN_COLUMN_STEP = 194
+PEN_ROW_STEP = 248
 FONT_DIR = Path(__file__).resolve().parents[1] / "resources" / "fonts"
 FONT = FONT_DIR / "NotoSansSC.ttf.xz"
 # Tried in order for characters the main font lacks: emoji, symbols, fancy math letters.
@@ -194,10 +199,10 @@ def render_collection(
     level_cap: int = 20,
 ) -> Card:
     """Render the approved cream card; atlas tiles deliberately contain no names."""
-    columns = 8 if atlas else 4
-    step = 122 if atlas else 248
+    columns = 8 if atlas else PEN_COLUMNS
+    step = 122 if atlas else PEN_COLUMN_STEP
     top = 384 if atlas else 478
-    row_step = 122 if atlas else 246
+    row_step = 122 if atlas else PEN_ROW_STEP
     blocks = [] if atlas else _pen_blocks(entries, columns)
     if atlas:
         rows = max(1, math.ceil(len(entries) / columns))
@@ -259,6 +264,74 @@ def render_collection(
             (86, bar_y, 86 + max(9, int(906 * min(ratio, 1))), bar_y + 9), radius=4, fill=ACCENT
         )
 
+    def rarity_frame(x: int, y: int, rarity: str):
+        """Draw tier-specific framing so rarity remains visible without reading text."""
+        info = RARITIES.get(rarity, RARITIES["普通"])
+        rank = info["rank"]
+        color = info["color"]
+        right = x + PEN_CARD_WIDTH
+        bottom = y + PEN_CARD_HEIGHT
+        draw.rounded_rectangle((x, y + 3, right, bottom + 3), radius=18, fill=BORDER)
+        draw.rounded_rectangle(
+            (x, y, right, bottom),
+            radius=18,
+            fill="#ffffff",
+            outline=color,
+            width=2 if rank == 1 else 3,
+        )
+        if rank >= 2:
+            draw.rounded_rectangle(
+                (x + 4, y + 4, right - 4, bottom - 4),
+                radius=14,
+                outline="#d9e9ff" if rank == 2 else color,
+                width=1 if rank < 4 else 2,
+            )
+        if rank >= 3:
+            # Epic and above gain ornamental corner strokes in addition to colour.
+            edge = 24 if rank == 3 else 31
+            for left in (x + 9, right - 9 - edge):
+                draw.line((left, y + 8, left + edge, y + 8), fill=color, width=3)
+                draw.line((left, bottom - 8, left + edge, bottom - 8), fill=color, width=3)
+        if rank == 5:
+            # Mythic uses a second gold diamond, making it distinct from legendary gold.
+            gold = RARITIES["传说"]["color"]
+            for cx in (x + 12, right - 12):
+                draw.polygon(
+                    ((cx, y + 5), (cx + 5, y + 10), (cx, y + 15), (cx - 5, y + 10)),
+                    fill=gold,
+                )
+
+    def draw_tags(tags: list[str], x: int, y: int):
+        """Fit every controlled tag into at most two compact, readable rows."""
+        cursor_x = x
+        cursor_y = y
+        right = x + PEN_CARD_WIDTH - 18
+        line = 0
+        for index, label in enumerate(tags[:4]):
+            label = str(label)
+            width = math.ceil(typeset.length(draw, label, 12, index == 0)) + 12
+            if cursor_x + width > right and cursor_x > x:
+                line += 1
+                cursor_x = x
+                cursor_y += 23
+            if line >= 2:
+                break
+            fill = TEXT if index == 0 else PANEL
+            color = "#ffffff" if index == 0 else TEXT
+            draw.rounded_rectangle(
+                (cursor_x, cursor_y, cursor_x + width, cursor_y + 19), radius=9, fill=fill
+            )
+            text(
+                label,
+                cursor_x + width / 2,
+                cursor_y + 1,
+                12,
+                color,
+                bold=index == 0,
+                center=True,
+            )
+            cursor_x += width + 4
+
     def draw_pig(pig: dict, x: int, y: int, locked: bool):
         if atlas:
             draw.rounded_rectangle(
@@ -272,25 +345,33 @@ def render_collection(
                 draw.text((cx, cy - 1), "?", font=face, fill="#565656", anchor="mm")
                 return
         else:
-            draw.rounded_rectangle((x, y + 3, x + 224, y + 230), radius=23, fill=BORDER)
-            draw.rounded_rectangle((x, y, x + 224, y + 227), radius=23, fill="#ffffff")
-            draw.rounded_rectangle((x + 12, y + 12, x + 212, y + 154), radius=17, fill="#f9f4ed")
-            box_w, box_h = 160, 128
-            cx, cy = x + 112, y + 83
+            rarity = pig.get("rarity", "普通")
+            rarity_frame(x, y, rarity)
+            draw.rounded_rectangle((x + 10, y + 10, x + 174, y + 105), radius=12, fill="#f9f4ed")
+            box_w, box_h = 142, 85
+            cx, cy = x + PEN_CARD_WIDTH // 2, y + 58
         with Image.open(root / "assets" / pig["asset"]) as original:
             art = ImageOps.exif_transpose(original).convert("RGBA")
             art.thumbnail((box_w, box_h), Image.Resampling.LANCZOS)
             image.paste(art, (int(cx - art.width / 2), int(cy - art.height / 2)), art)
         if not atlas:
             rarity = pig.get("rarity", "普通")
-            text(f"【{rarity}】", x + 18, y + 137, 14, ACCENT, bold=True)
-            text(pig["name"], cx, y + 163, 21, bold=True, width=204, center=True)
+            rarity_color = RARITIES.get(rarity, RARITIES["普通"])["color"]
+            badge_width = math.ceil(typeset.length(draw, rarity, 12, True)) + 18
+            draw.rounded_rectangle(
+                (x + 10, y + 111, x + 10 + badge_width, y + 131),
+                radius=10,
+                fill=rarity_color,
+            )
+            text(rarity, x + 10 + badge_width / 2, y + 112, 12, "#ffffff", True, center=True)
+            text(pig["name"], cx, y + 136, 18, bold=True, width=168, center=True)
             count = f"× {pig['count']} · Lv{min(pig['count'], level_cap)}" + (
                 " · 已下架" if not pig["enabled"] else ""
             )
             if pig.get("personality_name"):
                 count += f" · {pig['personality_name']}"
-            text(count, cx, y + 197, 16, ACCENT, width=200, center=True)
+            text(count, cx, y + 160, 13, SUB, width=168, center=True)
+            draw_tags(pig.get("tags") or [pig.get("role", "输出")], x + 9, y + 184)
 
     if atlas:
         for index, pig in enumerate(entries):
