@@ -21,6 +21,7 @@ from .raid import (
     dungeon,
     mechanic_details,
     mechanics_for,
+    recommended_functions,
 )
 from .rendering import (
     ATLAS_SHEET_SIZE,
@@ -317,7 +318,12 @@ async def raid_detail_message(
         "title": f"{item['key']} {item['name']}",
         "subtitle": f"{item['intro']} · {state}",
         "bosses": [
-            {**status["bosses"][slot], "stage": stage, "mechanics": mechanic_details(slot)}
+            {
+                **status["bosses"][slot],
+                "stage": stage,
+                "recommended": recommended_functions(slot),
+                "mechanics": mechanic_details(slot),
+            }
             for stage, slot in enumerate(item["bosses"], 1)
         ],
         "tips": (f"开启副本 {item['key']} 你的小猪 —— 发起这个副本的组队", *RAID_TIPS[1:]),

@@ -25,6 +25,7 @@ PARTY = (
 )
 LEVEL = 5
 SEEDS = 40
+COUNTER_SEEDS = 120
 
 
 def entry(pig_id: str) -> dict:
@@ -37,6 +38,30 @@ def make_party(level: int = LEVEL) -> list[dict]:
         data = entry(pig_id)
         assert data["role"] == role, f"{pig_id} role drifted to {data['role']}"
         hero = fighter({"id": pig_id, "name": pig_id, "asset": ""}, data, level, pig_id)
+        hero["seat"] = seat
+        heroes.append(hero)
+    return heroes
+
+
+def make_zombie_party(healer_id: str) -> list[dict]:
+    """Keep rarity and the other three seats fixed so only counterplay changes."""
+    party = (
+        ("black-pig", "坦克"),
+        ("pig", "输出"),
+        (healer_id, "治疗"),
+        ("human", "辅助"),
+    )
+    heroes = []
+    for seat, (pig_id, role) in enumerate(party):
+        data = entry(pig_id)
+        assert data["role"] == role, f"{pig_id} role drifted to {data['role']}"
+        hero = fighter(
+            {"id": pig_id, "name": pig_id, "asset": ""},
+            data,
+            LEVEL,
+            pig_id,
+            rarity="普通",
+        )
         hero["seat"] = seat
         heroes.append(hero)
     return heroes
@@ -172,6 +197,26 @@ class RaidWinrateTests(unittest.TestCase):
             first = stage_wins[(item["name"], 1, item["bosses"][0])]
             final = stage_wins[(item["name"], 3, item["bosses"][2])]
             self.assertGreaterEqual(first, final, item["name"])
+
+    def test_zombie_cleanse_is_a_build_defining_counter(self):
+        def win_rate(healer_id: str) -> float:
+            wins = 0
+            for seed in range(COUNTER_SEEDS):
+                result = simulate_with_hp(
+                    make_zombie_party(healer_id), "zombie-pig", 1, seed * 1009 + 17
+                )
+                wins += bool(result["won"])
+            return wins / COUNTER_SEEDS
+
+        cleanse_rate = win_rate("antibacterial-pig")
+        no_cleanse_rate = win_rate("pig-bun")
+        print(
+            "\n=== 僵尸猪构筑检查 ===\n"
+            f"专职净化 {cleanse_rate:.1%} | 无净化 {no_cleanse_rate:.1%}"
+        )
+        self.assertGreaterEqual(cleanse_rate, 0.80)
+        self.assertLess(no_cleanse_rate, 0.50)
+        self.assertGreaterEqual(cleanse_rate - no_cleanse_rate, 0.25)
 
 
 if __name__ == "__main__":

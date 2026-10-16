@@ -209,7 +209,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与副本", "1.12.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与副本", "1.13.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)

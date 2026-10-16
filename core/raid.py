@@ -1,6 +1,7 @@
 """Pig raids: four players' pigs against three bosses in a row."""
 
 import random
+import re
 
 from .battle import CRIT_MULTIPLIER, FURY_ROUND, FURY_STEP, SKILL_SLOTS, _Battle, _Unit, fighter
 from .raid_bosses import BOSSES, BossMechanics
@@ -144,6 +145,19 @@ def mechanic_details(pig_id: str) -> tuple:
         (name, f"{text}｜反制：{counter}" if counter else text)
         for (name, text), counter in zip(cls.MECHANICS, counters)
     )
+
+
+def recommended_functions(pig_id: str) -> tuple[str, ...]:
+    """Build-facing feature labels extracted from the audited counter hints."""
+    result = []
+    for hint in mechanics_for(pig_id).COUNTERS:
+        match = re.match(r"【([^】]+)】", hint)
+        if not match:
+            continue
+        for feature in match.group(1).split("/"):
+            if feature not in result:
+                result.append(feature)
+    return tuple(result)
 
 
 def boss_level(levels: list[int]) -> int:

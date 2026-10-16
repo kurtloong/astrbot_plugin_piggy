@@ -981,16 +981,22 @@ def render_raid_detail(root: Path, data: dict) -> Card:
     measure = Canvas(root, WIDTH, 1)
     rows = []
     for boss in data["bosses"]:
+        recommended = measure.wrap(
+            "推荐功能：" + " / ".join(boss.get("recommended") or ("均衡阵容",)), 21, 640
+        )
         lines = []
         for name, text in boss["mechanics"]:
             wrapped = measure.wrap(text, 21, 640)
             lines.append((name, wrapped))
-        height = max(270, 96 + sum(36 + len(w) * 30 + 10 for _, w in lines))
-        rows.append((boss, lines, height))
+        height = max(
+            300,
+            126 + len(recommended) * 30 + sum(36 + len(w) * 30 + 10 for _, w in lines),
+        )
+        rows.append((boss, recommended, lines, height))
     tips = [line for entry in data["tips"] for line in measure.wrap(entry, 21, 940)]
     measure.image.close()
     top = 232
-    body = sum(h + 24 for _, _, h in rows)
+    body = sum(h + 24 for _, _, _, h in rows)
     tips_top = top + body + 10
     height = tips_top + 50 + len(tips) * 34 + 100
     canvas = Canvas(root, WIDTH, height)
@@ -998,14 +1004,18 @@ def render_raid_detail(root: Path, data: dict) -> Card:
     canvas.text(data["title"], 54, 76, 56, bold=True, width=960)
     canvas.text(data["subtitle"], 58, 158, 24, SUB, width=960)
     y = top
-    for boss, lines, row_h in rows:
+    for boss, recommended, lines, row_h in rows:
         canvas.draw.rounded_rectangle((56, y + 3, 1024, y + row_h + 3), radius=28, fill=BORDER)
         canvas.draw.rounded_rectangle((56, y, 1024, y + row_h), radius=28, fill="#ffffff")
         canvas.draw.rounded_rectangle((76, y + 20, 316, y + 250), radius=20, fill="#f9f4ed")
         _paste_art(canvas, root, boss["asset"], (86, y + 30, 220, 210))
         canvas.text(f"第 {boss['stage']} 关", 340, y + 22, 20, ACCENT, True)
         canvas.text(boss["name"], 340, y + 50, 32, TEXT, True, width=660)
-        cursor = y + 100
+        cursor = y + 98
+        for line in recommended:
+            canvas.text(line, 340, cursor, 21, ACCENT, True, width=660)
+            cursor += 30
+        cursor += 8
         for name, wrapped in lines:
             canvas.text(name, 340, cursor, 23, ACCENT, True, width=660)
             cursor += 36

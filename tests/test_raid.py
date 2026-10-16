@@ -15,7 +15,7 @@ from core.battle import FALLBACK, fighter, validate_entry
 from core.catalog import read_catalog
 from core.config import PiggyError, Settings
 from core.database import Database
-from core.raid import DUNGEONS, _RaidBattle, boss_fighter, simulate_raid
+from core.raid import DUNGEONS, _RaidBattle, boss_fighter, recommended_functions, simulate_raid
 from core.raid_events import (
     ENTRY_EVENTS,
     FIELD_EVENTS,
@@ -421,6 +421,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             await raid_detail_message(Settings(), self.root, self.users[0], status, 4)
         joined = "".join(labels)
         self.assertIn("亡灵猪墓", joined)
+        self.assertIn("推荐功能：净化 / 持续恢复", joined)
         self.assertIn("白骨重组", joined)
         self.assertIn("开启副本 4", joined)
 
@@ -642,9 +643,9 @@ class RaidEngineTests(unittest.TestCase):
         for _ in range(4):
             fight.mech.outgoing(fight, hero, 1)
         poison = [d for d in hero.dots if d.get("stacks")]
-        self.assertEqual([(d["pct"], d["label"]) for d in poison], [(9, "尸毒×3")])
+        self.assertEqual([(d["pct"], d["label"]) for d in poison], [(12, "尸毒×3")])
         self.assertEqual(hero.dots[0]["pct"], 5)
-        self.assertEqual(fight.mech.heal_factor(fight, hero), 0.5)
+        self.assertEqual(fight.mech.heal_factor(fight, hero), 0.25)
         self.assertIs(fight.order()[-1], fight.boss)
         fight.acting = fight.boss
         fight.hurt(fight.heroes[1], 10_000)
@@ -868,6 +869,8 @@ class RaidEngineTests(unittest.TestCase):
             for hint in fight.mech.COUNTERS:
                 self.assertIn("【", hint, slot)
                 self.assertTrue(all(word not in hint for word in forbidden), (slot, hint))
+            self.assertTrue(recommended_functions(slot), slot)
+        self.assertEqual(recommended_functions("zombie-pig")[:2], ("净化", "持续恢复"))
 
     def test_boss_mechanics_are_listed_for_every_boss(self):
         for slot in BOSS_IDS:

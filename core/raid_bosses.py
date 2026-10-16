@@ -635,7 +635,7 @@ class Zombie(BossMechanics):
     MECHANICS = (
         (
             "尸毒",
-            "被它咬中的猪叠 1 层尸毒，每层每回合损失 3% 生命，最多 3 层；中毒期间受到的治疗减半",
+            "被它咬中的猪叠 1 层尸毒，每层每回合损失 4% 生命，最多 3 层；中毒期间只获得 25% 治疗。净化会完整移除尸毒",
         ),
         ("一瘸一拐", "总是最后一个行动，但每次行动后有 30% 概率再扑咬一次"),
         ("尸变", "它亲手击倒的队员猪会变成僵尸小猪，站到敌方一起作战（生命为原来的 40%）"),
@@ -658,16 +658,16 @@ class Zombie(BossMechanics):
             return
         dot = self.poison(target)
         if dot is None:
-            target.dots.append({"pct": 3, "turns": 99, "label": "尸毒×1", "stacks": 1})
+            target.dots.append({"pct": 4, "turns": 99, "label": "尸毒×1", "stacks": 1})
         elif dot["stacks"] < 3:
             dot["stacks"] += 1
-            dot["pct"] = 3 * dot["stacks"]
+            dot["pct"] = 4 * dot["stacks"]
             dot["label"] = f"尸毒×{dot['stacks']}"
             if dot["stacks"] == 3:
                 self.say(battle, 0, f"{target.label} 身上的尸毒叠满了 3 层")
 
     def heal_factor(self, battle, unit):
-        return 0.5 if unit.side == 0 and self.poisoned(unit) else 1.0
+        return 0.25 if unit.side == 0 and self.poisoned(unit) else 1.0
 
     def order(self, battle, units):
         if not self.on(1):
@@ -1647,7 +1647,7 @@ BOSS_COUNTERS = {
         "【范围/多段】守护灵出现后系统自动优先攻击；范围伤害可同时压低它们",
     ),
     "zombie-pig": (
-        "【净化/持续恢复】净化尸毒恢复治疗效率，持续恢复提前铺设也能稳住血线",
+        "【净化/持续恢复】净化是核心反制：立刻清除尸毒并恢复完整治疗效率；持续恢复只能辅助稳线",
         "【控制/减攻】控制与减攻减少末位扑咬；额外扑咬不是必定触发",
         "【护盾/守护/复活】避免由 boss 亲手击倒即可阻止尸变增援",
     ),
