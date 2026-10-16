@@ -134,6 +134,25 @@ class UltimateTests(unittest.TestCase):
         self.assertFalse(affected.blind)
         self.assertFalse(affected.zeroed)
 
+    def test_incidental_cooldowns_do_not_force_support_ultimate(self):
+        fight = ready(make_battle())
+        for hero in fight.heroes:
+            skill = hero.actives[1]
+            hero.cooldowns[skill["name"]] = 1
+
+        self.assertTrue(fight._try_ultimate())
+        self.assertEqual(fight.ultimate_role, "输出")
+
+    def test_support_can_win_for_exceptional_teamwide_cooldown_value_in_break_window(self):
+        fight = ready(make_battle())
+        fight.poise_broken_until = fight.round + 1
+        for hero in fight.heroes[:3]:
+            for skill in hero.actives[1:3]:
+                hero.cooldowns[skill["name"]] = 3
+
+        self.assertTrue(fight._try_ultimate())
+        self.assertEqual(fight.ultimate_role, "辅助")
+
     def test_dead_or_away_caster_defers_without_spending_charge(self):
         for state in ("dead", "away"):
             with self.subTest(state=state):
