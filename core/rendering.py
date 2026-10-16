@@ -13,6 +13,7 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps, ImageStat
 
 from .battle import ROLES
+from .rarity import rarity_for
 
 # One sheet contains the entire initial catalog. Limits keep future expansions
 # below QQ's practical image size and the renderer's memory budget.
@@ -281,10 +282,14 @@ def render_collection(
             art.thumbnail((box_w, box_h), Image.Resampling.LANCZOS)
             image.paste(art, (int(cx - art.width / 2), int(cy - art.height / 2)), art)
         if not atlas:
-            text(pig["name"], cx, y + 163, 23, bold=True, width=198, center=True)
+            rarity = pig.get("rarity", "普通")
+            text(f"【{rarity}】", x + 18, y + 137, 14, ACCENT, bold=True)
+            text(pig["name"], cx, y + 163, 21, bold=True, width=204, center=True)
             count = f"× {pig['count']} · Lv{min(pig['count'], level_cap)}" + (
                 " · 已下架" if not pig["enabled"] else ""
             )
+            if pig.get("personality_name"):
+                count += f" · {pig['personality_name']}"
             text(count, cx, y + 197, 16, ACCENT, width=200, center=True)
 
     if atlas:
@@ -407,7 +412,8 @@ def render_today(
         art.thumbnail((580, 418), Image.Resampling.LANCZOS)
         canvas.image.paste(art, ((WIDTH - art.width) // 2, 265 + (418 - art.height) // 2), art)
         art.close()
-    canvas.text(pig["name"], 88, 734, 43, bold=True, width=566)
+    canvas.text(f"【{rarity_for(pig.get('id', pig['name']))}】", 88, 714, 18, ACCENT, True)
+    canvas.text(pig["name"], 88, 738, 39, bold=True, width=566)
     canvas.text(state, 674, 755, 22, ACCENT, width=314)
     canvas.draw.rounded_rectangle((56, description_y, 1024, panel_bottom), radius=28, fill=PANEL)
     for i, line in enumerate(lines):
@@ -438,6 +444,14 @@ def render_today(
                     (x + 18, y + 18, x + 74, y + 46), radius=14, fill="#d9a441"
                 )
                 canvas.text("NEW", x + 26, y + 20, 17, "#ffffff", True)
+            canvas.text(
+                f"【{rarity_for(item['pig'].get('id', item['pig']['name']))}】",
+                x + 18,
+                y + 142,
+                15,
+                ACCENT,
+                True,
+            )
             label = item["pig"]["name"]
             if canvas.measure(label, 23, True) > 198:
                 while label and canvas.measure(label + "…", 23, True) > 198:
@@ -468,7 +482,7 @@ def render_today(
         canvas.draw.rounded_rectangle(
             (68, y, 68 + max(10, int(944 * min(ratio, 1))), y + 10), radius=5, fill=ACCENT
         )
-    hint = hint or "发送「小猪玩法」和群友斗猪、换猪"
+    hint = hint or "发送「小猪玩法」查看养成、副本与交换"
     canvas.text(f"{protection} · {hint}" if protection else hint, 68, y + 34, 19, ACCENT, width=944)
     return finish(canvas.image)
 
@@ -494,7 +508,8 @@ def render_wild(root: Path, wild: dict, unit: dict, describe) -> Card:
     )
     canvas.draw.rounded_rectangle((84, 244, 994, 664), radius=25, fill="#f9f4ed")
     _paste_art(canvas, root, wild["pig"]["asset"], (250, 262, 580, 384), faded=tamed)
-    canvas.text(wild["pig"]["name"], 88, 690, 43, bold=True, width=640)
+    canvas.text(f"【{unit['rarity']}】", 88, 674, 18, ACCENT, True)
+    canvas.text(wild["pig"]["name"], 88, 698, 38, bold=True, width=640)
     canvas.draw.rounded_rectangle((780, 690, 994, 746), radius=28, fill=SUB if tamed else ACCENT)
     role = unit.get("role") or ""
     level = f"Lv{wild['level']} · {role + ' · ' if role else ''}{unit['style']}"
@@ -966,16 +981,26 @@ def render_raid_detail(root: Path, data: dict) -> Card:
     measure = Canvas(root, WIDTH, 1)
     rows = []
     for boss in data["bosses"]:
+        recommended = measure.wrap(
+            "核心功能：" + " / ".join(boss.get("recommended") or ("均衡阵容",)), 21, 640
+        )
+        consequence = measure.wrap("缺少后果：" + boss.get("counter_failure", ""), 19, 640)
         lines = []
         for name, text in boss["mechanics"]:
             wrapped = measure.wrap(text, 21, 640)
             lines.append((name, wrapped))
-        height = max(270, 96 + sum(36 + len(w) * 30 + 10 for _, w in lines))
-        rows.append((boss, lines, height))
+        height = max(
+            300,
+            126
+            + len(recommended) * 30
+            + len(consequence) * 28
+            + sum(36 + len(w) * 30 + 10 for _, w in lines),
+        )
+        rows.append((boss, recommended, consequence, lines, height))
     tips = [line for entry in data["tips"] for line in measure.wrap(entry, 21, 940)]
     measure.image.close()
     top = 232
-    body = sum(h + 24 for _, _, h in rows)
+    body = sum(h + 24 for _, _, _, _, h in rows)
     tips_top = top + body + 10
     height = tips_top + 50 + len(tips) * 34 + 100
     canvas = Canvas(root, WIDTH, height)
@@ -983,14 +1008,21 @@ def render_raid_detail(root: Path, data: dict) -> Card:
     canvas.text(data["title"], 54, 76, 56, bold=True, width=960)
     canvas.text(data["subtitle"], 58, 158, 24, SUB, width=960)
     y = top
-    for boss, lines, row_h in rows:
+    for boss, recommended, consequence, lines, row_h in rows:
         canvas.draw.rounded_rectangle((56, y + 3, 1024, y + row_h + 3), radius=28, fill=BORDER)
         canvas.draw.rounded_rectangle((56, y, 1024, y + row_h), radius=28, fill="#ffffff")
         canvas.draw.rounded_rectangle((76, y + 20, 316, y + 250), radius=20, fill="#f9f4ed")
         _paste_art(canvas, root, boss["asset"], (86, y + 30, 220, 210))
         canvas.text(f"第 {boss['stage']} 关", 340, y + 22, 20, ACCENT, True)
         canvas.text(boss["name"], 340, y + 50, 32, TEXT, True, width=660)
-        cursor = y + 100
+        cursor = y + 98
+        for line in recommended:
+            canvas.text(line, 340, cursor, 21, ACCENT, True, width=660)
+            cursor += 30
+        for line in consequence:
+            canvas.text(line, 340, cursor, 19, SUB, width=660)
+            cursor += 28
+        cursor += 8
         for name, wrapped in lines:
             canvas.text(name, 340, cursor, 23, ACCENT, True, width=660)
             cursor += 36
@@ -1119,7 +1151,7 @@ def render_ranking(root: Path, boards: dict, avatars: dict[str, bytes]) -> Card:
                 value, max(x + 521, x + 662 - text_width), y + 23, size, color, True, width=144
             )
     canvas.text(
-        "每天领一只小猪，把日子攒成一座猪圈 · 发送「小猪玩法」和群友斗猪、换猪",
+        "每天领一只小猪，把日子攒成一座猪圈 · 发送「小猪玩法」查看养成与副本",
         58,
         canvas.image.height - 46,
         18,

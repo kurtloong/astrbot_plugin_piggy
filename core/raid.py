@@ -12,7 +12,7 @@ MAX_RAID_ROUNDS = 25
 REST_HEAL = 0.4
 # When continuing to the next boss, one fallen pig may rejoin at this HP ratio.
 REST_REVIVE_HP = 0.4
-# Bosses ignore party level: full kit + base stats, scaled only by stage / boss multipliers.
+# Bosses ignore party level: full kit + base stats, scaled by stage, dungeon and boss multipliers.
 STAGE_HP = (7.0, 8.2, 9.6)
 # Raised so boss auto-attacks threaten tanks that now soak focus fire.
 STAGE_ATK = (2.20, 2.45, 2.75)
@@ -62,6 +62,30 @@ DUNGEONS = (
     },
 )
 
+# Dungeon-level tuning layered on top of stage and signature-boss scaling.
+# Keeping this separate from boss mechanics preserves each encounter's
+# counterplay while giving the seven three-boss runs distinct progression.
+# Values are calibrated against the fixed Lv5 four-role benchmark party.
+DUNGEON_BOSS_SCALE = {
+    1: (1.20, 1.10),  # 冰封猪圈
+    2: (1.40, 1.10),  # 机械猪厂: early machines test attrition
+    3: (1.20, 1.10),  # 猪神殿
+    4: (1.10, 1.02),  # 亡灵猪墓: mechanics already punish failed recovery
+    5: (1.28, 1.10),  # 深海猪渊
+    6: (1.08, 1.03),  # 星际猪港 already has punishing signature mechanics
+    7: (1.20, 1.10),  # 熔岩猪窑
+}
+_BOSS_DUNGEON_SCALE = {
+    slot: DUNGEON_BOSS_SCALE[item["key"]] for item in DUNGEONS for slot in item["bosses"]
+}
+
+# Small encounter-specific corrections keep a dungeon's fresh-party curve
+# moving toward its final boss instead of making an early attrition check the
+# only meaningful gate.
+BOSS_ENCOUNTER_SCALE = {
+    "cyberpunk-pig": (1.70, 1.00),
+}
+
 # Effect types the replay animates on their own (damage and heals have their own cues).
 STATUS_CUES = frozenset(
     {
@@ -110,22 +134,47 @@ def mechanics_for(pig_id: str) -> type[BossMechanics]:
     return BOSSES.get(pig_id, BossMechanics)
 
 
+def mechanic_details(pig_id: str) -> tuple:
+    """Mechanic text plus automatic, build-facing counterplay for raid UIs."""
+    cls = mechanics_for(pig_id)
+    counters = cls.COUNTERS or ("",) * len(cls.MECHANICS)
+    return tuple(
+        (name, f"{text}｜反制：{counter}" if counter else text)
+        for (name, text), counter in zip(cls.MECHANICS, counters)
+    )
+
+
+def recommended_functions(pig_id: str) -> tuple[str, ...]:
+    """Real pig-pen tags that satisfy this boss's primary build check."""
+    return mechanics_for(pig_id).CORE_TAGS
+
+
+def counter_failure(pig_id: str) -> str:
+    """What happens when a party ignores the boss's primary build check."""
+    return mechanics_for(pig_id).CORE_FAILURE
+
+
 def boss_level(levels: list[int]) -> int:
     """Deprecated: bosses no longer scale with party level. Kept for old call sites."""
     return max(1, round(sum(levels) / len(levels))) if levels else 1
 
 
 def boss_fighter(pig: dict, entry: dict, stage: int, slot_id: str, label: str) -> dict:
-    """Raid boss at stage strength: base stats, all skills unlocked, no level growth."""
+    """Raid boss at encounter strength: base stats, full kit, no level growth."""
     cls = mechanics_for(slot_id)
-    unit = fighter(pig, entry, 1, label)
+    # Boss strength belongs to encounter tuning, never to the collectible pig's rarity.
+    unit = fighter(pig, entry, 1, label, rarity="普通")
     unit["level"] = 0
     unit["skills"] = list(entry["skills"][:SKILL_SLOTS])
     unit["locked"] = []
     stats = unit["stats"]
     unit["dot_basis"] = stats["hp"]
-    stats["hp"] = round(stats["hp"] * STAGE_HP[stage - 1] * cls.HP)
-    stats["atk"] = round(stats["atk"] * STAGE_ATK[stage - 1] * cls.ATK)
+    dungeon_hp, dungeon_atk = _BOSS_DUNGEON_SCALE.get(slot_id, (1.0, 1.0))
+    encounter_hp, encounter_atk = BOSS_ENCOUNTER_SCALE.get(slot_id, (1.0, 1.0))
+    stats["hp"] = round(stats["hp"] * STAGE_HP[stage - 1] * cls.HP * dungeon_hp * encounter_hp)
+    stats["atk"] = round(
+        stats["atk"] * STAGE_ATK[stage - 1] * cls.ATK * dungeon_atk * encounter_atk
+    )
     stats["def"] = round(stats["def"] * cls.DEF)
     return unit
 
@@ -197,8 +246,10 @@ class _RaidBattle(_Battle):
         self.round = 0
         # Shared with 1v1 `_Battle` skill paths (copy, reactive triggers, leech).
         self._copy_scale = 1.0
+        self._cast_output_scale = 1.0
         self._leech_pool = 0.0
         self._in_trigger = False
+        self._turn_triggered = set()
         self.cfg = cfg
         self.heroes = [_RaidUnit(data, 0) for data in heroes]
         self.boss = _RaidUnit(boss, 1)
@@ -308,6 +359,7 @@ class _RaidBattle(_Battle):
         if not target.alive:
             return 0.0
         raw = attacker.stat("atk") * power * self.rng.uniform(0.9, 1.1) * self.fury()
+        raw *= self.mech.build_outgoing_factor(self, attacker)
         if crit:
             raw *= CRIT_MULTIPLIER
         raw *= 60 / (60 + target.stat("def"))
@@ -391,6 +443,17 @@ class _RaidBattle(_Battle):
             return self.mech.pick_target(self, heroes)
         return self.rng.choice(heroes)
 
+    def action_target(self, unit, enemy):
+        # Keep a living target through the chain for readable replays; retarget
+        # immediately when an earlier link killed it.
+        return enemy if enemy is not None and enemy.alive else self.target_for(unit)
+
+    def max_skills_per_turn(self, unit):
+        # Existing boss extra-action mechanics are already their action economy.
+        # Only player pigs receive skill chains, avoiding accidental boss burst
+        # multiplication and preserving summon balance.
+        return 2 if unit.side == 0 else 1
+
     def apply_passive(self, unit, effect):
         if effect["type"] == "buff" and effect.get("target") == "enemy":
             targets = [self.boss] if unit.side == 0 else self.heroes
@@ -439,6 +502,8 @@ class _RaidBattle(_Battle):
         self.acting = dot.get("source")
         self._dot = dot.get("label", "持续伤害")
         amount = unit.dot_basis * dot["pct"] / 100 * self.mech.dot_factor(self, unit)
+        if unit is self.boss:
+            amount *= self.mech.build_incoming_factor(self)
         if unit.side == 0 and self.cfg.get("dot_cut"):
             amount *= 1 - self.cfg["dot_cut"] / 100
         return amount
@@ -492,6 +557,7 @@ class _RaidBattle(_Battle):
     def adjust_hit(self, unit, enemy, raw, effect):
         raw *= 1 + enemy.vuln / 100
         raw *= self.mech.outgoing_factor(self, unit, enemy)
+        raw *= self.mech.build_outgoing_factor(self, unit)
         if unit is self.boss and enemy.marked:
             enemy.marked = False
             raw *= 2
@@ -500,6 +566,7 @@ class _RaidBattle(_Battle):
             raw = self.mech.foe_hit(self, unit, enemy, raw, effect)
         if enemy is self.boss:
             raw = self.mech.incoming(self, unit, raw, effect)
+            raw *= self.mech.build_incoming_factor(self)
         return raw
 
     def after_hit(self, unit, enemy, dealt):
@@ -512,6 +579,31 @@ class _RaidBattle(_Battle):
         if self.mech.blocks_effect(self, unit, effect):
             self.cue("blocked", dst=unit.uid)
             return "被禁令挡下了"
+        cleansed = []
+        cleanse_worked = False
+        if effect["type"] in ("cleanse", "cleanse_heal"):
+            cleansed = self.resolve_targets(unit, enemy, effect.get("target", "self"))
+            cleanse_worked = any(
+                target.dots
+                or target.stun
+                or target.silence
+                or target.root
+                or target.weaken
+                or target.expose
+                or target.corrupting
+                or target.delay_damages
+                or target.marks
+                or target.vuln
+                or target.chill
+                or target.glitch
+                or target.possessed
+                or target.lured
+                or target.marked
+                or target.blind
+                or any(buff.get("pct", 0) < 0 for buff in target.buffs)
+                for target in cleansed
+            )
+        hero_hp = {id(hero): hero.hp for hero in self.alive_heroes()} if unit.side == 0 else {}
         text = super().effect(unit, enemy, effect, skill)
         kind = effect["type"]
         if kind == "dot" and enemy.dots:
@@ -525,11 +617,25 @@ class _RaidBattle(_Battle):
                 target = enemy if kind in ("dot", "dispel") else unit
             self.cue(kind, src=unit.uid, dst=target.uid, up=effect.get("pct", 0) >= 0)
         if effect["type"] in ("cleanse", "cleanse_heal"):
-            unit.vuln = 0
-            unit.chill = 0
-            if unit.side == 0 and text:
+            # Raid-only control flags live outside the base battle status lists.
+            # Clear them on the effect's actual targets (not merely its caster),
+            # so an automatic party cleanse really can answer raid mechanics.
+            for target in cleansed:
+                target.vuln = 0
+                target.chill = 0
+                target.glitch = False
+                target.possessed = False
+                target.lured = False
+                target.marked = False
+                target.blind = False
+            if unit.side == 0 and text and cleanse_worked:
                 self.mech.supported(self, unit, "cleanse")
-        elif effect["type"] in ("heal", "mass_heal", "triage", "life_link", "delay_heal") and unit.side == 0 and text:
+        elif (
+            effect["type"] in ("heal", "mass_heal", "triage", "life_link", "delay_heal")
+            and unit.side == 0
+            and text
+            and any(hero.hp > hero_hp.get(id(hero), hero.hp) for hero in self.alive_heroes())
+        ):
             self.mech.supported(self, unit, "heal")
         elif effect["type"] in ("dispel", "purge") and enemy is self.boss:
             self.mech.dispelled(self)
@@ -587,6 +693,7 @@ class _RaidBattle(_Battle):
                         self.apply_passive(unit, effect)
                     self.say(f"{unit.label} 被动「{skill['name']}」生效")
         self.mech.setup(self)
+        self.mech.assess_build(self)
         self.flush()
         winner, timeout = None, False
         for self.round in range(1, MAX_RAID_ROUNDS + 1):
@@ -632,6 +739,12 @@ class _RaidBattle(_Battle):
                     if index == 0:
                         self.turn(unit, enemy)
                     elif not unit.stun:
+                        # Boss overclock, zombie's extra lunge and the sneeze
+                        # event grant a separate action, not another link in the
+                        # same skill chain.  Let a zero-CD basic be used again;
+                        # real cooldowns still prevent repeating techniques.
+                        unit.used_skills.clear()
+                        self._turn_triggered.clear()
                         self.act(unit, enemy)
                     self.flush()
                 winner = self.decided()
@@ -672,6 +785,11 @@ class _RaidBattle(_Battle):
                 for h in self.heroes
             ],
             "boss": {"hp": round(max(0, self.boss.hp)), "max_hp": self.boss.max_hp},
+            "counter": {
+                "ready": self.mech.counter_ready,
+                "name": self.mech.CORE_NAME,
+                "tags": self.mech.CORE_TAGS,
+            },
             "field_events": self.field_events,
             "roster": [
                 {

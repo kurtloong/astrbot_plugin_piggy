@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import random
 import tempfile
@@ -10,11 +11,11 @@ from unittest.mock import patch
 from PIL import Image, ImageDraw
 
 from core import raid_events
-from core.battle import FALLBACK, fighter, validate_entry
+from core.battle import FALLBACK, TAGS, fighter, validate_entry
 from core.catalog import read_catalog
 from core.config import PiggyError, Settings
 from core.database import Database
-from core.raid import DUNGEONS, _RaidBattle, boss_fighter, simulate_raid
+from core.raid import DUNGEONS, _RaidBattle, boss_fighter, recommended_functions, simulate_raid
 from core.raid_events import (
     ENTRY_EVENTS,
     FIELD_EVENTS,
@@ -307,7 +308,10 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_three_wins_clear_the_dungeon(self):
         await self.fill(1)
-        with patch("core.database.simulate_raid", outcome()):
+        with (
+            patch("core.database.simulate_raid", outcome()),
+            patch("core.database.PERSONALITY_CHANCE", 1),
+        ):
             second = await self.db.continue_raid("app", "group", self.users[0]["id"], now=NOW)
             third = await self.db.continue_raid("app", "group", self.users[0]["id"], now=NOW)
         self.assertEqual(second["status"], "waiting")
@@ -315,6 +319,8 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(third["next_boss"], "")
         for slot in DUNGEONS[0]["bosses"]:
             self.assertEqual(await self.count(self.users[2], slot), 1)
+        self.assertEqual(len(third["personalities"]), 4)
+        self.assertIsNotNone(await self.db.pig_personality(self.users[0]["id"], "p0"))
         with self.assertRaises(PiggyError):
             await self.db.continue_raid("app", "group", self.users[0]["id"], now=NOW)
 
@@ -415,11 +421,95 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             await raid_detail_message(Settings(), self.root, self.users[0], status, 4)
         joined = "".join(labels)
         self.assertIn("亡灵猪墓", joined)
+        self.assertIn("核心功能：净化", joined)
+        self.assertIn("缺少后果：尸毒持续叠层", joined)
         self.assertIn("白骨重组", joined)
         self.assertIn("开启副本 4", joined)
 
 
 class RaidEngineTests(unittest.TestCase):
+    def test_ally_dodge_reaction_belongs_to_support_not_attacker(self):
+        support_entry = copy.deepcopy(FALLBACK)
+        support_entry.pop("engine", None)
+        support_entry["role"] = "辅助"
+        support_entry["skills"][1] = {
+            "name": "伪装转交",
+            "text": "让正在承伤的队友躲开下一击。",
+            "cd": 2,
+            "effects": [{"type": "evade", "count": 1, "target": "ally_tank"}],
+        }
+        support_entry["skills"][2] = {
+            "name": "卧底回报",
+            "text": "队友闪避后把情报转成全队攻势。",
+            "when": "on_ally_dodge",
+            "effects": [
+                {"type": "buff", "stat": "atk", "pct": 20, "turns": 2, "target": "ally_all"}
+            ],
+        }
+        support = fighter(
+            {"id": "support", "name": "辅助"}, validate_entry("support", support_entry), 5, "辅助"
+        )
+        tank = unit("坦克", seat=1)
+        tank["role"] = "坦克"
+        boss = boss_fighter(
+            {"id": BOSS_IDS[0], "name": "BOSS", "asset": ""}, ENTRY, 1, BOSS_IDS[0], "BOSS"
+        )
+        fight = _RaidBattle([support, tank], boss, BOSS_IDS[0], new_config(), 17)
+        helper, ward = fight.heroes
+        ward.hp = ward.max_hp * 0.5
+
+        fight.effect(
+            helper, fight.boss, support_entry["skills"][1]["effects"][0], helper.actives[1]
+        )
+        self.assertEqual(ward.evade, 1)
+        fight.damage(fight.boss, ward, {"type": "damage", "power": 1.0})
+
+        self.assertEqual(ward.evade, 0)
+        self.assertTrue(any(buff["stat"] == "atk" for buff in helper.buffs))
+        self.assertTrue(any(buff["stat"] == "atk" for buff in ward.buffs))
+
+    def test_break_and_ally_hurt_reactions_follow_the_actual_defender(self):
+        watcher_entry = copy.deepcopy(FALLBACK)
+        watcher_entry.pop("engine", None)
+        watcher_entry["role"] = "辅助"
+        watcher_entry["skills"][1] = {
+            "name": "急救回线",
+            "text": "坦克受击后立刻补上一层保护。",
+            "when": "on_ally_hurt",
+            "effects": [{"type": "shield", "pct": 10, "target": "ally_tank"}],
+        }
+        tank_entry = copy.deepcopy(FALLBACK)
+        tank_entry.pop("engine", None)
+        tank_entry["role"] = "坦克"
+        tank_entry["skills"][1] = {
+            "name": "碎盾反应",
+            "text": "自身护盾破裂时立刻加固。",
+            "when": "on_shield_break",
+            "effects": [{"type": "mitigate", "pct": 25, "turns": 2}],
+        }
+        watcher = fighter(
+            {"id": "watcher", "name": "观察员"},
+            validate_entry("watcher", watcher_entry),
+            5,
+            "观察员",
+        )
+        tank = fighter(
+            {"id": "tank", "name": "坦克"}, validate_entry("tank", tank_entry), 5, "坦克"
+        )
+        tank["seat"] = 1
+        boss = boss_fighter(
+            {"id": BOSS_IDS[0], "name": "BOSS", "asset": ""}, ENTRY, 1, BOSS_IDS[0], "BOSS"
+        )
+        fight = _RaidBattle([watcher, tank], boss, BOSS_IDS[0], new_config(), 18)
+        helper, ward = fight.heroes
+        ward.shield = 1
+
+        fight.damage(fight.boss, ward, {"type": "damage", "power": 2.0, "sure": True})
+
+        self.assertTrue(ward.mitigates)
+        self.assertGreater(ward.shield, 0)
+        self.assertFalse(helper.mitigates)
+
     def setUp(self):
         self.boss_pig = {"id": "pig_god", "name": "猪神", "asset": ""}
 
@@ -558,9 +648,9 @@ class RaidEngineTests(unittest.TestCase):
         for _ in range(4):
             fight.mech.outgoing(fight, hero, 1)
         poison = [d for d in hero.dots if d.get("stacks")]
-        self.assertEqual([(d["pct"], d["label"]) for d in poison], [(9, "尸毒×3")])
+        self.assertEqual([(d["pct"], d["label"]) for d in poison], [(12, "尸毒×3")])
         self.assertEqual(hero.dots[0]["pct"], 5)
-        self.assertEqual(fight.mech.heal_factor(fight, hero), 0.5)
+        self.assertEqual(fight.mech.heal_factor(fight, hero), 0.25)
         self.assertIs(fight.order()[-1], fight.boss)
         fight.acting = fight.boss
         fight.hurt(fight.heroes[1], 10_000)
@@ -671,6 +761,140 @@ class RaidEngineTests(unittest.TestCase):
         fight.mech.round_start(fight)
         self.assertEqual(fight.mech.rings, 1)
 
+    def test_red_hot_counter_has_automatic_success_and_failure_paths(self):
+        fight = battle("pighub0710")
+        hero, boss = fight.heroes[0], fight.boss
+        fight.mech.round_start(fight)
+        before = boss.hp
+
+        # One hit is the warned failure path: it is read and deals nothing.
+        first = fight.adjust_hit(hero, boss, 100, {})
+        self.assertEqual(first, 0)
+        self.assertEqual(boss.hp, before)
+        self.assertFalse(fight.mech.replied)
+
+        # A later hit in the same automatic round opens the success path.
+        fight.after_hit(hero, boss, 25)
+        self.assertTrue(fight.mech.replied)
+        self.assertAlmostEqual(boss.hp, before - boss.max_hp * 0.06)
+        fight.flush()
+        self.assertTrue(any("追问成功" in line for line in fight.log))
+
+        # The window resets: next round's first hit is warned and blocked again.
+        fight.mech.round_start(fight)
+        self.assertFalse(fight.mech.read)
+        self.assertEqual(fight.adjust_hit(hero, boss, 100, {}), 0)
+
+    def test_raid_cleanse_clears_mechanic_flags_on_actual_targets(self):
+        fight = battle("error-404-pig")
+        caster, ally = fight.heroes[:2]
+        ally.glitch = ally.possessed = ally.lured = ally.marked = True
+        ally.chill = 2
+        fight.effect(caster, fight.boss, {"type": "cleanse", "target": "ally_all"}, {})
+        self.assertFalse(ally.glitch)
+        self.assertFalse(ally.possessed)
+        self.assertFalse(ally.lured)
+        self.assertFalse(ally.marked)
+        self.assertEqual(ally.chill, 0)
+
+    def test_raid_ai_values_cleanse_and_dispel_against_real_mechanic_state(self):
+        fight = battle("error-404-pig")
+        support, ally = fight.heroes[:2]
+        support.data["role"] = "辅助"
+        support.actives = [
+            support.actives[0],
+            {
+                "name": "团队净化",
+                "text": "清掉机制状态。",
+                "cd": 0,
+                "when": None,
+                "passive": False,
+                "effects": [{"type": "cleanse", "target": "ally_all"}],
+            },
+            {
+                "name": "普通输出",
+                "text": "只造成伤害。",
+                "cd": 0,
+                "when": None,
+                "passive": False,
+                "effects": [{"type": "damage", "power": 1.5}],
+            },
+        ]
+        ally.glitch = True
+        self.assertEqual(fight.choose(support, fight.boss)["name"], "团队净化")
+
+        ally.glitch = False
+        fight.boss.shield = 100
+        support.actives[1] = {
+            "name": "拆解增益",
+            "text": "驱散 boss。",
+            "cd": 0,
+            "when": None,
+            "passive": False,
+            "effects": [{"type": "dispel"}],
+        }
+        self.assertEqual(fight.choose(support, fight.boss)["name"], "拆解增益")
+
+    def test_red_hot_only_gains_fire_from_support_that_really_resolves(self):
+        fight = battle("pighub0710")
+        support, ally = fight.heroes[:2]
+        cleanse = {"type": "cleanse", "target": "ally_all"}
+        delayed = {"type": "delay_heal", "pct": 20, "turns": 1, "target": "ally_lowest"}
+
+        fight.effect(support, fight.boss, cleanse, {})
+        fight.effect(support, fight.boss, delayed, {})
+        self.assertEqual(fight.mech.stacks, 0)
+
+        ally.glitch = True
+        fight.effect(support, fight.boss, cleanse, {})
+        self.assertEqual(fight.mech.stacks, 1)
+        ally.hp = ally.max_hp / 2
+        fight.effect(support, fight.boss, {"type": "heal", "pct": 20, "target": "ally_lowest"}, {})
+        self.assertEqual(fight.mech.stacks, 2)
+
+    def test_raid_extra_action_can_repeat_a_zero_cooldown_basic(self):
+        fight = battle("goblin-pig", heroes=4, seed=9)
+        hero = fight.heroes[0]
+        hero.actives = [hero.actives[0]]
+
+        def sneeze_every_round(running):
+            running.sneezer = hero
+
+        with patch("core.raid.field_event", sneeze_every_round):
+            result = fight.run()
+        round_one = [line for line in result["log"] if line.startswith("R1 ")]
+        casts = [line for line in round_one if f"{hero.label}「{hero.actives[0]['name']}」" in line]
+        self.assertEqual(len(casts), 2)
+
+    def test_every_mechanic_has_searchable_automatic_counterplay(self):
+        forbidden = ("停手", "手动", "玩家输入", "发送指令", "转火", "移动到")
+        for slot in BOSS_IDS:
+            fight = battle(slot)
+            self.assertEqual(len(fight.mech.COUNTERS), 3, slot)
+            for hint in fight.mech.COUNTERS:
+                self.assertIn("【", hint, slot)
+                self.assertTrue(all(word not in hint for word in forbidden), (slot, hint))
+            self.assertTrue(recommended_functions(slot), slot)
+            self.assertTrue(set(recommended_functions(slot)).issubset(TAGS), slot)
+        self.assertEqual(recommended_functions("zombie-pig"), ("净化",))
+
+    def test_every_boss_resolves_its_core_build_check(self):
+        for slot in BOSS_IDS:
+            ready = battle(slot)
+            core_tag = ready.mech.CORE_TAGS[0]
+            ready.heroes[0].data["tags"] = [core_tag]
+            for hero in ready.heroes[1:]:
+                hero.data["tags"] = []
+            result = ready.run()
+            self.assertTrue(result["counter"]["ready"], slot)
+
+            missing = battle(slot)
+            for hero in missing.heroes:
+                hero.data["tags"] = []
+            result = missing.run()
+            self.assertFalse(result["counter"]["ready"], slot)
+            self.assertIn("核心检定缺失", "".join(result["log"]), slot)
+
     def test_boss_mechanics_are_listed_for_every_boss(self):
         for slot in BOSS_IDS:
             fight = battle(slot)
@@ -774,6 +998,38 @@ class RaidEventTests(unittest.TestCase):
         fight.heroes[0].data["role"] = "输出"
         taunt_picks = [BossMechanics().pick_target(fight, fight.heroes) for _ in range(20)]
         self.assertTrue(all(p is fight.heroes[0] for p in taunt_picks))
+
+    def test_healing_basic_targets_party_damage_and_replays_both_chain_links(self):
+        fight = battle("goblin-pig", heroes=4, seed=13)
+        healer = fight.heroes[0]
+        healer.data["role"] = "治疗"
+        healer.actives = [
+            healer.actives[0],
+            {
+                "name": "群体护理",
+                "text": "为受伤队友包扎。",
+                "cd": 0,
+                "when": None,
+                "passive": False,
+                "effects": [{"type": "mass_heal", "pct": 20}],
+            },
+        ]
+        wounded = fight.heroes[1]
+        wounded.hp = wounded.max_hp / 2
+
+        actions = fight.plan_actions(healer, fight.boss)
+        self.assertEqual([skill["name"] for skill in actions], ["猪突猛进", "群体护理"])
+        fight.act(healer, fight.boss)
+        self.assertGreater(wounded.hp, wounded.max_hp / 2)
+        replayed = [
+            cue["name"] for step in fight.timeline for cue in step["cues"] if cue["t"] == "skill"
+        ]
+        self.assertEqual(replayed[-2:], ["猪突猛进", "群体护理"])
+
+        for hero in fight.heroes:
+            hero.hp = hero.max_hp
+        healer.used_skills.clear()
+        self.assertEqual(fight.plan_actions(healer, fight.boss), [healer.actives[0]])
 
 
 if __name__ == "__main__":

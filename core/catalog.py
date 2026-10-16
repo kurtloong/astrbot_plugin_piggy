@@ -11,6 +11,22 @@ from .config import PiggyError
 
 # The catalog shipped before bundled pigs were synced into existing installs.
 FIRST_RELEASE_SIZE = 96
+PIG_REPLACEMENTS = {
+    "pighub0174": "pighub0099",
+    "pighub0335": "pighub0061",
+    "pighub0522": "salmon-sushi-pig",
+    "pighub0637": "suckling-pig",
+    "pighub0665": "pighub0168",
+    "pighub0685": "pighub0115",
+    "pighub0736": "pighub0215",
+    "pighub0759": "pighub0634",
+    "pighub0772": "pighub0083",
+    "pighub0857": "early-class-pig",
+    "pighub0871": "pighub0642",
+    "pighub0881": "pighub0845",
+    "pighub0893": "pighub0050",
+    "pighub0944": "pighub0539",
+}
 
 
 def initialize_battle(data_dir: Path, resources: Path) -> None:
@@ -118,10 +134,14 @@ def sync_bundled_catalog(data_dir: Path, resources: Path) -> dict:
             continue
         local = _text_fields(pig)
         remote = _text_fields(bundled_pig)
-        if local == remote:
-            continue
-        if _digest(local) in {*text_history.get(pig["id"], ()), shipped_text.get(pig["id"])}:
+        if local != remote and _digest(local) in {
+            *text_history.get(pig["id"], ()),
+            shipped_text.get(pig["id"]),
+        }:
             pig.update(remote)
+            text_updated += 1
+        if pig["id"] in PIG_REPLACEMENTS and pig.get("enabled", True):
+            pig["enabled"] = False
             text_updated += 1
     if text_updated:
         _write_json(manifest, data)

@@ -11,7 +11,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .battle import ROLES, SKILL_SLOTS, entry_for, fighter, level_for, simulate
+from .catalog import PIG_REPLACEMENTS
 from .config import PiggyError
+from .personalities import PERSONALITIES, PERSONALITY_CHANCE, choices_for
 from .raid import (
     DUNGEONS,
     PARTY_SIZE,
@@ -20,10 +22,12 @@ from .raid import (
     TIMEOUT_MINUTES,
     boss_fighter,
     dungeon,
+    mechanic_details,
     mechanics_for,
     simulate_raid,
 )
 from .raid_events import new_config, new_rewards, resolve, roll_entry, roll_interlude
+from .rarity import rarity_for
 
 EAST_ASIA = timezone(timedelta(hours=8))
 # Safety valve only: with the default 50% chain chance this is never reached.
@@ -32,7 +36,6 @@ _SYSTEM_RANDOM = secrets.SystemRandom()
 SHOP_SIZE = 5
 REQUEST_LABELS = {"duel": "斗猪", "trade": "交换"}
 RAID_ACTIVE = ("forming", "waiting")
-
 
 def player_name(user) -> str:
     return user["alias"] or user["nickname"] or f"玩家 {user['id']:04d}"
@@ -111,7 +114,7 @@ class Database:
             if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise PiggyError("数据库检查失败，已停止写入；请检查备份，数据库不会被自动清空。")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3):
+            if version not in (0, 1, 2, 3, 4):
                 raise PiggyError("数据库版本高于当前插件支持版本，请勿降级运行。")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
@@ -242,6 +245,13 @@ class Database:
                     won INTEGER NOT NULL, seed INTEGER NOT NULL, events TEXT NOT NULL,
                     log TEXT NOT NULL, summary TEXT NOT NULL, fought_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS pig_personalities (
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    pig_id TEXT NOT NULL REFERENCES pigs(id),
+                    personality TEXT NOT NULL,
+                    raid_id INTEGER REFERENCES raids(id), acquired_at REAL NOT NULL,
+                    PRIMARY KEY(user_id,pig_id)
+                );
             """)
             columns = {row[1] for row in conn.execute("PRAGMA table_info(pigs)")}
             if "battle" not in columns:
@@ -252,7 +262,7 @@ class Database:
                 conn.execute(
                     "ALTER TABLE battle_records ADD COLUMN summary TEXT NOT NULL DEFAULT ''"
                 )
-            conn.execute("PRAGMA user_version=3")
+            conn.execute("PRAGMA user_version=4")
             conn.execute("COMMIT")
 
         try:
@@ -274,6 +284,24 @@ class Database:
             """,
                 [{"battle": "", **pig} for pig in pigs],
             )
+            # Merge duplicate collections without rewriting immutable history.
+            # Historical draw/battle/shop rows may still reference the disabled
+            # alias, so both catalog records deliberately remain present.
+            for old_id, kept_id in PIG_REPLACEMENTS.items():
+                if not conn.execute("SELECT 1 FROM pigs WHERE id=?", (kept_id,)).fetchone():
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO collections(user_id,pig_id,count,first_at,last_at)
+                    SELECT user_id,?,count,first_at,last_at FROM collections WHERE pig_id=?
+                    ON CONFLICT(user_id,pig_id) DO UPDATE SET
+                        count=collections.count+excluded.count,
+                        first_at=min(collections.first_at,excluded.first_at),
+                        last_at=max(collections.last_at,excluded.last_at)
+                    """,
+                    (kept_id, old_id),
+                )
+                conn.execute("DELETE FROM collections WHERE pig_id=?", (old_id,))
 
         await self.run(update)
 
@@ -476,8 +504,12 @@ class Database:
             while True:
                 index = len(items)
                 items.append(collect(current, kind, parent))
-                if roll() * 100 < gather_chance:
-                    items.append(collect(current, "gather", index))
+                # Every gathered copy can gather again.  `parent` records the
+                # exact copy that independently triggered the next one.
+                gather_parent = index
+                while len(items) < MAX_DRAW_ITEMS and roll() * 100 < gather_chance:
+                    gather_parent = len(items)
+                    items.append(collect(current, "gather", gather_parent - 1))
                 if len(items) >= MAX_DRAW_ITEMS or roll() * 100 >= chain_chance:
                     break
                 current, kind, parent = pick(False), "chain", index
@@ -1147,8 +1179,16 @@ class Database:
         )
         heroes = []
         for member, hero_level in zip(party, levels):
+            personality_row = conn.execute(
+                "SELECT personality FROM pig_personalities WHERE user_id=? AND pig_id=?",
+                (member["member"]["user_id"], member["pig"]["id"]),
+            ).fetchone()
             hero = fighter(
-                member["pig"], entry_for(member["pig"]["battle"]), hero_level, member["label"]
+                member["pig"],
+                entry_for(member["pig"]["battle"]),
+                hero_level,
+                member["label"],
+                personality=personality_row[0] if personality_row else None,
             )
             hero.update(
                 seat=member["seat"],
@@ -1202,6 +1242,8 @@ class Database:
                     "level": hero_level,
                     "role": hero.get("role"),
                     "style": hero["style"],
+                    "rarity": hero["rarity"],
+                    "personality": hero.get("personality_name", ""),
                     "hp": state["hp"],
                     "max_hp": state["max_hp"],
                     "alive": state["alive"],
@@ -1251,6 +1293,31 @@ class Database:
             status = "cleared"
         else:
             status = "failed"
+        personalities = []
+        if status == "cleared":
+            alive_seats = {fighter["seat"] for fighter in fighters if fighter["alive"]}
+            for member, hero in zip(party, heroes):
+                user_id, pig_id = member["member"]["user_id"], member["pig"]["id"]
+                exists = conn.execute(
+                    "SELECT 1 FROM pig_personalities WHERE user_id=? AND pig_id=?",
+                    (user_id, pig_id),
+                ).fetchone()
+                if member["seat"] not in alive_seats or exists or rng.random() >= PERSONALITY_CHANCE:
+                    continue
+                personality = rng.choice(choices_for(hero["role"]))
+                conn.execute(
+                    "INSERT INTO pig_personalities VALUES(?,?,?,?,?)",
+                    (user_id, pig_id, personality, raid_id, stamp),
+                )
+                personalities.append(
+                    {
+                        "user": member["member"]["user"],
+                        "pig": member["pig"]["name"],
+                        "id": personality,
+                        "name": PERSONALITIES[personality]["name"],
+                        "skill": PERSONALITIES[personality]["skill"]["text"],
+                    }
+                )
         conn.execute(
             "UPDATE raids SET status=?,stage=?,expires_at=?,updated_at=? WHERE id=?",
             (status, stage, stamp + TIMEOUT_MINUTES * 60, stamp, raid_id),
@@ -1296,7 +1363,7 @@ class Database:
                 "style": boss["style"],
                 "hp": result["boss"]["hp"] if result else boss["stats"]["hp"],
                 "max_hp": result["boss"]["max_hp"] if result else boss["stats"]["hp"],
-                "mechanics": mechanics,
+                "mechanics": mechanic_details(slot_id),
                 "disabled": cfg.get("disabled"),
                 "possessed": possessed,
             },
@@ -1335,6 +1402,7 @@ class Database:
             "chest": rewards["chest"],
             "bonus": bonus,
             "rewarded": rewarded,
+            "personalities": personalities,
             "next_boss": (
                 self._boss_names(conn)[info["bosses"][stage]] if status == "waiting" else ""
             ),
@@ -1345,13 +1413,19 @@ class Database:
             conn.execute("BEGIN")
             rows = conn.execute(
                 """
-                SELECT p.*,coalesce(c.count,0) AS count,c.first_at,c.last_at FROM pigs p
+                SELECT p.*,coalesce(c.count,0) AS count,c.first_at,c.last_at,
+                    pp.personality FROM pigs p
                 LEFT JOIN collections c ON c.pig_id=p.id AND c.user_id=?
+                LEFT JOIN pig_personalities pp ON pp.pig_id=p.id AND pp.user_id=?
                 WHERE p.enabled=1 OR c.count>0 ORDER BY p.enabled DESC,p.sort_order,p.id
             """,
-                (user_id,),
+                (user_id, user_id),
             ).fetchall()
             entries = [dict(r) for r in rows]
+            for entry in entries:
+                entry["rarity"] = rarity_for(entry["id"])
+                nature = PERSONALITIES.get(entry.get("personality") or "")
+                entry["personality_name"] = nature["name"] if nature else ""
             return {
                 "entries": entries,
                 "active_total": sum(p["enabled"] for p in entries),
@@ -1361,6 +1435,18 @@ class Database:
             }
 
         return await self.run(read)
+
+    async def pig_personality(self, user_id: int, pig_id: str) -> str | None:
+        return await self.run(
+            lambda conn: (
+                row[0]
+                if (row := conn.execute(
+                    "SELECT personality FROM pig_personalities WHERE user_id=? AND pig_id=?",
+                    (user_id, pig_id),
+                ).fetchone())
+                else None
+            )
+        )
 
     async def rankings(self, app_id: str, group_id: str) -> dict:
         if not group_id:

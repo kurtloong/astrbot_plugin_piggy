@@ -2350,11 +2350,11 @@
   },
   {
     "id": "pighub0174",
-    "name": "明日方猪2",
+    "name": "明日方猪2（已合并）",
     "description": "正方猪头晒太阳",
     "analysis": "你整张脸裁成正方块，头顶还挂一颗笑脸小太阳——方舟换方猪，像素级可爱也能明日开战。",
     "image": "images/pighub0174.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 261
   },
   {
@@ -3583,7 +3583,7 @@
   },
   {
     "id": "pighub0314",
-    "name": "空白画猪2",
+    "name": "待灵感猪",
     "description": "画布干净等灵感",
     "analysis": "你笑着举刷子和调色盘，画架上却是一张空白画布。创作欲在线，选题还在加载中，空白也是一种态度。",
     "image": "images/pighub0314.webp",
@@ -3772,11 +3772,11 @@
   },
   {
     "id": "pighub0335",
-    "name": "猪肚鸡2",
+    "name": "猪肚鸡2（已合并）",
     "description": "鸡站猪肚上营业",
     "analysis": "你四脚朝天当砧板，白鸡稳稳站在肚皮上，菜名直接具象。暗黑料理命名法，可爱程度却意外在线。",
     "image": "images/pighub0335.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 419
   },
   {
@@ -5311,11 +5311,11 @@
   },
   {
     "id": "pighub0522",
-    "name": "三文猪寿司2",
+    "name": "三文猪寿司2（已合并）",
     "description": "橙纹躺上米饭",
     "analysis": "你整只化成带大理石纹的三文鱼片，安稳趴在白米饭上——刺身级颜值，咬下去怕先心软。",
     "image": "images/pighub0522.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 590
   },
   {
@@ -5896,7 +5896,7 @@
   },
   {
     "id": "pighub0590",
-    "name": "苹果猪2",
+    "name": "圣果猪",
     "description": "光环配红苹果",
     "analysis": "你头顶黄光环，身前摆着整颗红苹果和一切片，星光打在白光柱里——圣光下最健康的那盘水果猪。",
     "image": "images/pighub0590.webp",
@@ -6256,11 +6256,11 @@
   },
   {
     "id": "pighub0637",
-    "name": "烤乳猪2",
+    "name": "烤乳猪2（已合并）",
     "description": "叉烧架上叉叉眼",
     "analysis": "你倒挂在篝火木叉上眼睛打叉，黄焰舔着肚皮，可爱画风配黑暗料理，标题烤乳猪写得毫不客气。",
     "image": "images/pighub0637.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 695
   },
   {
@@ -6481,11 +6481,11 @@
   },
   {
     "id": "pighub0665",
-    "name": "摸摸猪2",
+    "name": "摸摸猪2（已合并）",
     "description": "头顶一拍就乖",
     "analysis": "你闭眼享受人类手掌拍在头顶的温柔，粉红脸颊写着乖巧认证，被摸摸是你最正经的工作内容。",
     "image": "images/pighub0665.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 720
   },
   {
@@ -6625,11 +6625,11 @@
   },
   {
     "id": "pighub0685",
-    "name": "点赞猪2",
+    "name": "点赞猪2（已合并）",
     "description": "举蹄就是双击",
     "analysis": "你闭眼微笑竖起蹄子拇指，点赞发自真心不掺水分，社交货币时代你是全猪圈最慷慨的那一票。",
     "image": "images/pighub0685.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 736
   },
   {
@@ -6913,7 +6913,7 @@
   },
   {
     "id": "pighub0718",
-    "name": "瞌睡猪2",
+    "name": "伏案瞌睡猪",
     "description": "书本铅笔鼻涕泡",
     "analysis": "你趴在摊开的书上还握着蓝铅笔，鼻孔冒着瞌睡泡，学习意志倒在台灯光柱里，知识点全变成了梦里的饲料。",
     "image": "images/pighub0718.webp",
@@ -7066,11 +7066,11 @@
   },
   {
     "id": "pighub0736",
-    "name": "上吊猪2",
+    "name": "上吊猪2（已合并）",
     "description": "叉眼光环已下班",
     "analysis": "你叉着眼挂在细线上，旁边光环候场，上吊省略号把黑色幽默做成贴纸，离职手续在卡通宇宙里一笔勾销。",
     "image": "images/pighub0736.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 785
   },
   {
@@ -7129,7 +7129,7 @@
   },
   {
     "id": "pighub0743",
-    "name": "起床猪2",
+    "name": "赖床猪",
     "description": "标题起床人在睡",
     "analysis": "你戴星夜帽盖蓝被还在zzz，标题写起床身体写续睡，起床猪最擅长用反差制造全猪圈的延期上班。",
     "image": "images/pighub0743.webp",
@@ -7264,11 +7264,11 @@
   },
   {
     "id": "pighub0759",
-    "name": "三角猪2",
+    "name": "三角猪2（已合并）",
     "description": "三猪排成几何形",
     "analysis": "你们三只同款粉猪排成倒三角站位，猪三角既是队形也是队名，聚光灯下同步率高到像复制粘贴出来的。",
     "image": "images/pighub0759.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 807
   },
   {
@@ -7363,11 +7363,11 @@
   },
   {
     "id": "pighub0772",
-    "name": "生日猪2",
+    "name": "生日猪2（已合并）",
     "description": "双猪对吹蜡烛",
     "analysis": "你戴着条纹派对帽，和同伴围着草莓蛋糕对望，四根蜡烛晃啊晃，许愿内容清一色加餐加餐。",
     "image": "images/pighub0772.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 818
   },
   {
@@ -8074,11 +8074,11 @@
   },
   {
     "id": "pighub0857",
-    "name": "早八猪2",
+    "name": "早八猪2（已合并）",
     "description": "闹钟骑背泪写字",
     "analysis": "你背着黄闹钟在笔记本上泪写笔记，指针逼近八点，早八刑具比闹钟更响呢呢呢呢呢呢呢。",
     "image": "images/pighub0857.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 897
   },
   {
@@ -8173,11 +8173,11 @@
   },
   {
     "id": "pighub0871",
-    "name": "疑惑猪2",
+    "name": "疑惑猪2（已合并）",
     "description": "三色问号头顶飞",
     "analysis": "你皱眉盯着红绿黄三色问号，疑惑写在脸上，世界观缓冲区正在疯狂加载呢呢呢呢呢呢呢。",
     "image": "images/pighub0871.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 908
   },
   {
@@ -8209,7 +8209,7 @@
   },
   {
     "id": "pighub0875",
-    "name": "挖矿猪2",
+    "name": "钻石雨猪",
     "description": "像素镐背钻石山",
     "analysis": "你背着像素钻石镐头顶光环，身前堆成闪闪宝石山，挖矿猪二号正式开工，欧气比镐还硬。",
     "image": "images/pighub0875.webp",
@@ -8263,11 +8263,11 @@
   },
   {
     "id": "pighub0881",
-    "name": "星云猪2",
+    "name": "星云猪2（已合并）",
     "description": "半透明融进星环",
     "analysis": "你半透明猪脸融进蓝紫星云与土星环，猪猪生的省略号拖得很长——宇宙户口本上你出生自虚空。",
     "image": "images/pighub0881.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 918
   },
   {
@@ -8326,7 +8326,7 @@
   },
   {
     "id": "pighub0888",
-    "name": "红温猪2",
+    "name": "砸键盘猪",
     "description": "怒火砸断键盘",
     "analysis": "你赤红斜眼燃着火焰表情，刚把黑键盘砸成两截，红温猪的降温方式是物理拆键，越拆越烫。",
     "image": "images/pighub0888.webp",
@@ -8371,11 +8371,11 @@
   },
   {
     "id": "pighub0893",
-    "name": "禁止猪叫2",
+    "name": "禁止猪叫2（已合并）",
     "description": "红圈斜杠消音中",
     "analysis": "你被红禁令圈斜杠穿过，鼻旁还冒着正在叫的粉线，禁止猪叫越禁越想哼，禁令牌成了你的舞台。",
     "image": "images/pighub0893.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 930
   },
   {
@@ -8794,11 +8794,11 @@
   },
   {
     "id": "pighub0944",
-    "name": "珍猪奶茶2",
+    "name": "珍猪奶茶2（已合并）",
     "description": "吸管喝到冒爱心",
     "analysis": "你抱着珍珠奶茶猛吸紫吸管，头顶飘两颗粉心，珍猪奶茶谐音到位——珠变猪，快乐一点都没变。",
     "image": "images/pighub0944.webp",
-    "enabled": true,
+    "enabled": false,
     "sort_order": 977
   }
 ]

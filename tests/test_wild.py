@@ -81,7 +81,9 @@ class DrawAndWildTests(unittest.IsolatedAsyncioTestCase):
         return (await self.db.collection(user["id"]))["total"]
 
     async def test_gather_then_chain_then_the_chained_pigs_roll_again(self):
-        result = await self.draw(self.alice, "e1", rolls=[0.1, 0.1, 0.9, 0.1, 0.1, 0.9])
+        result = await self.draw(
+            self.alice, "e1", rolls=[0.1, 0.9, 0.1, 0.9, 0.1, 0.1, 0.9, 0.9]
+        )
         kinds = [(item["kind"], item["parent"]) for item in result["items"]]
         self.assertEqual(
             kinds, [("base", None), ("gather", 0), ("chain", 0), ("chain", 2), ("gather", 3)]
@@ -132,7 +134,7 @@ class DrawAndWildTests(unittest.IsolatedAsyncioTestCase):
         repeat = await self.draw(self.alice, "e3", now=tomorrow)
         self.assertFalse(repeat["created"])
 
-    async def test_default_chances_average_three_pigs(self):
+    async def test_default_chances_average_four_pigs(self):
         rng = random.Random(2026)
         counts = []
         for day in range(800):
@@ -147,11 +149,11 @@ class DrawAndWildTests(unittest.IsolatedAsyncioTestCase):
                 rng=rng,
             )
             counts.append(len(result["items"]))
-        self.assertTrue(2.7 < sum(counts) / len(counts) < 3.3, sum(counts) / len(counts))
+        self.assertTrue(3.5 < sum(counts) / len(counts) < 4.6, sum(counts) / len(counts))
         self.assertGreater(max(counts), 6)
 
     async def test_draw_card_shows_every_pig_with_its_source(self):
-        result = await self.draw(self.alice, "e1", rolls=[0.1, 0.1, 0.9, 0.9])
+        result = await self.draw(self.alice, "e1", rolls=[0.1, 0.9, 0.1, 0.9, 0.9])
         progress = await self.db.collection(self.alice["id"])
         labels = []
         original = ImageDraw.ImageDraw.text

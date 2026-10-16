@@ -209,7 +209,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与斗猪", "1.10.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与副本", "1.13.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -434,6 +434,7 @@ class PiggyPlugin(Star):
                     await self.db.collection(user["id"]),
                     args[0],
                     command == "atlas",
+                    args[1] if command == "pen" and len(args) > 1 else (),
                 )
             elif command == "ranking":
                 kind = args[0]
@@ -547,7 +548,10 @@ class PiggyPlugin(Star):
                 raise PiggyError("用法：小猪属性 小猪名字")
             pig = await self.db.find_pig(" ".join(words))
             count = await self.db.pig_count(user["id"], pig["id"])
-            return stats_message(settings, user, pig, count, settings.battle_level_cap)
+            personality = await self.db.pig_personality(user["id"], pig["id"])
+            return stats_message(
+                settings, user, pig, count, settings.battle_level_cap, personality
+            )
         if command in ("grant_pig", "grant_draw"):
             return await self._grant(event, app_id, command, words)
         if command in ("duel", "trade"):
@@ -777,9 +781,27 @@ class PiggyPlugin(Star):
         await self._handle(event, "atlas", (page,))
 
     @filter.command("我的猪圈")
-    async def pen(self, event: AstrMessageEvent, page: int = 1):
-        """查看已收藏的小猪及数量。"""
-        await self._handle(event, "pen", (page,))
+    async def pen(
+        self,
+        event: AstrMessageEvent,
+        first: str = "",
+        second: str = "",
+        third: str = "",
+        fourth: str = "",
+        fifth: str = "",
+    ):
+        """查看已收藏的小猪；可按职业/机制标签交集筛选。"""
+        page = 1
+        tags = []
+        for value in (first, second, third, fourth, fifth):
+            value = str(value).strip()
+            if not value:
+                continue
+            if value.isdigit():
+                page = int(value)
+            else:
+                tags.append(value)
+        await self._handle(event, "pen", (page, tuple(tags)))
 
     @filter.command("小猪排行")
     async def ranking(self, event: AstrMessageEvent, kind: str = "种类"):
@@ -791,9 +813,9 @@ class PiggyPlugin(Star):
         """设置 1–24 字的展示称呼。用法：小猪称呼 名字；不会改变收藏归属。"""
         await self._handle(event, "alias", (name,))
 
-    @filter.command("小猪玩法", alias={"小猪帮助", "斗猪帮助"})
+    @filter.command("小猪玩法", alias={"小猪帮助"})
     async def guide(self, event: AstrMessageEvent):
-        """查看等级、斗猪和交换的玩法说明。"""
+        """查看稀有度、性格、副本和交换的玩法说明。"""
         await self._handle(event, "guide")
 
     @filter.command("小猪商店")
@@ -846,17 +868,14 @@ class PiggyPlugin(Star):
         """队长：打完一关后带着奖励撤退。"""
         await self._handle(event, "raid_retreat")
 
-    @filter.command("斗猪排行")
     async def duel_ranking(self, event: AstrMessageEvent):
         """查看本群玩家的斗猪胜率排行，至少 3 场上榜。"""
         await self._handle(event, "duel_ranking")
 
-    @filter.command("斗猪记录")
     async def duel_history(self, event: AstrMessageEvent):
         """查看自己的斗猪历史战绩。用法：斗猪记录 [页码]"""
         await self._handle(event, "duel_history", command_words(event, ("斗猪记录",)))
 
-    @filter.command("斗猪回放")
     async def duel_replay(self, event: AstrMessageEvent):
         """查看自己参与的某场斗猪的完整战报。用法：斗猪回放 编号"""
         await self._handle(event, "duel_replay", command_words(event, ("斗猪回放",)))
@@ -866,17 +885,14 @@ class PiggyPlugin(Star):
         """查看小猪的等级、属性和技能。用法：小猪属性 小猪名字"""
         await self._handle(event, "stats", command_words(event, ("小猪属性",)))
 
-    @filter.command("斗猪")
     async def duel(self, event: AstrMessageEvent):
         """向群友发起斗猪，败者失去出战的小猪。用法：斗猪 @对方 你的小猪"""
         await self._handle(event, "duel", command_words(event, ("斗猪",)))
 
-    @filter.command("接受斗猪")
     async def duel_accept(self, event: AstrMessageEvent):
         """接受斗猪并选择出战小猪。用法：接受斗猪 你的小猪"""
         await self._handle(event, "duel_accept", command_words(event, ("接受斗猪",)))
 
-    @filter.command("拒绝斗猪")
     async def duel_decline(self, event: AstrMessageEvent):
         """拒绝收到的斗猪请求。"""
         await self._handle(event, "duel_decline")

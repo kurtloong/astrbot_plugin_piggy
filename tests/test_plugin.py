@@ -285,7 +285,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             return sent.await_args.args[1]["content"]
 
         await self.plugin.guide(OfficialEvent("g1", text="小猪玩法"))
-        self.assertIn("斗猪 @群友 猪 —— 用你的猪发起挑战", last())
+        self.assertIn("稀有度分普通、稀有、史诗、传说、神话", last())
         self.assertIn("你的「猪」有 3 只", last())
         await self.plugin.duel(OfficialEvent("d1", text="斗猪 <@rival> 猪", mentions=("rival",)))
         self.assertIn("@阿波 玩家名字 向你发起斗猪", last())
@@ -318,7 +318,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.trade_accept(OfficialEvent("t2", user="rival", text="接受交换"))
         self.assertIn("交换成功", last())
         await self.plugin.stats(OfficialEvent("s1", text="小猪属性 坦克猪"))
-        self.assertIn("履带碾压", last())
+        self.assertIn("核心引擎：柴油炮闩", last())
+        self.assertIn("履带碾击", last())
         await self.plugin.duel(OfficialEvent("d3", text="斗猪 <@member> 猪", mentions=("member",)))
         self.assertIn("没有识别到你 @ 的群友", last())
         await self.plugin.cancel(OfficialEvent("c1", text="取消请求"))
@@ -746,10 +747,11 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         manifest = self.root / "catalog" / "pigs.json"
         pigs = json.loads(manifest.read_text("utf-8"))
         pigs[0]["enabled"] = False
+        active = sum(pig.get("enabled", True) for pig in pigs)
         manifest.write_text(json.dumps(pigs, ensure_ascii=False), "utf-8")
         await self.plugin.reload(OfficialEvent("reload"))
         progress = await self.plugin.db.collection(999)
-        self.assertEqual(progress["active_total"], len(pigs) - 1)
+        self.assertEqual(progress["active_total"], active)
         await self.plugin.backup(OfficialEvent("backup"))
         self.assertTrue(list((self.root / "backups").glob("*.zip")))
         manifest.unlink()
@@ -757,7 +759,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.ready = False
         await self.plugin.initialize()
         self.assertFalse(manifest.exists())
-        self.assertEqual((await self.plugin.db.collection(999))["active_total"], len(pigs) - 1)
+        self.assertEqual((await self.plugin.db.collection(999))["active_total"], active)
 
 
 if __name__ == "__main__":

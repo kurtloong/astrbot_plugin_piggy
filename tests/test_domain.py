@@ -204,6 +204,28 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(again["created"])
         self.assertEqual(again["count"], 1)
 
+    async def test_duplicate_pig_replacement_merges_owned_copies(self):
+        old_id, kept_id = "pighub0174", "pighub0099"
+        self.write_catalog([old_id, kept_id])
+        await self.db.catalog(read_catalog(self.root))
+        await self.db.run(
+            lambda c: c.executemany(
+                "INSERT INTO collections VALUES(?,?,?,?,?)",
+                (
+                    (self.user["id"], old_id, 2, 20, 40),
+                    (self.user["id"], kept_id, 3, 10, 30),
+                ),
+            )
+        )
+        await self.db.catalog(read_catalog(self.root))
+        rows = await self.db.run(
+            lambda c: c.execute(
+                "SELECT pig_id,count,first_at,last_at FROM collections WHERE user_id=?",
+                (self.user["id"],),
+            ).fetchall()
+        )
+        self.assertEqual([tuple(row) for row in rows], [(kept_id, 5, 10, 40)])
+
     async def test_east_asia_midnight_and_inactive_history_snapshot(self):
         before = datetime(2026, 9, 12, 15, 59, 59, tzinfo=timezone.utc)
         first = await self.db.draw(self.user["id"], "a", "one", before)
@@ -401,7 +423,12 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
         battle = {
             "version": 1,
             "pigs": {
-                pig_id: {**FALLBACK, "role": role, "style": role}
+                pig_id: {
+                    **FALLBACK,
+                    "role": role,
+                    "style": role,
+                    "tags": [role, "自回" if pig_id == "cat" else "直伤"],
+                }
                 for pig_id, role in roles.items()
             },
         }
@@ -432,6 +459,18 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(positions["fox"], positions["dog"])
         self.assertLess(positions["dog"], positions["pig"])
         self.assertIn("坦克 1 · 输出 1 · 治疗 1 · 辅助 1", labels)
+
+        labels.clear()
+        with patch.object(ImageDraw.ImageDraw, "text", record):
+            await collection_message(
+                Settings(), self.root, self.user, progress, 1, False, ("坦克", "自回")
+            )
+        self.assertIn("cat", labels)
+        self.assertNotIn("fox", labels)
+        with self.assertRaises(PiggyError):
+            await collection_message(
+                Settings(), self.root, self.user, progress, 1, False, ("不存在标签",)
+            )
 
     async def test_current_96_catalog_is_one_card_and_future_expansion_has_navigation(self):
         progress = await self.db.collection(self.user["id"])
@@ -617,8 +656,8 @@ class ConfigAndButtonsTests(unittest.TestCase):
                         "小猪商店",
                         "猪副本",
                         "小猪玩法",
-                        "斗猪排行",
-                        "斗猪记录",
+                        "小猪属性 ",
+                        "小猪交换 ",
                         "小猪挑战",
                         "小猪图鉴 1",
                         "小猪图鉴 3",
