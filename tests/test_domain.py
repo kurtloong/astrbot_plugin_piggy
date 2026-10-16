@@ -459,6 +459,8 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(positions["fox"], positions["dog"])
         self.assertLess(positions["dog"], positions["pig"])
         self.assertIn("坦克 1 · 输出 1 · 治疗 1 · 辅助 1", labels)
+        self.assertIn("自回", labels)
+        self.assertIn("直伤", labels)
 
         labels.clear()
         with patch.object(ImageDraw.ImageDraw, "text", record):
