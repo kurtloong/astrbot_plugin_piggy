@@ -432,11 +432,26 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
             }
         )
     damage = [
-        (display_name(f["user"]), f["pig"]["name"], f.get("dealt", 0)) for f in battle["fighters"]
+        (
+            display_name(f["user"]),
+            f["pig"]["name"],
+            f.get("dealt", 0),
+            f.get("healed", 0),
+            f.get("taken", 0),
+        )
+        for f in battle["fighters"]
     ]
     if ally:
-        damage.append(("援军", ally["pig"]["name"], ally.get("dealt", 0)))
-    total = sum(dealt for _, _, dealt in damage)
+        damage.append(
+            (
+                "援军",
+                ally["pig"]["name"],
+                ally.get("dealt", 0),
+                ally.get("healed", 0),
+                ally.get("taken", 0),
+            )
+        )
+    total = sum(dealt for _, _, dealt, _, _ in damage)
     rounds_fought = result["rounds"] if result else 0
     dps = (
         [
@@ -444,12 +459,16 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
                 "owner": owner,
                 "pig": pig,
                 "dealt": dealt,
+                "healed": healed,
+                "taken": taken,
                 "per_round": dealt / rounds_fought,
-                "share": dealt / total,
+                "share": dealt / total if total else 0,
             }
-            for owner, pig, dealt in sorted(damage, key=lambda row: -row[2])
+            for owner, pig, dealt, healed, taken in sorted(
+                damage, key=lambda row: (-row[2], -row[3], -row[4])
+            )
         ]
-        if total and rounds_fought
+        if rounds_fought and any(dealt or healed or taken for _, _, dealt, healed, taken in damage)
         else []
     )
     events = [f"【{e['kind']}·{e['name']}】{e['text']}" for e in battle["events"]]
