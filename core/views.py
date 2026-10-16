@@ -18,6 +18,7 @@ from .raid import (
     REST_HEAL,
     REST_REVIVE_HP,
     TIMEOUT_MINUTES,
+    counter_failure,
     dungeon,
     mechanic_details,
     mechanics_for,
@@ -322,6 +323,7 @@ async def raid_detail_message(
                 **status["bosses"][slot],
                 "stage": stage,
                 "recommended": recommended_functions(slot),
+                "counter_failure": counter_failure(slot),
                 "mechanics": mechanic_details(slot),
             }
             for stage, slot in enumerate(item["bosses"], 1)
@@ -596,9 +598,7 @@ async def collection_message(
     else:
         invalid = [tag for tag in filters if tag not in TAGS]
         if invalid:
-            raise PiggyError(
-                f"未知猪圈标签：{'/'.join(invalid)}。可用职业或机制标签筛选。"
-            )
+            raise PiggyError(f"未知猪圈标签：{'/'.join(invalid)}。可用职业或机制标签筛选。")
         items = _pen_entries(progress, filters)
         view = {
             **progress,

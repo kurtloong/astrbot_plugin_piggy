@@ -1,7 +1,6 @@
 """Pig raids: four players' pigs against three bosses in a row."""
 
 import random
-import re
 
 from .battle import CRIT_MULTIPLIER, FURY_ROUND, FURY_STEP, SKILL_SLOTS, _Battle, _Unit, fighter
 from .raid_bosses import BOSSES, BossMechanics
@@ -77,9 +76,7 @@ DUNGEON_BOSS_SCALE = {
     7: (1.20, 1.10),  # 熔岩猪窑
 }
 _BOSS_DUNGEON_SCALE = {
-    slot: DUNGEON_BOSS_SCALE[item["key"]]
-    for item in DUNGEONS
-    for slot in item["bosses"]
+    slot: DUNGEON_BOSS_SCALE[item["key"]] for item in DUNGEONS for slot in item["bosses"]
 }
 
 # Small encounter-specific corrections keep a dungeon's fresh-party curve
@@ -148,16 +145,13 @@ def mechanic_details(pig_id: str) -> tuple:
 
 
 def recommended_functions(pig_id: str) -> tuple[str, ...]:
-    """Build-facing feature labels extracted from the audited counter hints."""
-    result = []
-    for hint in mechanics_for(pig_id).COUNTERS:
-        match = re.match(r"【([^】]+)】", hint)
-        if not match:
-            continue
-        for feature in match.group(1).split("/"):
-            if feature not in result:
-                result.append(feature)
-    return tuple(result)
+    """Real pig-pen tags that satisfy this boss's primary build check."""
+    return mechanics_for(pig_id).CORE_TAGS
+
+
+def counter_failure(pig_id: str) -> str:
+    """What happens when a party ignores the boss's primary build check."""
+    return mechanics_for(pig_id).CORE_FAILURE
 
 
 def boss_level(levels: list[int]) -> int:
@@ -177,9 +171,7 @@ def boss_fighter(pig: dict, entry: dict, stage: int, slot_id: str, label: str) -
     unit["dot_basis"] = stats["hp"]
     dungeon_hp, dungeon_atk = _BOSS_DUNGEON_SCALE.get(slot_id, (1.0, 1.0))
     encounter_hp, encounter_atk = BOSS_ENCOUNTER_SCALE.get(slot_id, (1.0, 1.0))
-    stats["hp"] = round(
-        stats["hp"] * STAGE_HP[stage - 1] * cls.HP * dungeon_hp * encounter_hp
-    )
+    stats["hp"] = round(stats["hp"] * STAGE_HP[stage - 1] * cls.HP * dungeon_hp * encounter_hp)
     stats["atk"] = round(
         stats["atk"] * STAGE_ATK[stage - 1] * cls.ATK * dungeon_atk * encounter_atk
     )
@@ -367,6 +359,7 @@ class _RaidBattle(_Battle):
         if not target.alive:
             return 0.0
         raw = attacker.stat("atk") * power * self.rng.uniform(0.9, 1.1) * self.fury()
+        raw *= self.mech.build_outgoing_factor(self, attacker)
         if crit:
             raw *= CRIT_MULTIPLIER
         raw *= 60 / (60 + target.stat("def"))
@@ -509,6 +502,8 @@ class _RaidBattle(_Battle):
         self.acting = dot.get("source")
         self._dot = dot.get("label", "持续伤害")
         amount = unit.dot_basis * dot["pct"] / 100 * self.mech.dot_factor(self, unit)
+        if unit is self.boss:
+            amount *= self.mech.build_incoming_factor(self)
         if unit.side == 0 and self.cfg.get("dot_cut"):
             amount *= 1 - self.cfg["dot_cut"] / 100
         return amount
@@ -562,6 +557,7 @@ class _RaidBattle(_Battle):
     def adjust_hit(self, unit, enemy, raw, effect):
         raw *= 1 + enemy.vuln / 100
         raw *= self.mech.outgoing_factor(self, unit, enemy)
+        raw *= self.mech.build_outgoing_factor(self, unit)
         if unit is self.boss and enemy.marked:
             enemy.marked = False
             raw *= 2
@@ -570,6 +566,7 @@ class _RaidBattle(_Battle):
             raw = self.mech.foe_hit(self, unit, enemy, raw, effect)
         if enemy is self.boss:
             raw = self.mech.incoming(self, unit, raw, effect)
+            raw *= self.mech.build_incoming_factor(self)
         return raw
 
     def after_hit(self, unit, enemy, dealt):
@@ -696,6 +693,7 @@ class _RaidBattle(_Battle):
                         self.apply_passive(unit, effect)
                     self.say(f"{unit.label} 被动「{skill['name']}」生效")
         self.mech.setup(self)
+        self.mech.assess_build(self)
         self.flush()
         winner, timeout = None, False
         for self.round in range(1, MAX_RAID_ROUNDS + 1):
@@ -787,6 +785,11 @@ class _RaidBattle(_Battle):
                 for h in self.heroes
             ],
             "boss": {"hp": round(max(0, self.boss.hp)), "max_hp": self.boss.max_hp},
+            "counter": {
+                "ready": self.mech.counter_ready,
+                "name": self.mech.CORE_NAME,
+                "tags": self.mech.CORE_TAGS,
+            },
             "field_events": self.field_events,
             "roster": [
                 {

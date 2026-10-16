@@ -982,21 +982,25 @@ def render_raid_detail(root: Path, data: dict) -> Card:
     rows = []
     for boss in data["bosses"]:
         recommended = measure.wrap(
-            "推荐功能：" + " / ".join(boss.get("recommended") or ("均衡阵容",)), 21, 640
+            "核心功能：" + " / ".join(boss.get("recommended") or ("均衡阵容",)), 21, 640
         )
+        consequence = measure.wrap("缺少后果：" + boss.get("counter_failure", ""), 19, 640)
         lines = []
         for name, text in boss["mechanics"]:
             wrapped = measure.wrap(text, 21, 640)
             lines.append((name, wrapped))
         height = max(
             300,
-            126 + len(recommended) * 30 + sum(36 + len(w) * 30 + 10 for _, w in lines),
+            126
+            + len(recommended) * 30
+            + len(consequence) * 28
+            + sum(36 + len(w) * 30 + 10 for _, w in lines),
         )
-        rows.append((boss, recommended, lines, height))
+        rows.append((boss, recommended, consequence, lines, height))
     tips = [line for entry in data["tips"] for line in measure.wrap(entry, 21, 940)]
     measure.image.close()
     top = 232
-    body = sum(h + 24 for _, _, _, h in rows)
+    body = sum(h + 24 for _, _, _, _, h in rows)
     tips_top = top + body + 10
     height = tips_top + 50 + len(tips) * 34 + 100
     canvas = Canvas(root, WIDTH, height)
@@ -1004,7 +1008,7 @@ def render_raid_detail(root: Path, data: dict) -> Card:
     canvas.text(data["title"], 54, 76, 56, bold=True, width=960)
     canvas.text(data["subtitle"], 58, 158, 24, SUB, width=960)
     y = top
-    for boss, recommended, lines, row_h in rows:
+    for boss, recommended, consequence, lines, row_h in rows:
         canvas.draw.rounded_rectangle((56, y + 3, 1024, y + row_h + 3), radius=28, fill=BORDER)
         canvas.draw.rounded_rectangle((56, y, 1024, y + row_h), radius=28, fill="#ffffff")
         canvas.draw.rounded_rectangle((76, y + 20, 316, y + 250), radius=20, fill="#f9f4ed")
@@ -1015,6 +1019,9 @@ def render_raid_detail(root: Path, data: dict) -> Card:
         for line in recommended:
             canvas.text(line, 340, cursor, 21, ACCENT, True, width=660)
             cursor += 30
+        for line in consequence:
+            canvas.text(line, 340, cursor, 19, SUB, width=660)
+            cursor += 28
         cursor += 8
         for name, wrapped in lines:
             canvas.text(name, 340, cursor, 23, ACCENT, True, width=660)

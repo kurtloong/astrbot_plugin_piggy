@@ -11,7 +11,7 @@ from unittest.mock import patch
 from PIL import Image, ImageDraw
 
 from core import raid_events
-from core.battle import FALLBACK, fighter, validate_entry
+from core.battle import FALLBACK, TAGS, fighter, validate_entry
 from core.catalog import read_catalog
 from core.config import PiggyError, Settings
 from core.database import Database
@@ -421,7 +421,8 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             await raid_detail_message(Settings(), self.root, self.users[0], status, 4)
         joined = "".join(labels)
         self.assertIn("亡灵猪墓", joined)
-        self.assertIn("推荐功能：净化 / 持续恢复", joined)
+        self.assertIn("核心功能：净化", joined)
+        self.assertIn("缺少后果：尸毒持续叠层", joined)
         self.assertIn("白骨重组", joined)
         self.assertIn("开启副本 4", joined)
 
@@ -441,7 +442,9 @@ class RaidEngineTests(unittest.TestCase):
             "name": "卧底回报",
             "text": "队友闪避后把情报转成全队攻势。",
             "when": "on_ally_dodge",
-            "effects": [{"type": "buff", "stat": "atk", "pct": 20, "turns": 2, "target": "ally_all"}],
+            "effects": [
+                {"type": "buff", "stat": "atk", "pct": 20, "turns": 2, "target": "ally_all"}
+            ],
         }
         support = fighter(
             {"id": "support", "name": "辅助"}, validate_entry("support", support_entry), 5, "辅助"
@@ -455,7 +458,9 @@ class RaidEngineTests(unittest.TestCase):
         helper, ward = fight.heroes
         ward.hp = ward.max_hp * 0.5
 
-        fight.effect(helper, fight.boss, support_entry["skills"][1]["effects"][0], helper.actives[1])
+        fight.effect(
+            helper, fight.boss, support_entry["skills"][1]["effects"][0], helper.actives[1]
+        )
         self.assertEqual(ward.evade, 1)
         fight.damage(fight.boss, ward, {"type": "damage", "power": 1.0})
 
@@ -870,7 +875,25 @@ class RaidEngineTests(unittest.TestCase):
                 self.assertIn("【", hint, slot)
                 self.assertTrue(all(word not in hint for word in forbidden), (slot, hint))
             self.assertTrue(recommended_functions(slot), slot)
-        self.assertEqual(recommended_functions("zombie-pig")[:2], ("净化", "持续恢复"))
+            self.assertTrue(set(recommended_functions(slot)).issubset(TAGS), slot)
+        self.assertEqual(recommended_functions("zombie-pig"), ("净化",))
+
+    def test_every_boss_resolves_its_core_build_check(self):
+        for slot in BOSS_IDS:
+            ready = battle(slot)
+            core_tag = ready.mech.CORE_TAGS[0]
+            ready.heroes[0].data["tags"] = [core_tag]
+            for hero in ready.heroes[1:]:
+                hero.data["tags"] = []
+            result = ready.run()
+            self.assertTrue(result["counter"]["ready"], slot)
+
+            missing = battle(slot)
+            for hero in missing.heroes:
+                hero.data["tags"] = []
+            result = missing.run()
+            self.assertFalse(result["counter"]["ready"], slot)
+            self.assertIn("核心检定缺失", "".join(result["log"]), slot)
 
     def test_boss_mechanics_are_listed_for_every_boss(self):
         for slot in BOSS_IDS:
@@ -999,10 +1022,7 @@ class RaidEventTests(unittest.TestCase):
         fight.act(healer, fight.boss)
         self.assertGreater(wounded.hp, wounded.max_hp / 2)
         replayed = [
-            cue["name"]
-            for step in fight.timeline
-            for cue in step["cues"]
-            if cue["t"] == "skill"
+            cue["name"] for step in fight.timeline for cue in step["cues"] if cue["t"] == "skill"
         ]
         self.assertEqual(replayed[-2:], ["猪突猛进", "群体护理"])
 

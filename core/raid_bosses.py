@@ -22,9 +22,17 @@ class BossMechanics:
     DEF = 1.0
     # Whether heroes must clear the boss's summoned units before hitting the boss.
     GUARDS_FIRST = True
+    # One real, searchable party-building check. These values are filled from
+    # CORE_CHECKS below so every boss has an explicit preparation gate.
+    CORE_NAME = ""
+    CORE_TAGS: tuple[str, ...] = ()
+    CORE_FAILURE = ""
+    UNPREPARED_OUTGOING = 1.0
+    UNPREPARED_INCOMING = 1.0
 
     def __init__(self, disabled: int | None = None):
         self.disabled = disabled
+        self.counter_ready = True
 
     def on(self, index: int) -> bool:
         return index != self.disabled
@@ -119,6 +127,34 @@ class BossMechanics:
 
     def supported(self, battle, unit, kind: str):
         """A hero just successfully healed (`heal`) or cleansed (`cleanse`)."""
+
+    def assess_build(self, battle):
+        """Resolve this boss's primary, searchable party-building requirement."""
+        party_tags = {tag for hero in battle.heroes for tag in hero.data.get("tags", ())}
+        self.counter_ready = bool(party_tags.intersection(self.CORE_TAGS))
+        tags = " / ".join(self.CORE_TAGS)
+        if self.counter_ready:
+            battle.note(f"核心检定通过：【{tags}】已就位，可以处理「{self.CORE_NAME}」")
+        else:
+            battle.note(f"核心检定缺失：【{tags}】未就位；{self.CORE_FAILURE}")
+
+    def unprepared_weight(self, battle) -> float:
+        """Rarity can brute-force part of a missed mechanic without replacing its counter."""
+        ranks = [hero.data.get("rarity_rank", 1) for hero in battle.heroes]
+        average = sum(ranks) / len(ranks) if ranks else 1
+        return max(0.0, min(1.0, (5 - average) / 4))
+
+    def build_outgoing_factor(self, battle, attacker) -> float:
+        if attacker.side == 1 and not self.counter_ready:
+            weight = self.unprepared_weight(battle)
+            return 1 + (self.UNPREPARED_OUTGOING - 1) * weight
+        return 1.0
+
+    def build_incoming_factor(self, battle) -> float:
+        if self.counter_ready:
+            return 1.0
+        weight = self.unprepared_weight(battle)
+        return 1 - (1 - self.UNPREPARED_INCOMING) * weight
 
 
 class Goblin(BossMechanics):
@@ -1094,10 +1130,11 @@ class StarCluster(BossMechanics):
 
     def round_start(self, battle):
         boss = battle.boss
-        if not self.on(0) or battle.round % 5:
+        interval = 5 if self.counter_ready else 3
+        if not self.on(0) or battle.round % interval:
             return
         missing = 2 - sum(1 for star in self.stars if star.alive)
-        cost = boss.max_hp * 0.1
+        cost = boss.max_hp * (0.1 if self.counter_ready else 0.0)
         rebuilt = 0
         for _ in range(missing):
             if boss.hp <= cost * 1.5:
@@ -1106,7 +1143,8 @@ class StarCluster(BossMechanics):
             self.spawn(battle)
             rebuilt += 1
         if rebuilt:
-            self.say(battle, 0, f"星团聚合：星核分出 {rebuilt} 颗新的小星")
+            suffix = "" if self.counter_ready else "（缺少核心反制，重建不再消耗星核生命）"
+            self.say(battle, 0, f"星团聚合：星核分出 {rebuilt} 颗新的小星{suffix}")
 
     def foe_hit(self, battle, attacker, target, raw, effect):
         if not self.on(1):
@@ -1132,8 +1170,9 @@ class StarCluster(BossMechanics):
         if self.countdown:
             self.say(battle, 2, f"超新星倒计时 {self.countdown}……")
             return
+        pct = 0.4 if self.counter_ready else 0.7
         hits = [
-            f"{h.label} -{round(battle.hurt(h, h.max_hp * 0.4))}" for h in battle.present_heroes()
+            f"{h.label} -{round(battle.hurt(h, h.max_hp * pct))}" for h in battle.present_heroes()
         ]
         self.say(battle, 2, "超新星爆发！" + "，".join(hits))
 
@@ -1410,7 +1449,13 @@ class RedHot(BossMechanics):
     def boss_struck(self, battle, attacker, dealt):
         if attacker.seat is not None:
             self.round_damage[attacker.seat] = self.round_damage.get(attacker.seat, 0.0) + dealt
-        if not self.on(2) or not self.read or self.replied or not battle.boss.alive:
+        if (
+            not self.on(2)
+            or not self.counter_ready
+            or not self.read
+            or self.replied
+            or not battle.boss.alive
+        ):
             return
         self.replied = True
         lost = battle.hurt(battle.boss, battle.boss.max_hp * 0.06)
@@ -1708,5 +1753,167 @@ BOSS_COUNTERS = {
     ),
 }
 
+# Hand-authored primary build checks. `tags` are restricted to real pig-pen
+# filter tags; the detailed COUNTERS above still explain secondary answers.
+# Missing a core answer strengthens the pressure already described by that
+# boss's mechanics rather than adding a new unrelated attack.
+CORE_CHECKS = {
+    "goblin-pig": {
+        "name": "熏味失控",
+        "tags": ("净化",),
+        "failure": "熏味无法清除，潜伏偷袭伤害提高且更难在躺平窗口收尾",
+        "outgoing": 1.35,
+        "incoming": 0.75,
+    },
+    "frozen-pig": {
+        "name": "寒冷冻结",
+        "tags": ("净化", "抗控"),
+        "failure": "寒冷会稳定叠成冻结，冰壳阶段的攻防压力同时提高",
+        "outgoing": 1.30,
+        "incoming": 0.80,
+    },
+    "everest-pig": {
+        "name": "单击封顶",
+        "tags": ("多段", "持续伤害"),
+        "failure": "队伍无法绕过单次伤害上限，战斗拖入缺氧与连续雪崩",
+        "outgoing": 1.50,
+        "incoming": 0.45,
+    },
+    "error-404-pig": {
+        "name": "缓存回滚",
+        "tags": ("爆发", "斩杀"),
+        "failure": "无法跨过回滚线，未被观测与生命回滚会显著拉长战斗",
+        "outgoing": 1.28,
+        "incoming": 0.76,
+    },
+    "mechanical-pig": {
+        "name": "金属过热",
+        "tags": ("多段", "爆发"),
+        "failure": "难以触发外壳过热，光学锁定会在高防阶段持续处刑队员",
+        "outgoing": 1.50,
+        "incoming": 0.45,
+    },
+    "cyberpunk-pig": {
+        "name": "义体进化",
+        "tags": ("驱散", "减益"),
+        "failure": "永久攻击成长无法归零，超频后的双动会迅速失控",
+        "outgoing": 1.35,
+        "incoming": 0.82,
+    },
+    "demon-pig": {
+        "name": "开场诅咒",
+        "tags": ("净化", "持续治疗"),
+        "failure": "四种诅咒会全程保留，血线交换更容易制造减员与恶魔成长",
+        "outgoing": 1.50,
+        "incoming": 0.45,
+    },
+    "chained_crown_pig": {
+        "name": "断链冲击",
+        "tags": ("群疗", "护盾", "持续治疗"),
+        "failure": "三次断链群伤无人承接，王者归来前后会形成连续减员",
+        "outgoing": 1.50,
+        "incoming": 0.55,
+    },
+    "pig_god": {
+        "name": "守护神降临",
+        "tags": ("多段", "爆发"),
+        "failure": "守护灵清理过慢，神谕点名会在拖长的战斗中反复发动",
+        "outgoing": 1.55,
+        "incoming": 0.40,
+    },
+    "zombie-pig": {
+        "name": "尸毒治疗封锁",
+        "tags": ("净化",),
+        "failure": "尸毒持续叠层且治疗只剩 25%，倒下的队员还会发生尸变",
+        "outgoing": 1.0,
+        "incoming": 1.0,
+    },
+    "pighub0876": {
+        "name": "阴阳换面",
+        "tags": ("持续伤害", "爆发"),
+        "failure": "伤害类型无法适应阴阳切换，夹击阶段会因战斗拖长而失守",
+        "outgoing": 1.55,
+        "incoming": 0.40,
+    },
+    "skeleton-pig": {
+        "name": "三条骨命",
+        "tags": ("爆发", "持续治疗"),
+        "failure": "缺少单段爆发或长线续航，难以换完三条命并扛住轮番上菜",
+        "outgoing": 1.40,
+        "incoming": 0.58,
+    },
+    "pighub0233": {
+        "name": "混天绫夺取",
+        "tags": ("持续治疗", "减益"),
+        "failure": "护盾与闪避被夺后没有替代续航，乾坤圈前的攻击成长无法压低",
+        "outgoing": 1.50,
+        "incoming": 0.45,
+    },
+    "pighub0007": {
+        "name": "二十片龙鳞",
+        "tags": ("多段", "爆发"),
+        "failure": "龙鳞剥落过慢，禁疗与禁技会覆盖更长的高防战斗",
+        "outgoing": 1.55,
+        "incoming": 0.40,
+    },
+    "pighub0830": {
+        "name": "深海水压",
+        "tags": ("群疗", "持续治疗"),
+        "failure": "递增水压无人覆盖，进入暗流后治疗减半会快速压垮全队",
+        "outgoing": 1.40,
+        "incoming": 0.60,
+    },
+    "alien-pig": {
+        "name": "母舰离场",
+        "tags": ("持续伤害", "护盾", "持续治疗"),
+        "failure": "Boss 离场时队伍只能挨母舰扫射，无法靠预铺效果继续攻防",
+        "outgoing": 1.55,
+        "incoming": 0.40,
+    },
+    "pighub0872": {
+        "name": "星团重建",
+        "tags": ("多段", "爆发"),
+        "failure": "小星重建速度超过清理速度，更容易拖到超新星爆发",
+        "outgoing": 1.70,
+        "incoming": 0.30,
+    },
+    "pighub0336": {
+        "name": "三重星环",
+        "tags": ("多段", "爆发"),
+        "failure": "星环恢复速度接近拆除速度，陨石雨会在长线战斗中不断叠加",
+        "outgoing": 1.55,
+        "incoming": 0.40,
+    },
+    "pighub0315": {
+        "name": "余烬反噬",
+        "tags": ("减益", "守护", "铁壁"),
+        "failure": "输出会转成下一击余烬，缺少减攻与保护时被点名者承受完整反噬",
+        "outgoing": 1.60,
+        "incoming": 0.35,
+    },
+    "pighub0710": {
+        "name": "已读不回",
+        "tags": ("多段", "连击", "持续治疗"),
+        "failure": "每回合首击被抹除且直接治疗持续加火，难以触发追问自损",
+        "outgoing": 1.70,
+        "incoming": 0.30,
+    },
+    "pighub0116": {
+        "name": "短腿起飞",
+        "tags": ("爆发", "多段"),
+        "failure": "蓄力期打不够 12% 生命，Boss 会升空、群伤并回复生命",
+        "outgoing": 1.55,
+        "incoming": 0.40,
+    },
+}
+
 for _pig_id, _counters in BOSS_COUNTERS.items():
     BOSSES[_pig_id].COUNTERS = _counters
+
+for _pig_id, _check in CORE_CHECKS.items():
+    _boss = BOSSES[_pig_id]
+    _boss.CORE_NAME = _check["name"]
+    _boss.CORE_TAGS = _check["tags"]
+    _boss.CORE_FAILURE = _check["failure"]
+    _boss.UNPREPARED_OUTGOING = _check["outgoing"]
+    _boss.UNPREPARED_INCOMING = _check["incoming"]
