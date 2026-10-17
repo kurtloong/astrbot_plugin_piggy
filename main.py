@@ -39,6 +39,7 @@ from .core.views import (
     cancelled_message,
     collection_message,
     declined_message,
+    draw_all_message,
     duel_history_message,
     duel_ranking_message,
     duel_replay_message,
@@ -428,6 +429,21 @@ class PiggyPlugin(Star):
                     result,
                     await self.db.collection(user["id"]),
                 )
+            elif command == "draw_all":
+                result = await self.db.draw(
+                    user["id"],
+                    event.get_group_id(),
+                    event.message_obj.message_id,
+                    duplicate_rate_cap=self.settings.duplicate_rate_cap,
+                    duplicate_pity=self.settings.duplicate_pity,
+                    gather_chance=self.settings.draw_gather_chance,
+                    chain_chance=self.settings.draw_chain_chance,
+                    app_id=app_id,
+                    all_available=True,
+                )
+                message = draw_all_message(
+                    user, result, await self.db.collection(user["id"])
+                )
             elif command in {"atlas", "pen"}:
                 message = await collection_message(
                     self.settings,
@@ -787,6 +803,11 @@ class PiggyPlugin(Star):
     async def draw(self, event: AstrMessageEvent):
         """每天领一只小猪，跨群共享收藏；当天重复使用会返回同一只。"""
         await self._handle(event, "draw")
+
+    @filter.command("全部抽完")
+    async def draw_all(self, event: AstrMessageEvent):
+        """一次用完今日免费抽取和本群当天剩余的全部再抽次数。"""
+        await self._handle(event, "draw_all")
 
     @filter.command("小猪图鉴")
     async def atlas(self, event: AstrMessageEvent, page: int = 1):
