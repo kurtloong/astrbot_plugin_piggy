@@ -1183,7 +1183,7 @@ class Database:
             ),
         )
         rewards = []
-        if won:
+        if won and stage == 1:
             rng = random.Random(fight_seed ^ 0xD35FA17)
             for member in conn.execute(
                 "SELECT user_id FROM despair_members WHERE raid_id=? ORDER BY seat", (raid_id,)
@@ -1472,7 +1472,8 @@ class Database:
             (user_id, day, dungeon_key),
         ).fetchone():
             raise PiggyError(
-                f"你今天已经打过「{dungeon(dungeon_key)['name']}」了，每个副本每人每天 1 次，"
+                f"你今天已经成功挑战过「{dungeon(dungeon_key)['name']}」了，"
+                "每个副本每人每天成功挑战 1 次，"
                 "可以换一个副本。"
             )
         if _owned(conn, user_id, pig_id) < 1:
@@ -1608,13 +1609,6 @@ class Database:
                     "expired": expired,
                     "now": stamp,
                 }
-            for (member,) in conn.execute(
-                "SELECT user_id FROM raid_members WHERE raid_id=?", (raid["id"],)
-            ).fetchall():
-                conn.execute(
-                    "INSERT INTO raid_entries VALUES(?,?,?,?)",
-                    (member, day, raid["dungeon"], raid["id"]),
-                )
             battle = self._raid_fight(conn, raid["id"], day, stamp, level_cap, seed, False)
             return {"raid": battle["raid"], "started": True, "battle": battle, "expired": expired}
 
@@ -1846,6 +1840,16 @@ class Database:
         if party:
             result = simulate_raid(heroes, boss, slot_id, cfg, fight_seed)
         won = bool(result and result["won"])
+        if won:
+            # A failed first fight may be retried the same day.  Record the
+            # daily dungeon use only after the party has actually earned a win.
+            conn.executemany(
+                "INSERT OR IGNORE INTO raid_entries VALUES(?,?,?,?)",
+                [
+                    (member["user_id"], day, raid["dungeon"], raid_id)
+                    for member in members
+                ],
+            )
         outcome = {h["seat"]: h for h in (result["heroes"] if result else [])}
         changes = {member["user_id"]: [] for member in members}
         fighters = []
