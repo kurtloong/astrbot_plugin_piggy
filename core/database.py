@@ -1183,7 +1183,7 @@ class Database:
             ),
         )
         rewards = []
-        if won and stage == 1:
+        if won:
             rng = random.Random(fight_seed ^ 0xD35FA17)
             for member in conn.execute(
                 "SELECT user_id FROM despair_members WHERE raid_id=? ORDER BY seat", (raid_id,)
@@ -1806,6 +1806,7 @@ class Database:
             stage,
             slot_id,
             ("被附身的" if possessed else "") + boss_pig["name"],
+            party_levels=levels,
         )
         heroes = []
         for member, hero_level in zip(party, levels):
@@ -2691,7 +2692,12 @@ class Database:
             hero["seat"] = seat
             heroes.append(hero)
         boss = boss_fighter(
-            boss_pig, entry_for(boss_pig["battle"]), stage, slot_id, boss_pig["name"]
+            boss_pig,
+            entry_for(boss_pig["battle"]),
+            stage,
+            slot_id,
+            boss_pig["name"],
+            party_levels=[level] * PARTY_SIZE,
         )
         result = await asyncio.to_thread(simulate_raid, heroes, boss, slot_id, new_config(), seed)
         return {

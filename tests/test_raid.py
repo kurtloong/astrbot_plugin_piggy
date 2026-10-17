@@ -15,7 +15,14 @@ from core.battle import FALLBACK, TAGS, fighter, validate_entry
 from core.catalog import read_catalog
 from core.config import PiggyError, Settings
 from core.database import Database
-from core.raid import DUNGEONS, _RaidBattle, boss_fighter, recommended_functions, simulate_raid
+from core.raid import (
+    DUNGEONS,
+    _RaidBattle,
+    boss_fighter,
+    party_difficulty_scale,
+    recommended_functions,
+    simulate_raid,
+)
 from core.raid_events import (
     ENTRY_EVENTS,
     FIELD_EVENTS,
@@ -537,7 +544,7 @@ class RaidEngineTests(unittest.TestCase):
         self.assertEqual(first["log"], again["log"])
         self.assertEqual(first["heroes"], again["heroes"])
 
-    def test_boss_scales_by_stage_only_with_full_kit(self):
+    def test_boss_scales_by_stage_with_full_kit(self):
         early = boss_fighter(self.boss_pig, ENTRY, 1, "pig_god", "猪神")
         later = boss_fighter(self.boss_pig, ENTRY, 3, "pig_god", "猪神")
         again = boss_fighter(self.boss_pig, ENTRY, 1, "pig_god", "猪神")
@@ -548,6 +555,30 @@ class RaidEngineTests(unittest.TestCase):
         self.assertEqual(len(early["skills"]), 5)
         self.assertEqual(early["locked"], [])
         self.assertEqual(early["dot_basis"], fighter(self.boss_pig, ENTRY, 1)["stats"]["hp"])
+
+    def test_low_level_and_uneven_parties_receive_difficulty_protection(self):
+        baseline = boss_fighter(
+            self.boss_pig, ENTRY, 1, "pig_god", "猪神", party_levels=[5, 5, 5, 5]
+        )
+        low = boss_fighter(
+            self.boss_pig, ENTRY, 1, "pig_god", "猪神", party_levels=[2, 2, 2, 2]
+        )
+        even = boss_fighter(
+            self.boss_pig, ENTRY, 1, "pig_god", "猪神", party_levels=[3, 3, 3, 3]
+        )
+        uneven = boss_fighter(
+            self.boss_pig, ENTRY, 1, "pig_god", "猪神", party_levels=[1, 3, 3, 5]
+        )
+
+        self.assertEqual(baseline["stats"], boss_fighter(self.boss_pig, ENTRY, 1, "pig_god", "猪神")["stats"])
+        self.assertLess(low["stats"]["hp"], baseline["stats"]["hp"])
+        self.assertLess(low["stats"]["atk"], baseline["stats"]["atk"])
+        self.assertLess(uneven["stats"]["hp"], even["stats"]["hp"])
+        self.assertLess(uneven["stats"]["atk"], even["stats"]["atk"])
+        self.assertAlmostEqual(party_difficulty_scale([1, 3, 3, 5]), 0.54575)
+        self.assertAlmostEqual(party_difficulty_scale([2, 4, 4, 6]), 0.731)
+        self.assertEqual(party_difficulty_scale([5, 5, 5, 5]), 1.0)
+        self.assertEqual(party_difficulty_scale([8, 8, 8, 8]), 1.0)
 
     def test_goblin_lurks_out_of_reach(self):
         fight = battle("goblin-pig")
