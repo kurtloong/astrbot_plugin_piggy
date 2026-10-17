@@ -119,6 +119,23 @@ class DrawAndWildTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(latest["items"], bonus["items"])
         self.assertEqual(await self.total(self.alice), 4)
 
+    async def test_draw_all_keeps_gather_and_chain_rules_for_every_opportunity(self):
+        await self.db.grant_draws("app", "group", self.alice["id"], 1, NOW)
+        result = await self.draw(
+            self.alice,
+            "all",
+            rolls=[0.1, 0.9, 0.9, 0.9, 0.1, 0.9, 0.9],
+            all_available=True,
+        )
+
+        self.assertEqual(result["opportunities"], 2)
+        self.assertEqual(result["bonus_spent"], 1)
+        self.assertEqual(result["total"], 4)
+        self.assertEqual(result["gathers"], 1)
+        self.assertEqual(result["chains"], 1)
+        self.assertEqual(sum(item["count"] for item in result["items"]), 4)
+        self.assertEqual(await self.total(self.alice), 4)
+
     async def test_bonus_chances_expire_at_midnight(self):
         await self.draw(self.alice, "e1")
         await self.db.run(

@@ -415,9 +415,10 @@ class Database:
         gather_chance: int = 0,
         chain_chance: int = 0,
         app_id: str = "",
+        all_available: bool = False,
         rng=None,
     ) -> dict:
-        """Daily draw, or a bonus draw when today's is done and a chance is left.
+        """Daily draw, bonus draw, or every currently available draw at once.
 
         Every pig drawn (the first one and each chained one) independently rolls
         "gather" (one extra copy) and then "chain" (draw another pig).
@@ -449,7 +450,9 @@ class Database:
                 )
 
             def finish(session, created):
-                items = json.loads(session["items"])
+                payload = json.loads(session["items"])
+                batch = isinstance(payload, dict)
+                items = payload["items"] if batch else payload
                 # Old same-day snapshots predate visual role/tag metadata. Rehydrate it from
                 # the current catalog so repeat views render exactly like fresh draws.
                 for item in items:
@@ -462,12 +465,12 @@ class Database:
                     pig["style"] = battle.get("style", "均衡")
                     pig["tags"] = battle.get("tags", [pig["role"]])
                     pig["rarity"] = rarity_for(pig["id"])
-                first = items[0]["pig"]
+                first = payload["first"] if batch else items[0]["pig"]
                 sessions_today = conn.execute(
                     "SELECT count(*) FROM draw_sessions WHERE user_id=? AND day=? AND id<=?",
                     (user_id, day, session["id"]),
                 ).fetchone()[0]
-                return {
+                result = {
                     "pig": first,
                     "items": items,
                     "day": day,
@@ -475,10 +478,22 @@ class Database:
                     "kind": session["kind"],
                     "index": max(1, sessions_today),
                     "count": _owned(conn, user_id, first["id"]),
-                    "new_species": created and items[0]["new"],
+                    "new_species": created
+                    and (payload["new_species"] if batch else items[0]["new"]),
                     "repeat_streak": repeat_streak() if duplicate_pity else 0,
                     "bonus_left": self._bonus_left(conn, app_id, group_id, user_id, day),
                 }
+                if batch:
+                    result.update(
+                        all_available=True,
+                        opportunities=payload["opportunities"],
+                        bonus_spent=payload["bonus_spent"],
+                        total=payload["total"],
+                        new_count=payload["new_count"],
+                        gathers=payload["gathers"],
+                        chains=payload["chains"],
+                    )
+                return result
 
             replay = conn.execute(
                 "SELECT * FROM draw_sessions WHERE user_id=? AND event_id=?", (user_id, event_id)
@@ -488,8 +503,13 @@ class Database:
             existing = conn.execute(
                 "SELECT * FROM draw_records WHERE user_id=? AND day=?", (user_id, day)
             ).fetchone()
-            if existing:
-                if self._bonus_left(conn, app_id, group_id, user_id, day) < 1:
+            bonus_before = self._bonus_left(conn, app_id, group_id, user_id, day)
+            daily = existing is None
+            opportunities = (1 if daily else 0) + bonus_before if all_available else 1
+            if all_available and opportunities < 1:
+                raise PiggyError("今天没有可以抽取的次数啦。")
+            if existing and not all_available:
+                if bonus_before < 1:
                     latest = conn.execute(
                         "SELECT * FROM draw_sessions WHERE user_id=? AND day=? "
                         "ORDER BY id DESC LIMIT 1",
@@ -507,10 +527,12 @@ class Database:
                         ),
                     }
                     return finish(legacy, False)
+            bonus_spent = bonus_before if all_available else int(existing is not None)
+            if bonus_spent:
                 conn.execute(
-                    "UPDATE draw_bonus SET count=count-1 "
+                    "UPDATE draw_bonus SET count=count-? "
                     "WHERE app_id=? AND group_id=? AND user_id=? AND day=?",
-                    (app_id, group_id, user_id, day),
+                    (bonus_spent, app_id, group_id, user_id, day),
                 )
             available = [
                 dict(row) for row in conn.execute("SELECT * FROM pigs WHERE enabled=1 ORDER BY id")
@@ -544,13 +566,30 @@ class Database:
                     pool = owned if below(100 * len(available)) < threshold else unseen
                 return dict(choose(pool))
 
+            items = []
+            batch_rows = {}
+            awards = {}
+            total = new_count = gathers = chains = 0
+
             def collect(pig: dict, kind: str, parent) -> dict:
+                nonlocal total, new_count, gathers, chains
                 new = pig["id"] not in owned_ids
-                _give(conn, user_id, pig["id"], timestamp)
+                if all_available:
+                    awards[pig["id"]] = awards.get(pig["id"], 0) + 1
+                    row = batch_rows.setdefault(
+                        pig["id"], {"pig": pig, "count": 0, "new": False}
+                    )
+                    row["count"] += 1
+                    row["new"] = row["new"] or new
+                    total += 1
+                    new_count += int(new)
+                    gathers += int(kind == "gather")
+                    chains += int(kind == "chain")
+                else:
+                    _give(conn, user_id, pig["id"], timestamp)
                 owned_ids.add(pig["id"])
                 return {"pig": pig, "kind": kind, "parent": parent, "new": new}
 
-            daily = existing is None
             pity = daily and bool(duplicate_pity) and repeat_streak() >= duplicate_pity
             first = pick(pity)
             if daily:
@@ -569,19 +608,52 @@ class Database:
                         json.dumps(first, ensure_ascii=False),
                     ),
                 )
-            items, current, kind, parent = [], first, "base", None
-            while True:
-                index = len(items)
-                items.append(collect(current, kind, parent))
-                # Every gathered copy can gather again.  `parent` records the
-                # exact copy that independently triggered the next one.
-                gather_parent = index
-                while len(items) < MAX_DRAW_ITEMS and roll() * 100 < gather_chance:
-                    gather_parent = len(items)
-                    items.append(collect(current, "gather", gather_parent - 1))
-                if len(items) >= MAX_DRAW_ITEMS or roll() * 100 >= chain_chance:
-                    break
-                current, kind, parent = pick(False), "chain", index
+            for draw_index in range(opportunities):
+                current = first if draw_index == 0 else pick(False)
+                kind, parent, drawn = ("base" if draw_index == 0 else "batch"), None, 0
+                while True:
+                    index = len(items)
+                    item = collect(current, kind, parent)
+                    if not all_available:
+                        items.append(item)
+                    drawn += 1
+                    # Every gathered copy can gather again. `parent` records the
+                    # exact copy that independently triggered the next one.
+                    gather_parent = index
+                    while drawn < MAX_DRAW_ITEMS and roll() * 100 < gather_chance:
+                        gather_parent = len(items)
+                        item = collect(current, "gather", gather_parent - 1)
+                        if not all_available:
+                            items.append(item)
+                        drawn += 1
+                    if drawn >= MAX_DRAW_ITEMS or roll() * 100 >= chain_chance:
+                        break
+                    current, kind, parent = pick(False), "chain", index
+            if all_available:
+                conn.executemany(
+                    """
+                    INSERT INTO collections VALUES(?,?,?,?,?) ON CONFLICT(user_id,pig_id)
+                    DO UPDATE SET count=count+excluded.count,last_at=excluded.last_at
+                    """,
+                    [
+                        (user_id, pig_id, count, timestamp, timestamp)
+                        for pig_id, count in awards.items()
+                    ],
+                )
+                payload = {
+                    "mode": "all",
+                    "first": first,
+                    "items": list(batch_rows.values()),
+                    "opportunities": opportunities,
+                    "bonus_spent": bonus_spent,
+                    "total": total,
+                    "new_count": new_count,
+                    "new_species": batch_rows[first["id"]]["new"],
+                    "gathers": gathers,
+                    "chains": chains,
+                }
+            else:
+                payload = items
             cursor = conn.execute(
                 "INSERT INTO draw_sessions(user_id,app_id,group_id,day,kind,event_id,created_at,"
                 "items) VALUES(?,?,?,?,?,?,?,?)",
@@ -593,7 +665,7 @@ class Database:
                     "daily" if daily else "bonus",
                     event_id,
                     timestamp,
-                    json.dumps(items, ensure_ascii=False),
+                    json.dumps(payload, ensure_ascii=False),
                 ),
             )
             session = conn.execute(

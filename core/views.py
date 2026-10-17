@@ -162,6 +162,28 @@ def today_message(
     return card_message(settings, user, card, "今日小猪", "draw", mention=user)
 
 
+def draw_all_message(user: dict, result: dict, progress: dict) -> Message:
+    """Compact receipt for consuming every daily and bonus draw in one command."""
+    heading = "这次全部抽取已经处理过啦" if not result["created"] else "全部抽完啦！"
+    items = sorted(result["items"], key=lambda item: (-item["count"], item["pig"]["name"]))
+    shown = items[:40]
+    details = "、".join(
+        f"{item['pig']['name']}×{item['count']}" + ("（NEW）" if item["new"] else "")
+        for item in shown
+    )
+    if len(items) > len(shown):
+        details += f"，另有 {len(items) - len(shown)} 种，请发送「我的猪圈」查看"
+    return Message(
+        f"{heading}\n"
+        f"{display_name(user)}用了 {result['opportunities']} 次抽取机会"
+        f"（其中再抽 {result['bonus_spent']} 次），共获得 {result['total']} 只小猪。\n"
+        f"新图鉴 {result['new_count']} 种 · 聚集 {result['gathers']} 次 · "
+        f"连抽 {result['chains']} 次 · 剩余再抽 {result['bonus_left']} 次\n"
+        f"{details}\n"
+        f"当前收藏：{progress['unlocked']}/{progress['active_total']} 种，共 {progress['total']} 只。"
+    )
+
+
 def wild_message(settings: Settings, root: Path, user: dict, wild: dict) -> Message:
     entry = entry_for(wild["pig"].get("battle"))
     unit = fighter(wild["pig"], entry, wild["level"])

@@ -451,6 +451,19 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.wild_challenge(OfficialEvent("w5", text="挑战小猪 坦克猪"))
         self.assertIn("已经被", sent.await_args.args[1]["content"])
 
+    async def test_draw_all_uses_daily_draw_and_all_bonus_chances(self):
+        await self.plugin.initialize()
+        db = self.plugin.db
+        user = await db.identify("app", "member", "group-a", "")
+        await db.grant_draws("app", "group-a", user["id"], 2)
+
+        await self.plugin.draw_all(OfficialEvent("all", text="全部抽完"))
+
+        self.assertEqual(await db.bonus_count("app", "group-a", user["id"]), 0)
+        self.assertEqual((await db.collection(user["id"]))["total"], 3)
+        payload = self.plugin.transport.request.await_args.args[1]
+        self.assertIn("用了 3 次抽取机会", payload["content"])
+
     async def test_admin_grants_pigs_and_bonus_draws(self):
         await self.plugin.initialize()
         db = self.plugin.db

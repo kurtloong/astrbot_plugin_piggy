@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import random
 import sqlite3
 import tempfile
 import unittest
@@ -15,7 +16,14 @@ from core.catalog import initialize_catalog, read_catalog
 from core.config import PiggyError, Settings
 from core.database import Database
 from core.diagnostics import safe_detail
-from core.views import collection_message, keyboard, md, ranking_message, today_message
+from core.views import (
+    collection_message,
+    draw_all_message,
+    keyboard,
+    md,
+    ranking_message,
+    today_message,
+)
 
 
 class DomainTests(unittest.IsolatedAsyncioTestCase):
@@ -60,6 +68,45 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
                     duplicate_pity=0,
                 )
             self.assertEqual(result["pig"]["id"] == first["pig"]["id"], repeated)
+
+    async def test_draw_all_consumes_daily_and_every_bonus_atomically(self):
+        now = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        await self.db.grant_draws("app", "group-a", self.user["id"], 2, now)
+        result = await self.db.draw(
+            self.user["id"],
+            "group-a",
+            "all",
+            now,
+            app_id="app",
+            all_available=True,
+            gather_chance=0,
+            chain_chance=0,
+            rng=random.Random(7),
+        )
+
+        self.assertEqual(result["opportunities"], 3)
+        self.assertEqual(result["bonus_spent"], 2)
+        self.assertEqual(result["total"], 3)
+        self.assertEqual(result["bonus_left"], 0)
+        self.assertEqual(sum(item["count"] for item in result["items"]), 3)
+        self.assertEqual((await self.db.collection(self.user["id"]))["total"], 3)
+
+        replay = await self.db.draw(
+            self.user["id"], "group-a", "all", now, app_id="app", all_available=True
+        )
+        self.assertFalse(replay["created"])
+        self.assertEqual(replay["total"], 3)
+        self.assertEqual((await self.db.collection(self.user["id"]))["total"], 3)
+        with self.assertRaisesRegex(PiggyError, "没有可以抽取"):
+            await self.db.draw(
+                self.user["id"], "group-a", "empty", now, app_id="app", all_available=True
+            )
+
+        receipt = draw_all_message(
+            self.user, result, await self.db.collection(self.user["id"])
+        )
+        self.assertIn("用了 3 次抽取机会", receipt.text)
+        self.assertIn("剩余再抽 0 次", receipt.text)
 
     async def test_pity_survives_gaps_restart_and_same_day_replays(self):
         start = datetime(2026, 9, 1, tzinfo=timezone.utc)
