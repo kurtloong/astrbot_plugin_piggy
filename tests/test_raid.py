@@ -250,11 +250,20 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(status["raid"])
         await self.db.open_raid("app", "group", self.users[0]["id"], 1, "p0", later)
 
-    async def test_each_dungeon_once_per_player_per_day(self):
+    async def test_failed_first_boss_does_not_spend_the_daily_entry(self):
         await self.fill(1, fake=outcome(won=False))
+        self.assertEqual(await self.entries(), 0)
+        reopened = await self.db.open_raid("app", "group", self.users[0]["id"], 1, "p0", NOW)
+        self.assertEqual(reopened["raid"]["dungeon"]["key"], 1)
+        await self.db.leave_raid("app", "group", self.users[0]["id"], NOW)
+
+    async def test_first_boss_victory_spends_the_daily_entry(self):
+        await self.fill(1, fake=outcome(won=True))
+        self.assertEqual(await self.entries(), 4)
+        await self.db.retreat_raid("app", "group", self.users[0]["id"], NOW)
         with self.assertRaises(PiggyError) as caught:
             await self.db.open_raid("app", "group", self.users[0]["id"], 1, "p0", NOW)
-        self.assertIn("每个副本每人每天 1 次", str(caught.exception))
+        self.assertIn("每个副本每人每天成功挑战 1 次", str(caught.exception))
         await self.db.open_raid("app", "group", self.users[0]["id"], 2, "p0", NOW)
         await self.db.leave_raid("app", "group", self.users[0]["id"], NOW)
         tomorrow = NOW + timedelta(days=1)

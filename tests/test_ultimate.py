@@ -2,7 +2,13 @@ import copy
 import unittest
 
 from core.battle import FALLBACK, fighter, validate_entry
-from core.raid import ULTIMATE_ROUND, _RaidBattle, boss_fighter
+from core.raid import (
+    ULTIMATE_BOSS_HP_CAP,
+    ULTIMATE_BOSS_HP_FLOOR,
+    ULTIMATE_ROUND,
+    _RaidBattle,
+    boss_fighter,
+)
 from core.raid_events import new_config
 
 ROLES = ("输出", "坦克", "治疗", "辅助")
@@ -23,16 +29,16 @@ def combatant(role, seat):
     return data
 
 
-def make_battle(roles=ROLES, seed=7):
+def make_battle(roles=ROLES, seed=7, slot=SLOT):
     heroes = [combatant(role, seat) for seat, role in enumerate(roles)]
     boss = boss_fighter(
-        {"id": SLOT, "name": "测试 Boss", "asset": ""},
+        {"id": slot, "name": "测试 Boss", "asset": ""},
         validate_entry("ultimate-boss", copy.deepcopy(FALLBACK)),
         1,
-        SLOT,
+        slot,
         "测试 Boss",
     )
-    return _RaidBattle(heroes, boss, SLOT, new_config(), seed)
+    return _RaidBattle(heroes, boss, slot, new_config(), seed)
 
 
 def ready(fight):
@@ -62,15 +68,23 @@ class UltimateTests(unittest.TestCase):
 
     def test_damage_is_large_capped_and_recorded(self):
         fight = ready(make_battle())
-        dps = next(hero for hero in fight.heroes if hero.role == "输出")
         before = fight.boss.hp
         self.assertTrue(fight._try_ultimate())
         dealt = before - fight.boss.hp
-        self.assertGreater(dealt, dps.stat("atk") * 2)
-        self.assertLessEqual(dealt, fight.boss.max_hp * 0.22 + 0.01)
+        self.assertGreaterEqual(dealt, fight.boss.max_hp * ULTIMATE_BOSS_HP_FLOOR - 0.01)
+        self.assertLessEqual(dealt, fight.boss.max_hp * ULTIMATE_BOSS_HP_CAP + 0.01)
         self.assertTrue(fight.ultimate_used)
         self.assertEqual(fight.ultimate_round, fight.round)
         self.assertIn("极限技", fight.log[-1])
+
+    def test_damage_bypasses_single_hit_cap(self):
+        fight = ready(make_battle(slot="everest-pig"))
+        before = fight.boss.hp
+
+        self.assertTrue(fight._try_ultimate())
+
+        dealt = before - fight.boss.hp
+        self.assertGreaterEqual(dealt, fight.boss.max_hp * ULTIMATE_BOSS_HP_FLOOR - 0.01)
 
     def test_healer_answers_critical_party_health(self):
         fight = ready(make_battle())

@@ -15,18 +15,22 @@ REST_REVIVE_HP = 0.4
 ULTIMATE_ROUND = 5
 ULTIMATE_ROLES = frozenset(("输出", "坦克", "治疗", "辅助"))
 ULTIMATE_HEAL_PCT = 45
-ULTIMATE_DAMAGE_POWER = 8.0
-ULTIMATE_BOSS_HP_CAP = 0.22
+ULTIMATE_DAMAGE_POWER = 12.0
+ULTIMATE_BOSS_HP_FLOOR = 0.20
+ULTIMATE_BOSS_HP_CAP = 0.30
 POISE_MAX = 160.0
 POISE_MAX_BREAKS = 2
 POISE_SECOND_CYCLE_FACTOR = 0.65
 POISE_BREAK_DAMAGE = 1.10
 # Bosses ignore party level: full kit + base stats, scaled by stage, dungeon and boss multipliers.
-STAGE_HP = (7.0, 8.2, 9.6)
+STAGE_HP = (7.0, 8.2, 9.408)
 # Recalibrated after lethal hits began correctly triggering last-stand effects:
 # the small increase preserves each dungeon's established clear-rate band
 # without weakening the defensive mechanic or relaxing the balance gates.
-STAGE_ATK = (2.31, 2.57, 2.89)
+STAGE_ATK = (2.31, 2.57, 2.8322)
+# Desired fresh-party win rates for every boss in each stage, using the fixed
+# Lv5 four-role benchmark party.
+STAGE_WIN_RATE_TARGETS = (0.90, 0.80, 0.60)
 
 DUNGEONS = (
     {
@@ -90,15 +94,30 @@ _BOSS_DUNGEON_SCALE = {
     slot: DUNGEON_BOSS_SCALE[item["key"]] for item in DUNGEONS for slot in item["bosses"]
 }
 
-# Small encounter-specific corrections keep a dungeon's fresh-party curve
-# moving toward its final boss instead of making an early attrition check the
-# only meaningful gate.
+# Encounter-specific corrections normalize bosses with very different
+# mechanics around the 90% / 80% / 60% stage targets.  Both HP and attack are
+# scaled so an encounter keeps its intended offensive/defensive identity.
 BOSS_ENCOUNTER_SCALE = {
-    "cyberpunk-pig": (2.05, 1.00),
+    "goblin-pig": (1.18, 1.18),
+    "frozen-pig": (1.34, 1.34),
     "everest-pig": (1.08, 1.03),
-    "pig_god": (1.08, 1.03),
-    "skeleton-pig": (1.08, 1.03),
-    "pighub0116": (1.10, 1.03),
+    "mechanical-pig": (1.185, 1.185),
+    "cyberpunk-pig": (2.4164375, 1.17875),
+    "demon-pig": (1.28, 1.28),
+    "chained_crown_pig": (1.38, 1.38),
+    "pig_god": (1.188, 1.133),
+    "zombie-pig": (0.96, 0.96),
+    "pighub0876": (1.13, 1.13),
+    "skeleton-pig": (1.296, 1.236),
+    "pighub0233": (1.10, 1.10),
+    "pighub0007": (1.48, 1.48),
+    "pighub0830": (0.96, 0.96),
+    "alien-pig": (1.10, 1.10),
+    "pighub0872": (1.54, 1.54),
+    "pighub0336": (1.025, 1.025),
+    "pighub0315": (1.65, 1.65),
+    "pighub0710": (2.12, 2.12),
+    "pighub0116": (1.118766, 1.0475718),
 }
 
 GUARD_SKILL = {
@@ -407,11 +426,14 @@ class _RaidBattle(_Battle):
             # make support win every neutral decision.
             score = 90.0
             estimated = min(
-                dps.stat("atk")
-                * ULTIMATE_DAMAGE_POWER
-                * self.fury()
-                * 60
-                / (60 + self.boss.stat("def")),
+                max(
+                    dps.stat("atk")
+                    * ULTIMATE_DAMAGE_POWER
+                    * self.fury()
+                    * 60
+                    / (60 + self.boss.stat("def")),
+                    self.boss.max_hp * ULTIMATE_BOSS_HP_FLOOR,
+                ),
                 self.boss.max_hp * ULTIMATE_BOSS_HP_CAP,
             )
             if estimated >= self.boss.hp:
@@ -538,11 +560,12 @@ class _RaidBattle(_Battle):
         self.ultimate_round = self.round
         self.ultimate_role = role
         if role == "输出":
-            effect = {"type": "damage", "power": ULTIMATE_DAMAGE_POWER, "ultimate": True}
             raw = caster.stat("atk") * ULTIMATE_DAMAGE_POWER * self.fury()
             raw *= 60 / (60 + self.boss.stat("def"))
-            raw = self.adjust_hit(caster, self.boss, raw, effect)
-            raw = min(max(0.0, raw), self.boss.max_hp * ULTIMATE_BOSS_HP_CAP)
+            # A once-per-boss limit break must remain meaningful against
+            # single-hit caps, hidden states and other encounter reductions.
+            raw = max(raw, self.boss.max_hp * ULTIMATE_BOSS_HP_FLOOR)
+            raw = min(raw, self.boss.max_hp * ULTIMATE_BOSS_HP_CAP)
             acting, self.acting = self.acting, caster
             try:
                 dealt = self.hurt(self.boss, raw, attacker=caster)

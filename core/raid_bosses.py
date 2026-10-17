@@ -343,7 +343,10 @@ class Error404(BossMechanics):
         ("缓存回滚", "生命第一次低于 40% 时回滚到 60%，同时清除身上的持续伤害"),
     )
     ATK = 1.3
-    HP = 2.05
+    # Hidden-state damage loss plus the one-time 40% -> 60% rollback already
+    # supplies substantial effective health.  Keep its first-stage body below
+    # the later mechanical bosses so missing burst is a penalty, not a timeout wall.
+    HP = 1.8
 
     def __init__(self, disabled=None):
         super().__init__(disabled)

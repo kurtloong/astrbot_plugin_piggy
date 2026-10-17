@@ -250,7 +250,7 @@ RAID_TIPS = (
     "加入副本 你的小猪 —— 加入本群正在组队的队伍，满 4 人自动出发",
     f"组队 {TIMEOUT_MINUTES} 分钟内没满 {PARTY_SIZE} 人自动取消；开打后不能中途加入",
     "每关打赢：每位队员各得 1 只 boss 猪，本群所有玩家各得 1 次再抽",
-    "战斗中倒下的猪，主人失去 1 只；每个副本每人每天 1 次",
+    "战斗中倒下的猪，主人失去 1 只；首关胜利才消耗每日副本次数",
 )
 
 
@@ -544,7 +544,7 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
         "log": result["log"] if result else [],
         "settlement": settlement,
         "next": next_step,
-        "footer": f"发送「猪副本」查看副本和 boss 机制 · 每个副本每人每天 1 次 · 第 #{battle['id']} 场",
+        "footer": f"发送「猪副本」查看副本和 boss 机制 · 首关胜利才扣次数 · 第 #{battle['id']} 场",
     }
     card = await asyncio.to_thread(render_raid_poster, root, poster)
     buttons = (
@@ -726,7 +726,7 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
             f"开启副本 编号 {example} —— 发起组队；群友发送「加入副本 他的猪」加入",
             f"满 {PARTY_SIZE} 人自动开打，{TIMEOUT_MINUTES} 分钟没满员自动取消，开打后不能中途加入",
             "每关打赢：每位队员各得 1 只 boss 猪，全群各得 1 次再抽；倒下的猪，主人失去 1 只",
-            "打完一关由队长发送「继续副本」或「撤退副本」（继续时随机救回一只倒下的猪）；每个副本每人每天 1 次",
+            "打完一关由队长发送「继续副本」或「撤退副本」（继续时随机救回一只倒下的猪）；首关失败不扣次数",
         ],
         "【绝境战】",
         [
