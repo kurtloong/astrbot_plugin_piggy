@@ -22,7 +22,9 @@ POISE_MAX = 160.0
 POISE_MAX_BREAKS = 2
 POISE_SECOND_CYCLE_FACTOR = 0.65
 POISE_BREAK_DAMAGE = 1.10
-# Bosses ignore party level: full kit + base stats, scaled by stage, dungeon and boss multipliers.
+# Bosses keep their full kit and use encounter tuning rather than inheriting a
+# collectible level.  Parties below the Lv5 balance benchmark receive a
+# separate accessibility adjustment after encounter scaling.
 STAGE_HP = (7.0, 8.2, 9.408)
 # Recalibrated after lethal hits began correctly triggering last-stand effects:
 # the small increase preserves each dungeon's established clear-rate band
@@ -31,6 +33,12 @@ STAGE_ATK = (2.31, 2.57, 2.8322)
 # Desired fresh-party win rates for every boss in each stage, using the fixed
 # Lv5 four-role benchmark party.
 STAGE_WIN_RATE_TARGETS = (0.90, 0.80, 0.60)
+# Calibrated against the fixed four-role party at each whole-number level.
+# Values between levels are interpolated, while Lv5+ uniform parties keep the
+# encounter's original strength.
+LOW_LEVEL_BOSS_SCALE = (0.27, 0.37, 0.59, 0.86, 1.0)
+LEVEL_GAP_STEP = 0.05
+LEVEL_GAP_FLOOR = 0.75
 
 DUNGEONS = (
     {
@@ -166,8 +174,47 @@ def boss_level(levels: list[int]) -> int:
     return max(1, round(sum(levels) / len(levels))) if levels else 1
 
 
-def boss_fighter(pig: dict, entry: dict, stage: int, slot_id: str, label: str) -> dict:
-    """Raid boss at encounter strength: base stats, full kit, no level growth."""
+def party_difficulty_scale(levels: list[int] | None) -> float:
+    """Return low-level and mixed-level protection without buffing Lv5+ teams."""
+    if not levels:
+        return 1.0
+    party = [max(1.0, float(level)) for level in levels]
+    average = sum(party) / len(party)
+    if average >= len(LOW_LEVEL_BOSS_SCALE):
+        base = 1.0
+    else:
+        lower = max(1, int(average))
+        upper = min(lower + 1, len(LOW_LEVEL_BOSS_SCALE))
+        progress = average - lower
+        base = LOW_LEVEL_BOSS_SCALE[lower - 1] + (
+            LOW_LEVEL_BOSS_SCALE[upper - 1] - LOW_LEVEL_BOSS_SCALE[lower - 1]
+        ) * progress
+
+    # A high-level member cannot fully cover a fragile low-level teammate.
+    # Ignore the ordinary one-level difference and cap the extra protection.
+    # Very low averages already receive a large base reduction, so phase in
+    # the full gap adjustment as the party approaches the Lv5 benchmark.
+    if min(party) < len(LOW_LEVEL_BOSS_SCALE):
+        gap = max(party) - min(party)
+        gap_weight = min(1.0, max(0.0, (average - 2.0) / 2.0))
+        gap_scale = max(
+            LEVEL_GAP_FLOOR,
+            1.0 - max(0.0, gap - 1.0) * LEVEL_GAP_STEP * gap_weight,
+        )
+        base *= gap_scale
+    return min(1.0, base)
+
+
+def boss_fighter(
+    pig: dict,
+    entry: dict,
+    stage: int,
+    slot_id: str,
+    label: str,
+    *,
+    party_levels: list[int] | None = None,
+) -> dict:
+    """Raid boss at encounter strength, adjusted for low-level parties."""
     cls = mechanics_for(slot_id)
     # Boss strength belongs to encounter tuning, never to the collectible pig's rarity.
     unit = fighter(pig, entry, 1, label, rarity="普通")
@@ -182,6 +229,9 @@ def boss_fighter(pig: dict, entry: dict, stage: int, slot_id: str, label: str) -
     stats["atk"] = round(
         stats["atk"] * STAGE_ATK[stage - 1] * cls.ATK * dungeon_atk * encounter_atk
     )
+    difficulty = party_difficulty_scale(party_levels)
+    stats["hp"] = max(1, round(stats["hp"] * difficulty))
+    stats["atk"] = max(1, round(stats["atk"] * difficulty))
     stats["def"] = round(stats["def"] * cls.DEF)
     return unit
 
