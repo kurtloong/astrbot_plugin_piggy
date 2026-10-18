@@ -60,6 +60,7 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             all(call.args[1]["boss_asset"] == "castle.webp" for call in render.call_args_list)
         )
+        self.assertEqual(len(render.call_args_list[-1].args[1]["overall_stats"]), 8)
         self.assertEqual(
             [call.args[1]["report"]["phase"] for call in render.call_args_list],
             list(range(1, 6)),

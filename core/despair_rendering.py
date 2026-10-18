@@ -25,30 +25,34 @@ def render_despair_phase(root: Path, data: dict):
     report = data.get("report") or {}
     party = list(data.get("party") or [])
     actions = list(report.get("actions") or [])
+    overall = list(data.get("overall_stats") or []) if data.get("final") else []
     rewards = list(data.get("rewards") or []) if data.get("final") else []
     measure = Canvas(root, WIDTH, 1)
     action_lines = []
     for action in actions:
         extra = " · 追加行动" if action.get("extra") else ""
-        text = f"R{action.get('round', '?')}  万相猪皇施放「{action.get('skill', '未知技能')}」{extra}"
+        text = (
+            f"R{action.get('round', '?')}  万相猪皇施放「{action.get('skill', '未知技能')}」{extra}"
+        )
         action_lines.extend(measure.wrap(text, 18, 920))
     log_lines = []
     for entry in report.get("log") or []:
         log_lines.extend((line, entry) for line in measure.wrap(str(entry), 18, 920))
-    reward_lines = [
-        line for entry in rewards for line in measure.wrap(str(entry), 19, 920)
-    ]
+    reward_lines = [line for entry in rewards for line in measure.wrap(str(entry), 19, 920)]
     measure.image.close()
 
     party_h = 4 * 126
     action_h = max(1, len(action_lines)) * 29
     log_h = max(1, len(log_lines)) * 29
+    overall_h = (84 + max(1, len(overall)) * 38) if data.get("final") else 0
     reward_h = (75 + max(1, len(reward_lines)) * 33) if data.get("final") else 0
-    height = 410 + party_h + 85 + action_h + 80 + log_h + reward_h + 110
+    height = 410 + party_h + 85 + action_h + 80 + log_h + overall_h + reward_h + 110
     canvas = Canvas(root, WIDTH, height)
     phase = int(report.get("phase", 1))
     canvas.text("PIGGY  /  LAST STAND", 58, 34, 18, ACCENT, True)
-    canvas.text(f"第 {phase}/5 阶段 · {report.get('name', PHASE_NAMES[phase - 1])}", 54, 76, 48, bold=True)
+    canvas.text(
+        f"第 {phase}/5 阶段 · {report.get('name', PHASE_NAMES[phase - 1])}", 54, 76, 48, bold=True
+    )
     start_round = report.get("start_round", 1)
     end_round = report.get("end_round", start_round)
     canvas.text(
@@ -68,8 +72,8 @@ def render_despair_phase(root: Path, data: dict):
     maximum = max(1, (data.get("boss") or {}).get("max_hp", 1))
     start_hp = max(0, report.get("boss_hp_start", maximum))
     end_hp = max(0, report.get("boss_hp_end", start_hp))
-    _hp_bar(canvas, 265, 315, 590, end_hp, maximum, ACCENT if end_hp else SUB)
-    canvas.text(f"{start_hp} → {end_hp} / {maximum}", 870, 303, 18, SUB, width=140)
+    _hp_bar(canvas, 265, 315, 515, end_hp, maximum, ACCENT if end_hp else SUB)
+    canvas.text(f"{start_hp} → {end_hp} / {maximum}", 800, 303, 17, SUB, width=210)
 
     party_top = 410
     canvas.text("本阶段队伍状态", 58, party_top, 27, bold=True)
@@ -78,24 +82,47 @@ def render_despair_phase(root: Path, data: dict):
         x, y = 56 + column * 492, party_top + 48 + row * 126
         alive = side.get("alive", True)
         canvas.draw.rounded_rectangle(
-            (x, y, x + 472, y + 108), radius=18, fill="#ffffff" if alive else "#eee9e3",
-            outline=BORDER, width=1,
+            (x, y, x + 472, y + 108),
+            radius=18,
+            fill="#ffffff" if alive else "#eee9e3",
+            outline=BORDER,
+            width=1,
         )
         _paste_art(canvas, root, side.get("asset", ""), (x + 10, y + 8, 88, 88), faded=not alive)
         canvas.text(side.get("pig", "小猪"), x + 110, y + 10, 20, TEXT, True, width=180)
         canvas.text(
             f"{side.get('owner', '玩家')} · {side.get('role', '输出')} · Lv{side.get('level', 0)}",
-            x + 110, y + 40, 16, SUB, width=345,
+            x + 110,
+            y + 40,
+            16,
+            SUB,
+            width=345,
         )
-        _hp_bar(canvas, x + 110, y + 73, 180, side.get("hp", 0), side.get("max_hp", 1), ACCENT if alive else SUB)
+        _hp_bar(
+            canvas,
+            x + 110,
+            y + 73,
+            180,
+            side.get("hp", 0),
+            side.get("max_hp", 1),
+            ACCENT if alive else SUB,
+        )
         canvas.text(
             f"HP {side.get('hp', 0)}/{side.get('max_hp', 1)}",
-            x + 302, y + 58, 14, SUB, width=158,
+            x + 302,
+            y + 58,
+            14,
+            SUB,
+            width=158,
         )
         canvas.text(
             f"伤{side.get('dealt', 0)} 治{side.get('healed', 0)} "
             f"承{side.get('taken', 0)} 韧{side.get('poise', 0)}",
-            x + 302, y + 81, 13, SUB, width=158,
+            x + 302,
+            y + 81,
+            13,
+            SUB,
+            width=158,
         )
 
     action_top = party_top + 65 + party_h
@@ -109,12 +136,39 @@ def render_despair_phase(root: Path, data: dict):
         line, source = item
         highlight = any(key in source for key in ("阶段", "极限技", "倒下", "击破", "击败"))
         canvas.text(
-            line, 70, log_top + 47 + index * 29, 18,
-            ACCENT if highlight else SUB, highlight, width=930,
+            line,
+            70,
+            log_top + 47 + index * 29,
+            18,
+            ACCENT if highlight else SUB,
+            highlight,
+            width=930,
         )
 
     footer_top = log_top + 70 + log_h
     if data.get("final"):
+        canvas.draw.line((56, footer_top, 1024, footer_top), fill=BORDER, width=2)
+        canvas.text("全场输出统计", 58, footer_top + 20, 27, bold=True)
+        canvas.text("伤害", 460, footer_top + 27, 16, SUB, True)
+        canvas.text("治疗", 610, footer_top + 27, 16, SUB, True)
+        canvas.text("承伤", 750, footer_top + 27, 16, SUB, True)
+        canvas.text("削韧", 890, footer_top + 27, 16, SUB, True)
+        for index, row in enumerate(overall):
+            y = footer_top + 68 + index * 38
+            canvas.text(
+                f"{index + 1}. {row.get('owner', '')} · {row.get('pig', '')}",
+                70,
+                y,
+                17,
+                TEXT,
+                index < 3,
+                width=360,
+            )
+            canvas.text(str(row.get("dealt", 0)), 460, y, 17, ACCENT, True, width=125)
+            canvas.text(str(row.get("healed", 0)), 610, y, 17, TEXT, width=115)
+            canvas.text(str(row.get("taken", 0)), 750, y, 17, TEXT, width=115)
+            canvas.text(str(row.get("poise", 0)), 890, y, 17, TEXT, width=115)
+        footer_top += overall_h
         canvas.draw.line((56, footer_top, 1024, footer_top), fill=BORDER, width=2)
         canvas.text("最终结算", 58, footer_top + 20, 27, bold=True)
         for index, line in enumerate(reward_lines or ["本次没有获得奖励"]):

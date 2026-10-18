@@ -143,6 +143,31 @@ class DespairDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(status["unlocked"])
         self.assertEqual(status["missing"], [])
 
+    async def test_admin_preview_uses_random_balanced_level_ten_party_without_writes(self):
+        with patch(
+            "core.despair.simulate_despair",
+            lambda heroes, seed=1: battle_result(heroes, seed, True),
+        ):
+            preview = await self.db.test_despair(self.users[0], level=10, seed=1234)
+
+        self.assertTrue(preview["test"])
+        self.assertEqual(preview["id"], "TEST-000004D2")
+        self.assertEqual([fighter["level"] for fighter in preview["fighters"]], [10] * 8)
+        self.assertEqual(
+            sorted(fighter["role"] for fighter in preview["fighters"]),
+            sorted(ROLES * 2),
+        )
+        self.assertEqual(
+            sorted(fighter["owner_seat"] for fighter in preview["fighters"]),
+            [0, 0, 1, 1, 2, 2, 3, 3],
+        )
+        self.assertEqual(
+            await self.db.run(
+                lambda conn: conn.execute("SELECT count(*) FROM despair_battles").fetchone()[0]
+            ),
+            0,
+        )
+
     async def test_two_distinct_owned_pigs_and_unique_team_species(self):
         await self.unlock_all()
         with self.assertRaisesRegex(PiggyError, "2 只不同"):
@@ -213,9 +238,7 @@ class DespairDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reward_week_is_decided_when_the_battle_finishes(self):
         await self.unlock_all()
-        await self.db.open_despair(
-            "app", "group", self.users[0]["id"], self.pig_ids[:2], SUNDAY
-        )
+        await self.db.open_despair("app", "group", self.users[0]["id"], self.pig_ids[:2], SUNDAY)
         with patch(
             "core.despair.simulate_despair",
             lambda heroes, seed=1: battle_result(heroes, seed, True),

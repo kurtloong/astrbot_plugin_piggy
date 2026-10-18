@@ -127,7 +127,25 @@ async def despair_battle_message(settings, root: Path, battle: dict):
     ]
     rewards = _reward_lines(battle.get("rewards") or [])
     if not rewards:
-        rewards = ["挑战失败，本次不发放奖励；不会扣除出战小猪，可以重新挑战。"]
+        rewards = (
+            ["测试战不发放奖励，也不会改动收藏、次数或绝境战进度。"]
+            if battle.get("test")
+            else ["挑战失败，本次不发放奖励；不会扣除出战小猪，可以重新挑战。"]
+        )
+    overall_stats = sorted(
+        [
+            {
+                "owner": display_name(f["user"]),
+                "pig": f["pig"]["name"],
+                "dealt": f.get("dealt", 0),
+                "healed": f.get("healed", 0),
+                "taken": f.get("taken", 0),
+                "poise": f.get("poise", 0),
+            }
+            for f in fighters
+        ],
+        key=lambda row: (-row["dealt"], -row["healed"], -row["taken"]),
+    )
     reports = result.get("phase_reports") or []
     if not reports:
         phase = (result.get("boss") or {}).get("phase") or (5 if battle.get("won") else 1)
@@ -147,7 +165,10 @@ async def despair_battle_message(settings, root: Path, battle: dict):
     boss_asset = (battle.get("boss_pig") or {}).get("asset", "")
     cards = []
     for index, report in enumerate(reports[:5]):
-        states = {item.get("index", offset): item for offset, item in enumerate(report.get("heroes") or [])}
+        states = {
+            item.get("index", offset): item
+            for offset, item in enumerate(report.get("heroes") or [])
+        }
         phase_party = [{**side, **states.get(offset, {})} for offset, side in enumerate(party)]
         cards.append(
             await asyncio.to_thread(
@@ -159,6 +180,7 @@ async def despair_battle_message(settings, root: Path, battle: dict):
                     "boss": result.get("boss") or {},
                     "boss_asset": boss_asset,
                     "final": index == len(reports[:5]) - 1,
+                    "overall_stats": overall_stats,
                     "rewards": rewards,
                     "footer": f"绝境战 #{battle.get('id', '')} · {battle.get('week', '')} · "
                     f"{'通关' if battle.get('won') else '挑战失败'}",
