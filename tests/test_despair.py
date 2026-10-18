@@ -50,6 +50,31 @@ def test_one_health_bar_visits_all_five_phases_and_locks_each_boundary():
     assert [item["phase"] for item in fight.phase_history] == [1, 2, 3, 4, 5]
 
 
+def test_result_keeps_a_detailed_report_for_every_reached_phase():
+    fight = DespairBattle(party())
+    attacker = fight.heroes[1]
+    maximum = fight.boss_max_hp
+    for phase in range(1, 5):
+        fight.round = phase
+        fight.log.append(f"第{phase}阶段细节")
+        fight.boss_actions.append({"round": phase, "phase": phase, "skill": f"招式{phase}"})
+        fight.damage_boss(attacker, maximum * 10)
+    fight.round = 5
+    fight.log.append("第五阶段细节")
+    fight.boss_actions.append({"round": 5, "phase": 5, "skill": "终局招式"})
+    fight.damage_boss(attacker, maximum * 10)
+
+    reports = fight.result()["phase_reports"]
+    assert [item["phase"] for item in reports] == [1, 2, 3, 4, 5]
+    assert [item["boss_hp_end"] for item in reports] == pytest.approx(
+        [maximum * pct / 100 for pct in (80, 60, 40, 20, 0)], abs=1
+    )
+    assert [item["actions"][-1]["skill"] for item in reports] == [
+        "招式1", "招式2", "招式3", "招式4", "终局招式"
+    ]
+    assert all(any("阶段细节" in line for line in item["log"]) for item in reports)
+
+
 def test_phase_change_heals_six_percent_and_reduces_cooldown():
     fight = DespairBattle(party())
     hero = fight.heroes[0]

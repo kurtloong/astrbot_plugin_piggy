@@ -220,6 +220,8 @@ class DespairBattle:
                                 "turns": int(effect.get("turns", 99)),
                             }
                         )
+        self.phase_reports: list[dict] = []
+        self._phase_report_start = self._new_phase_report_start()
 
     @staticmethod
     def _owner(data: dict):
@@ -234,6 +236,53 @@ class DespairBattle:
 
     def living(self) -> list[_Hero]:
         return [hero for hero in self.heroes if hero.alive]
+
+    def _new_phase_report_start(self) -> dict:
+        return {
+            "phase": self.phase,
+            "name": self.phase_data["name"],
+            "round": max(1, self.round),
+            "boss_hp": self.boss_hp,
+            "log": len(self.log),
+            "actions": len(self.boss_actions),
+            "hero_totals": [
+                {
+                    "dealt": hero.dealt,
+                    "healed": hero.healed,
+                    "taken": hero.taken,
+                    "poise": hero.poise,
+                }
+                for hero in self.heroes
+            ],
+        }
+
+    def _phase_report(self) -> dict:
+        start = self._phase_report_start
+        heroes = []
+        for hero, totals in zip(self.heroes, start["hero_totals"]):
+            heroes.append(
+                {
+                    "index": hero.index,
+                    "hp": round(hero.hp),
+                    "max_hp": round(hero.max_hp),
+                    "alive": hero.alive,
+                    "dealt": round(hero.dealt - totals["dealt"]),
+                    "healed": round(hero.healed - totals["healed"]),
+                    "taken": round(hero.taken - totals["taken"]),
+                    "poise": round(hero.poise - totals["poise"]),
+                }
+            )
+        return {
+            "phase": start["phase"],
+            "name": start["name"],
+            "start_round": start["round"],
+            "end_round": self.round,
+            "boss_hp_start": round(start["boss_hp"]),
+            "boss_hp_end": round(self.boss_hp),
+            "heroes": heroes,
+            "actions": self.boss_actions[start["actions"] :],
+            "log": self.log[start["log"] :],
+        }
 
     @staticmethod
     def _has_effect(hero: _Hero, kind: str) -> bool:
@@ -497,6 +546,7 @@ class DespairBattle:
         self.phase_round = 0
         if self.pending:
             self.log.append(f"阶段转换，预警「{self.pending['name']}」已取消。")
+        self.phase_reports.append(self._phase_report())
         self.pending = None
         self.judgment = None
         self.cooldowns.clear()
@@ -520,6 +570,7 @@ class DespairBattle:
         self.phase_history.append(
             {"phase": self.phase, "name": self.phase_data["name"], "round": self.round}
         )
+        self._phase_report_start = self._new_phase_report_start()
         self.log.append(f"万相猪皇由第 {old} 阶段进入「{self.phase_data['name']}」！")
 
     def _hero_targets(self, hero: _Hero, effect: dict) -> list[_Hero]:
@@ -1535,6 +1586,10 @@ class DespairBattle:
     def result(self, *, max_rounds: int | None = None) -> dict:
         won = self.boss_hp <= 0
         limit = max_rounds or min(DESPAIR_MAX_ROUNDS, self.config.get("max_rounds", 20))
+        phase_reports = [*self.phase_reports]
+        current_report = self._phase_report()
+        if not phase_reports or phase_reports[-1]["phase"] != current_report["phase"]:
+            phase_reports.append(current_report)
         return {
             "winner": 0 if won else 1,
             "won": won,
@@ -1570,6 +1625,7 @@ class DespairBattle:
                 "actions": self.boss_actions,
             },
             "phases": self.phase_history,
+            "phase_reports": phase_reports,
             "log": self.log,
             "stats": {
                 "poise_breaks": self.poise_breaks,

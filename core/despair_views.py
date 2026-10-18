@@ -6,7 +6,7 @@ import asyncio
 import math
 from pathlib import Path
 
-from .despair_rendering import PHASE_NAMES, render_despair_poster
+from .despair_rendering import PHASE_NAMES, render_despair_phase
 from .views import card_message, display_name, text_message
 
 
@@ -125,47 +125,58 @@ async def despair_battle_message(settings, root: Path, battle: dict):
         }
         for f in fighters
     ]
-    stats = sorted(
-        [
-            {
-                "owner": display_name(f["user"]),
-                "pig": f["pig"]["name"],
-                "dealt": f.get("dealt", 0),
-                "healed": f.get("healed", 0),
-                "taken": f.get("taken", 0),
-                "poise": f.get("poise", f.get("poise_contribution", 0)),
-            }
-            for f in fighters
-        ],
-        key=lambda row: (-row["dealt"], -row["healed"], -row["taken"]),
-    )
-    phase_records = result.get("phases") or result.get("phase_records") or []
-    phase = result.get("phase") or (result.get("boss") or {}).get("phase")
-    phase = phase or (5 if battle.get("won") else 1)
     rewards = _reward_lines(battle.get("rewards") or [])
     if not rewards:
         rewards = ["挑战失败，本次不发放奖励；不会扣除出战小猪，可以重新挑战。"]
-    data = {
-        "subtitle": f"{battle.get('week', '')} · 四人八猪 · {'通关' if battle.get('won') else '挑战失败'}",
-        "won": battle.get("won", False),
-        "boss": result.get("boss") or {},
-        "phase": phase,
-        "rounds": result.get("rounds", 0),
-        "party": party,
-        "stats": stats,
-        "phases": phase_records,
-        "log": result.get("log") or [],
-        "rewards": rewards,
-        "footer": f"绝境战 #{battle.get('id', '')} · 奖励每周领取一次 · 已领奖玩家仍可助战",
-    }
-    card = await asyncio.to_thread(render_despair_poster, root, data)
+    reports = result.get("phase_reports") or []
+    if not reports:
+        phase = (result.get("boss") or {}).get("phase") or (5 if battle.get("won") else 1)
+        reports = [
+            {
+                "phase": phase,
+                "name": PHASE_NAMES[phase - 1],
+                "start_round": 1,
+                "end_round": result.get("rounds", 0),
+                "boss_hp_start": (result.get("boss") or {}).get("max_hp", 1),
+                "boss_hp_end": (result.get("boss") or {}).get("hp", 0),
+                "heroes": result.get("heroes") or [],
+                "actions": (result.get("boss") or {}).get("actions") or [],
+                "log": result.get("log") or [],
+            }
+        ]
+    boss_asset = (battle.get("boss_pig") or {}).get("asset", "")
+    cards = []
+    for index, report in enumerate(reports[:5]):
+        states = {item.get("index", offset): item for offset, item in enumerate(report.get("heroes") or [])}
+        phase_party = [{**side, **states.get(offset, {})} for offset, side in enumerate(party)]
+        cards.append(
+            await asyncio.to_thread(
+                render_despair_phase,
+                root,
+                {
+                    "report": report,
+                    "party": phase_party,
+                    "boss": result.get("boss") or {},
+                    "boss_asset": boss_asset,
+                    "final": index == len(reports[:5]) - 1,
+                    "rewards": rewards,
+                    "footer": f"绝境战 #{battle.get('id', '')} · {battle.get('week', '')} · "
+                    f"{'通关' if battle.get('won') else '挑战失败'}",
+                },
+            )
+        )
     raid = battle.get("raid") or {}
     owner = raid.get("leader_user") or (fighters[0]["user"] if fighters else {"open_id": ""})
-    return card_message(
-        settings,
-        owner,
-        card,
-        "绝境战战报",
-        "raid",
-        buttons=[("绝境战", "绝境战"), ("再次组队", "开启绝境战 ")],
+    return tuple(
+        card_message(
+            settings,
+            owner,
+            card,
+            f"绝境战第 {reports[index]['phase']} 阶段战报",
+            "raid",
+            buttons=[("绝境战", "绝境战"), ("再次组队", "开启绝境战 ")]
+            if index == len(cards) - 1
+            else (),
+        )
+        for index, card in enumerate(cards)
     )

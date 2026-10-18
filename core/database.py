@@ -1240,6 +1240,7 @@ class Database:
             "heroes": result.get("heroes", []),
             "timeout": bool(result.get("timeout")),
             "phases": result.get("phases", result.get("phase", [])),
+            "phase_reports": result.get("phase_reports", []),
             "ultimate": result.get("ultimate", []),
         }
         cursor = conn.execute(
@@ -1269,6 +1270,7 @@ class Database:
         view = cls._despair_view(
             conn, conn.execute("SELECT * FROM despair_raids WHERE id=?", (raid_id,)).fetchone()
         )
+        boss_pig_row = conn.execute("SELECT * FROM pigs WHERE id=?", ("pighub0253",)).fetchone()
         return {
             "id": cursor.lastrowid,
             "raid": view,
@@ -1277,6 +1279,7 @@ class Database:
             "week": settlement_week,
             "result": result,
             "fighters": fighters,
+            "boss_pig": dict(boss_pig_row) if boss_pig_row else None,
             "rewards": rewards,
         }
 
