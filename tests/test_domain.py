@@ -108,6 +108,19 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("用了 3 次抽取机会", receipt.text)
         self.assertIn("剩余再抽 0 次", receipt.text)
 
+        # Asking for today's pig after a draw-all replays the grouped batch.
+        # It must use the batch receipt rather than treating grouped rows as
+        # ordinary gather/chain items (which do not have a ``kind`` field).
+        recalled = await self.db.draw(
+            self.user["id"], "group-a", "today-after-all", now, app_id="app"
+        )
+        self.assertTrue(recalled["all_available"])
+        replay_receipt = today_message(
+            Settings(), self.root, self.user, recalled, await self.db.collection(self.user["id"])
+        )
+        self.assertIn("这次全部抽取已经处理过啦", replay_receipt.text)
+        self.assertIn("用了 3 次抽取机会", replay_receipt.text)
+
     async def test_pity_survives_gaps_restart_and_same_day_replays(self):
         start = datetime(2026, 9, 1, tzinfo=timezone.utc)
         first = await self.db.draw(self.user["id"], "a", "first", start)

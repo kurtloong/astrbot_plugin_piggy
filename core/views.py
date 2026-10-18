@@ -112,6 +112,11 @@ def keyboard(
 def today_message(
     settings: Settings, root: Path, user: dict, result: dict, progress: dict
 ) -> Message:
+    # Repeating the daily command after ``全部抽完`` replays the latest batch
+    # session.  Its items are grouped by species (count/new) rather than stored
+    # as individual gather/chain rows, so render the matching batch receipt.
+    if result.get("all_available"):
+        return draw_all_message(user, result, progress)
     items = result.get("items") or [
         {"pig": result["pig"], "kind": "base", "parent": None, "new": result["new_species"]}
     ]
