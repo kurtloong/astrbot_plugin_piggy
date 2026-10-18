@@ -24,16 +24,9 @@ def render_despair_phase(root: Path, data: dict):
     """Render one complete phase so QQ can send the encounter as five reports."""
     report = data.get("report") or {}
     party = list(data.get("party") or [])
-    actions = list(report.get("actions") or [])
     overall = list(data.get("overall_stats") or []) if data.get("final") else []
     rewards = list(data.get("rewards") or []) if data.get("final") else []
     measure = Canvas(root, WIDTH, 1)
-    action_lines = []
-    for action in actions:
-        extra = " · 追加行动" if action.get("extra") else ""
-        detail = f"：{action['detail']}" if action.get("detail") else ""
-        text = f"R{action.get('round', '?')}  万相猪皇施放「{action.get('skill', '未知技能')}」{extra}{detail}"
-        action_lines.extend(measure.wrap(text, 18, 920))
     log_lines = []
     for entry in report.get("log") or []:
         log_lines.extend((line, entry) for line in measure.wrap(str(entry), 18, 920))
@@ -41,11 +34,11 @@ def render_despair_phase(root: Path, data: dict):
     measure.image.close()
 
     party_h = 4 * 126
-    action_h = max(1, len(action_lines)) * 29
     log_h = max(1, len(log_lines)) * 29
     overall_h = (84 + max(1, len(overall)) * 38) if data.get("final") else 0
     reward_h = (75 + max(1, len(reward_lines)) * 33) if data.get("final") else 0
-    height = 410 + party_h + 85 + action_h + 80 + log_h + overall_h + reward_h + 110
+    log_top = 410 + 65 + party_h
+    height = log_top + 70 + log_h + overall_h + reward_h + 70
     canvas = Canvas(root, WIDTH, height)
     phase = int(report.get("phase", 1))
     canvas.text("PIGGY  /  LAST STAND", 58, 34, 18, ACCENT, True)
@@ -124,23 +117,20 @@ def render_despair_phase(root: Path, data: dict):
             width=158,
         )
 
-    action_top = party_top + 65 + party_h
-    canvas.text("Boss 行动", 58, action_top, 27, bold=True)
-    for index, line in enumerate(action_lines or ["本阶段未能行动"]):
-        canvas.text(line, 70, action_top + 47 + index * 29, 18, TEXT, width=930)
-
-    log_top = action_top + 70 + action_h
     canvas.text("完整战斗细节", 58, log_top, 27, bold=True)
     for index, item in enumerate(log_lines or [("本阶段没有额外战斗记录", "")]):
         line, source = item
+        boss_action = any(
+            key in source for key in ("万相猪皇施放", "万相猪皇发动")
+        )
         highlight = any(key in source for key in ("阶段", "极限技", "倒下", "击破", "击败"))
         canvas.text(
             line,
             70,
             log_top + 47 + index * 29,
             18,
-            ACCENT if highlight else SUB,
-            highlight,
+            ACCENT if highlight else TEXT if boss_action else SUB,
+            highlight or boss_action,
             width=930,
         )
 
