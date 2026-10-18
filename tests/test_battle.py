@@ -3,6 +3,7 @@ import json
 import random
 import re
 import unittest
+from collections import Counter
 from pathlib import Path
 
 from core.battle import (
@@ -112,6 +113,11 @@ class BattleDataTests(unittest.TestCase):
         tagged["tags"] = ["输出", "自回"]
         with self.assertRaises(PiggyError):
             validate_entry("bad-tags", tagged)
+
+    def test_bundled_role_distribution_is_balanced(self):
+        counts = Counter(entry["role"] for entry in self.data.values())
+        self.assertLessEqual(max(counts.values()) - min(counts.values()), 40, counts)
+        self.assertLessEqual(counts["辅助"], len(self.data) // 4, counts)
 
     def test_every_healer_has_a_low_power_zero_cooldown_healing_basic(self):
         allowed = {"heal", "mass_heal", "shield", "regen"}
