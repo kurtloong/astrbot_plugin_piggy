@@ -1325,16 +1325,19 @@ class DespairBattle:
                 if ally is not target:
                     self._trigger(ally, "on_ally_dodge")
             return 0.0
+        pressure = max(0, self.round - 1) * float(
+            self.config.get("pressure_per_round", 0.0)
+        )
+        enrage_round = int(self.config.get("enrage_round", DESPAIR_MAX_ROUNDS))
+        pressure += max(0, self.round - enrage_round) * float(
+            self.config.get("enrage_per_round", 0.0)
+        )
         raw = (
             self.boss_atk
             * power
             * (1 + self.damage_bonus)
             * float(self.config.get("damage_scale", 1.0))
-            * (
-                1
-                + max(0, self.round - 1)
-                * float(self.config.get("pressure_per_round", 0.0))
-            )
+            * (1 + pressure)
         )
         if self.boss_weaken:
             raw *= 1 - max(item["pct"] for item in self.boss_weaken) / 100

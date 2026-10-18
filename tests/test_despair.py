@@ -362,6 +362,23 @@ def test_strong_party_can_clear_phases_faster_than_ten_rounds_without_damage_cap
     assert not any("限制了本回合" in line for line in result["log"])
 
 
+def test_late_despair_pressure_makes_boss_hits_substantially_stronger():
+    config = copy.deepcopy(DESPAIR_BOSS)
+    config["stats"] = {"hp": 10_000, "atk": 100, "def": 20}
+    config.update(damage_scale=1, pressure_per_round=0.005, enrage_round=60, enrage_per_round=0.2)
+    fight = DespairBattle(party(hp=1_000), seed=2, boss=config)
+    target = fight.heroes[0]
+
+    fight.round = 1
+    early = fight._boss_hit(target, 1)
+    target.hp = target.max_hp
+    target.shield = 0
+    fight.round = 70
+    late = fight._boss_hit(target, 1)
+
+    assert late > early * 3
+
+
 def test_player_adapter_supports_special_effects_without_basic_fallback():
     fight = DespairBattle(party(), seed=41)
     hero, ally = fight.heroes[:2]
