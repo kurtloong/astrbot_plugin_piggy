@@ -328,8 +328,13 @@ def test_disaster_breath_cycles_through_all_three_ailments():
 
 
 def test_simulation_is_deterministic_and_result_is_json_ready():
-    first = simulate_despair(party(), seed=19)
-    second = simulate_despair(party(), seed=19)
+    config = copy.deepcopy(DESPAIR_BOSS)
+    config.update(hp_scale=1, hero_damage_scale=1, damage_scale=0.35)
+    config["stats"] = {"hp": 1_000, "atk": 1, "def": 20}
+    for phase in config["phases"]:
+        phase["damage_taken_scale"] = 1
+    first = simulate_despair(party(atk=1_000), seed=19, boss=config)
+    second = simulate_despair(party(atk=1_000), seed=19, boss=config)
     assert first == second
     json.dumps(first, ensure_ascii=False)
     assert first["rounds"] <= 100
@@ -339,12 +344,13 @@ def test_simulation_is_deterministic_and_result_is_json_ready():
         {"seat", "hp", "max_hp", "alive", "dealt", "healed", "taken"} <= set(hero)
         for hero in first["heroes"]
     )
-    assert len(first["ultimate"]["history"]) == 2
+    assert first["ultimate"]["history"]
 
 
-def test_successful_phases_each_take_between_ten_and_twenty_rounds():
+def test_strong_party_can_clear_phases_faster_than_ten_rounds_without_damage_cap():
     config = copy.deepcopy(DESPAIR_BOSS)
     config["stats"] = {"hp": 1000, "atk": 1, "def": 20}
+    config["hero_damage_scale"] = 1
     for phase in config["phases"]:
         phase["skills"] = [{"name": "御前裁决", "power": 0.01, "cooldown": 0}]
     result = simulate_despair(party(hp=300, atk=1_000), seed=2, boss=config)
@@ -352,7 +358,8 @@ def test_successful_phases_each_take_between_ten_and_twenty_rounds():
     assert result["won"]
     assert len(result["phase_reports"]) == 5
     durations = [item["end_round"] - item["start_round"] + 1 for item in result["phase_reports"]]
-    assert all(10 <= duration <= 20 for duration in durations)
+    assert min(durations) < 10
+    assert not any("限制了本回合" in line for line in result["log"])
 
 
 def test_player_adapter_supports_special_effects_without_basic_fallback():
@@ -715,7 +722,8 @@ def test_poise_break_without_warning_grants_expose_and_custom_timeout_is_true():
 def test_start_of_round_dot_transition_uses_first_phase_two_disaster():
     config = copy.deepcopy(DESPAIR_BOSS)
     config["max_rounds"] = 2
-    config["min_phase_rounds"] = 1
+    config["hero_damage_scale"] = 1
+    config["phases"][0]["damage_taken_scale"] = 1
     fight = DespairBattle(party(atk=1), seed=8, boss=config)
     fight.boss_dots.append(
         {"source": fight.heroes[1], "pct": 25, "turns": 1, "label": "跨阶段灼烧"}
