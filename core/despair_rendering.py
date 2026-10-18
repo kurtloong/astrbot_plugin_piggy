@@ -31,9 +31,8 @@ def render_despair_phase(root: Path, data: dict):
     action_lines = []
     for action in actions:
         extra = " · 追加行动" if action.get("extra") else ""
-        text = (
-            f"R{action.get('round', '?')}  万相猪皇施放「{action.get('skill', '未知技能')}」{extra}"
-        )
+        detail = f"：{action['detail']}" if action.get("detail") else ""
+        text = f"R{action.get('round', '?')}  万相猪皇施放「{action.get('skill', '未知技能')}」{extra}{detail}"
         action_lines.extend(measure.wrap(text, 18, 920))
     log_lines = []
     for entry in report.get("log") or []:

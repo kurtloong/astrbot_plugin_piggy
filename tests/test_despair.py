@@ -100,6 +100,30 @@ def test_boss_skills_are_an_independent_non_collectible_schema():
     assert set(result["boss"]["skills"]) == BOSS_SKILL_NAMES
 
 
+def test_combat_log_explains_actual_skill_and_boss_effects():
+    heroes = party()
+    heroes[1]["skills"] = [
+        {
+            "name": "测试攻防术",
+            "effects": [
+                {"type": "damage", "power": 1.0},
+                {"type": "shield", "pct": 10, "target": "self"},
+            ],
+        }
+    ]
+    config = copy.deepcopy(DESPAIR_BOSS)
+    config["max_rounds"] = 1
+    result = simulate_despair(heroes, seed=3, boss=config)
+
+    hero_line = next(line for line in result["log"] if "测试攻防术" in line)
+    assert hero_line.startswith("R1 ")
+    assert "造成" in hero_line
+    assert "护盾" in hero_line
+    assert result["boss"]["actions"]
+    assert all(action.get("detail") for action in result["boss"]["actions"])
+    assert all(line for report in result["phase_reports"] for line in report["log"])
+
+
 def test_blood_moon_pair_shares_thirty_percent_without_recursion():
     fight = DespairBattle(party())
     fight.phase = 3
@@ -683,4 +707,5 @@ def test_start_of_round_dot_transition_uses_first_phase_two_disaster():
     fight.run()
     assert fight.phase >= 2
     phase_two = next(line for line in fight.log if "阶段机制·七灾预兆" in line)
-    assert phase_two.endswith("尸毒。")
+    assert "「尸毒」" in phase_two
+    assert "持续 2 回合" in phase_two
