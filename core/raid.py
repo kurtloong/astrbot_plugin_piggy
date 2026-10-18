@@ -22,6 +22,8 @@ POISE_MAX = 160.0
 POISE_MAX_BREAKS = 2
 POISE_SECOND_CYCLE_FACTOR = 0.65
 POISE_BREAK_DAMAGE = 1.10
+TANK_POISE_DAMAGE_SCALE = 10.0
+TANK_POISE_MAX_PER_ACTION = 7.0
 # Bosses keep their full kit and use encounter tuning rather than inheriting a
 # collectible level.  Parties below the Lv5 balance benchmark receive a
 # separate accessibility adjustment after encounter scaling.
@@ -319,6 +321,10 @@ class _RaidBattle(_Battle):
         self._poise_skill = None
         self._poise_damage_awarded = False
         self.poise_contributions = {id(hero): 0.0 for hero in self.heroes}
+        # Tank poise from taking damage is based on total effective damage, not
+        # hit count.  Boss actions can fan out into many tiny guard/share hits;
+        # batching those hits keeps the reward invariant to that segmentation.
+        self._tank_poise_action_damage = None
         for unit in self.heroes + [self.boss]:
             self._enlist(unit, "boss" if unit is self.boss else "hero")
         self._configure()
@@ -419,6 +425,15 @@ class _RaidBattle(_Battle):
             self.say(f"{self.boss.label} 恢复韧性，并适应了队伍战术；本场不会再次破防")
         else:
             self.say(f"{self.boss.label} 恢复 {self.poise_max:.0f} 点韧性，后续削韧效率降低")
+
+    def _award_tank_damage_poise(self, unit, damage: float):
+        if damage <= 0:
+            return
+        amount = min(
+            TANK_POISE_MAX_PER_ACTION,
+            1.0 + damage / max(1, unit.max_hp) * TANK_POISE_DAMAGE_SCALE,
+        )
+        self._reduce_poise(unit, amount, "坚守承伤")
 
     @staticmethod
     def _burst_power(skill: dict) -> float:
@@ -784,8 +799,12 @@ class _RaidBattle(_Battle):
                 and credited is not None
                 and credited.side == 1
             ):
-                value = min(6.0, 1.0 + dealt / max(1, unit.max_hp) * 10)
-                self._reduce_poise(unit, value, "坚守承伤")
+                if self._tank_poise_action_damage is not None:
+                    self._tank_poise_action_damage[unit] = (
+                        self._tank_poise_action_damage.get(unit, 0.0) + dealt
+                    )
+                else:
+                    self._award_tank_damage_poise(unit, dealt)
         # Damage-threshold hooks must observe lethal crossings too.  Some bosses
         # (notably Error404) restore themselves at a mandatory threshold; calling
         # this before fall handling lets that recovery happen without teaching
@@ -1048,26 +1067,37 @@ class _RaidBattle(_Battle):
 
     def act(self, unit, enemy):
         self.acting = unit
-        if unit is self.boss and self.poise_broken and self._poise_interrupt_pending:
-            self._poise_interrupt_pending = False
-            self.say(f"{self.boss.label} 的行动被破防冲击打断了")
-            return
-        if unit is self.boss and self.mech.before_act(self):
-            return
-        if unit.glitch:
-            unit.glitch = False
-            lost = self.hurt(unit, unit.max_hp * 0.05)
-            self.say(f"{unit.label} 返回了 404，原地疯狂刷新，损失 {round(lost)} 生命")
-            return
-        if unit.possessed:
-            unit.possessed = False
-            allies = [h for h in self.present_heroes() if h is not unit]
-            if allies:
-                ally = self.rng.choice(allies)
-                self.say(f"{unit.label} 被附身了，转身攻击了队友 {ally.label}")
-                self.cast(unit, ally, unit.actives[0])
+        tracking_tank_damage = unit.side == 1
+        previous_tank_damage = self._tank_poise_action_damage
+        if tracking_tank_damage:
+            self._tank_poise_action_damage = {}
+        try:
+            if unit is self.boss and self.poise_broken and self._poise_interrupt_pending:
+                self._poise_interrupt_pending = False
+                self.say(f"{self.boss.label} 的行动被破防冲击打断了")
                 return
-        super().act(unit, enemy)
+            if unit is self.boss and self.mech.before_act(self):
+                return
+            if unit.glitch:
+                unit.glitch = False
+                lost = self.hurt(unit, unit.max_hp * 0.05)
+                self.say(f"{unit.label} 返回了 404，原地疯狂刷新，损失 {round(lost)} 生命")
+                return
+            if unit.possessed:
+                unit.possessed = False
+                allies = [h for h in self.present_heroes() if h is not unit]
+                if allies:
+                    ally = self.rng.choice(allies)
+                    self.say(f"{unit.label} 被附身了，转身攻击了队友 {ally.label}")
+                    self.cast(unit, ally, unit.actives[0])
+                    return
+            super().act(unit, enemy)
+        finally:
+            if tracking_tank_damage:
+                pending = self._tank_poise_action_damage
+                self._tank_poise_action_damage = previous_tank_damage
+                for tank, damage in (pending or {}).items():
+                    self._award_tank_damage_poise(tank, damage)
 
     def decided(self):
         if not self.boss.alive:
