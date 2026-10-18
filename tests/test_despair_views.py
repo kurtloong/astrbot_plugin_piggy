@@ -65,3 +65,6 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
             [call.args[1]["report"]["phase"] for call in render.call_args_list],
             list(range(1, 6)),
         )
+        self.assertTrue(
+            all(call.args[1]["report"]["mechanics"] for call in render.call_args_list)
+        )

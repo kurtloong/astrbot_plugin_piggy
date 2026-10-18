@@ -72,6 +72,7 @@ def test_result_keeps_a_detailed_report_for_every_reached_phase():
     assert [item["actions"][-1]["skill"] for item in reports] == [
         "招式1", "招式2", "招式3", "招式4", "终局招式"
     ]
+    assert all(item["mechanics"] for item in reports)
     assert all(any("阶段细节" in line for line in item["log"]) for item in reports)
 
 

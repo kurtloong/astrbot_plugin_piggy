@@ -6,6 +6,7 @@ import asyncio
 import math
 from pathlib import Path
 
+from .despair import DESPAIR_BOSS
 from .despair_rendering import PHASE_NAMES, render_despair_phase
 from .views import card_message, display_name, text_message
 
@@ -165,6 +166,12 @@ async def despair_battle_message(settings, root: Path, battle: dict):
     boss_asset = (battle.get("boss_pig") or {}).get("asset", "")
     cards = []
     for index, report in enumerate(reports[:5]):
+        phase_index = max(0, min(4, int(report.get("phase", 1)) - 1))
+        if not report.get("mechanics"):
+            report = {
+                **report,
+                "mechanics": DESPAIR_BOSS["phases"][phase_index].get("mechanics", []),
+            }
         states = {
             item.get("index", offset): item
             for offset, item in enumerate(report.get("heroes") or [])

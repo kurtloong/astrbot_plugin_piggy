@@ -27,6 +27,14 @@ def render_despair_phase(root: Path, data: dict):
     overall = list(data.get("overall_stats") or []) if data.get("final") else []
     rewards = list(data.get("rewards") or []) if data.get("final") else []
     measure = Canvas(root, WIDTH, 1)
+    mechanic_lines = []
+    for mechanic in report.get("mechanics") or []:
+        name = mechanic.get("name", "阶段机制")
+        description = mechanic.get("text", "")
+        # The first line is bold like the regular raid mechanic list, so wrap
+        # against a narrower measure to leave room for the bullet and heavier face.
+        for index, line in enumerate(measure.wrap(f"{name}：{description}", 18, 840)):
+            mechanic_lines.append((line, index == 0))
     log_lines = []
     for entry in report.get("log") or []:
         log_lines.extend((line, entry) for line in measure.wrap(str(entry), 18, 920))
@@ -34,10 +42,12 @@ def render_despair_phase(root: Path, data: dict):
     measure.image.close()
 
     party_h = 4 * 126
+    mechanics_h = 70 + len(mechanic_lines) * 29 if mechanic_lines else 0
     log_h = max(1, len(log_lines)) * 29
     overall_h = (84 + max(1, len(overall)) * 38) if data.get("final") else 0
     reward_h = (75 + max(1, len(reward_lines)) * 33) if data.get("final") else 0
-    log_top = 410 + 65 + party_h
+    party_top = 410 + mechanics_h
+    log_top = party_top + 65 + party_h
     height = log_top + 70 + log_h + overall_h + reward_h + 70
     canvas = Canvas(root, WIDTH, height)
     phase = int(report.get("phase", 1))
@@ -67,7 +77,19 @@ def render_despair_phase(root: Path, data: dict):
     _hp_bar(canvas, 265, 315, 515, end_hp, maximum, ACCENT if end_hp else SUB)
     canvas.text(f"{start_hp} → {end_hp} / {maximum}", 800, 303, 17, SUB, width=210)
 
-    party_top = 410
+    if mechanic_lines:
+        canvas.text("阶段机制", 58, 410, 27, ACCENT, True)
+        for index, (line, first) in enumerate(mechanic_lines):
+            canvas.text(
+                ("· " if first else "  ") + line,
+                70,
+                457 + index * 29,
+                18,
+                TEXT,
+                first,
+                width=930,
+            )
+
     canvas.text("本阶段队伍状态", 58, party_top, 27, bold=True)
     for index, side in enumerate(party):
         row, column = divmod(index, 2)

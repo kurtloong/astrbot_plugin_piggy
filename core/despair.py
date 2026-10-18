@@ -365,6 +365,7 @@ class DespairBattle:
 
     def _phase_report(self) -> dict:
         start = self._phase_report_start
+        phase_config = self.config["phases"][start["phase"] - 1]
         heroes = []
         for hero, totals in zip(self.heroes, start["hero_totals"]):
             heroes.append(
@@ -386,6 +387,7 @@ class DespairBattle:
             "end_round": self.round,
             "boss_hp_start": round(start["boss_hp"]),
             "boss_hp_end": round(self.boss_hp),
+            "mechanics": phase_config.get("mechanics", []),
             "heroes": heroes,
             "actions": self.boss_actions[start["actions"] :],
             "log": self.log[start["log"] :],
