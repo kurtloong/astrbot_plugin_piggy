@@ -1,7 +1,10 @@
 {
   "id": "despair-emperor",
   "name": "万相猪皇",
-  "max_rounds": 20,
+  "max_rounds": 100,
+  "min_phase_rounds": 10,
+  "max_phase_rounds": 20,
+  "damage_scale": 0.35,
   "phase_thresholds": [80, 60, 40, 20, 0],
   "phases": [
     {

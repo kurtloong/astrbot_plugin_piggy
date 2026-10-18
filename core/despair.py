@@ -18,7 +18,9 @@ from .battle import describe_effect
 
 ROLES = ("坦克", "输出", "治疗", "辅助")
 DESPAIR_PARTY_SIZE = 8
-DESPAIR_MAX_ROUNDS = 20
+DESPAIR_MAX_ROUNDS = 100
+DESPAIR_MIN_PHASE_ROUNDS = 10
+DESPAIR_MAX_PHASE_ROUNDS = 20
 SUPPORTED_HERO_EFFECTS = frozenset(
     {
         "absorb", "aura", "bleed_burst", "block", "buff", "channel", "charge",
@@ -169,6 +171,10 @@ class DespairBattle:
         self.phase = 1
         self.phase_round = 0
         self.round = 0
+        self.running = False
+        self.phase_damage = 0.0
+        self.phase_timed_out = False
+        self.damage_cap_announced_round = -1
         self.log: list[str] = []
         self.phase_history = [{"phase": 1, "name": self.phase_data["name"], "round": 1}]
         self.boss_actions: list[dict] = []
@@ -631,13 +637,33 @@ class DespairBattle:
         boundary_pct = self.config["phase_thresholds"][self.phase - 1]
         boundary = self.boss_max_hp * boundary_pct / 100
         floor = boundary if self.phase < 5 else 0.0
-        dealt = min(max(0.0, amount), max(0.0, self.boss_hp - floor))
+        available = max(0.0, self.boss_hp - floor)
+        if self.running:
+            phase_span = self.boss_max_hp * 0.20
+            minimum = max(
+                1, int(self.config.get("min_phase_rounds", DESPAIR_MIN_PHASE_ROUNDS))
+            )
+            round_cap = phase_span / minimum
+            available = min(available, max(0.0, round_cap - self.phase_damage))
+        dealt = min(max(0.0, amount), available)
         self.boss_hp -= dealt
+        self.phase_damage += dealt
         hero.dealt += dealt
         if self.judgment and hero.role == "输出":
             self.judgment["values"]["输出"] += dealt
             self._check_seals()
-        if self.boss_hp <= boundary and self.phase < 5:
+        if (
+            self.running
+            and available > 0
+            and dealt >= available
+            and self.boss_hp > floor
+            and self.damage_cap_announced_round != self.round
+        ):
+            self.damage_cap_announced_round = self.round
+            self.log.append(
+                f"R{self.round} 万相护体限制了本回合的阶段伤害，更多攻势转为压制。"
+            )
+        if not self.running and self.boss_hp <= boundary and self.phase < 5:
             self._transition()
         return dealt
 
@@ -645,6 +671,7 @@ class DespairBattle:
         old = self.phase
         self.phase += 1
         self.phase_round = 0
+        self.phase_damage = 0.0
         if self.pending:
             self.log.append(f"阶段转换，预警「{self.pending['name']}」已取消。")
         self.phase_reports.append(self._phase_report())
@@ -1314,7 +1341,12 @@ class DespairBattle:
                 if ally is not target:
                     self._trigger(ally, "on_ally_dodge")
             return 0.0
-        raw = self.boss_atk * power * (1 + self.damage_bonus)
+        raw = (
+            self.boss_atk
+            * power
+            * (1 + self.damage_bonus)
+            * float(self.config.get("damage_scale", 1.0))
+        )
         if self.boss_weaken:
             raw *= 1 - max(item["pct"] for item in self.boss_weaken) / 100
         raw += target.max_hp * max_hp_pct
@@ -1421,7 +1453,7 @@ class DespairBattle:
                 if name == "禁声钟鸣" and target.index < 2 and dealt > 0:
                     self._add_debuff(target, {"type": "沉默", "turns": 1})
                 if name == "血税征收":
-                    dealt += self._hurt(target, target.max_hp * 0.02)
+                    dealt += self._hurt(target, target.max_hp * 0.005)
                     self._heal_boss(dealt * 0.20)
             finish()
             return
@@ -1750,12 +1782,17 @@ class DespairBattle:
             self.log.append(f"R{self.round} 万相猪皇发动「绝境余波」，{detail}。")
 
     def run(self) -> dict:
-        max_rounds = min(DESPAIR_MAX_ROUNDS, self.config.get("max_rounds", 20))
-        while self.round < max_rounds:
+        max_rounds = min(DESPAIR_MAX_ROUNDS, self.config.get("max_rounds", DESPAIR_MAX_ROUNDS))
+        max_phase_rounds = max(
+            1, int(self.config.get("max_phase_rounds", DESPAIR_MAX_PHASE_ROUNDS))
+        )
+        self.running = True
+        while self.round < max_rounds and not self.phase_timed_out:
             if not self.living() or self.boss_hp <= 0:
                 break
             self.round += 1
             self.phase_round += 1
+            self.phase_damage = 0.0
             if self.phase == 5:
                 self.p5_rounds += 1
                 self.damage_bonus += 0.10
@@ -1797,11 +1834,36 @@ class DespairBattle:
                     self.crown = 6
                     self.crown_restored = True
                     self.log.append("崩裂王冠恢复 6 层。")
+            boundary = self.boss_max_hp * self.config["phase_thresholds"][self.phase - 1] / 100
+            if self.phase < 5 and self.boss_hp <= boundary:
+                self._transition()
+                self._phase_report_start["round"] = self.round + 1
+            elif self.phase_round >= max_phase_rounds:
+                remaining = max(0.0, self.boss_hp - boundary)
+                phase_span = self.boss_max_hp * 0.20
+                if remaining <= phase_span * 0.25:
+                    self.boss_hp = boundary
+                    self.log.append(
+                        f"R{self.round} 阶段达到 {max_phase_rounds} 回合，队伍完成最后压制，"
+                        f"突破「{self.phase_data['name']}」！"
+                    )
+                    if self.phase < 5:
+                        self._transition()
+                        self._phase_report_start["round"] = self.round + 1
+                else:
+                    self.phase_timed_out = True
+                    self.log.append(
+                        f"R{self.round} 「{self.phase_data['name']}」持续达到 {max_phase_rounds} 回合，"
+                        "万相猪皇发动绝境驱逐，挑战失败。"
+                    )
+        self.running = False
         return self.result(max_rounds=max_rounds)
 
     def result(self, *, max_rounds: int | None = None) -> dict:
         won = self.boss_hp <= 0
-        limit = max_rounds or min(DESPAIR_MAX_ROUNDS, self.config.get("max_rounds", 20))
+        limit = max_rounds or min(
+            DESPAIR_MAX_ROUNDS, self.config.get("max_rounds", DESPAIR_MAX_ROUNDS)
+        )
         phase_reports = [*self.phase_reports]
         current_report = self._phase_report()
         if not phase_reports or phase_reports[-1]["phase"] != current_report["phase"]:
@@ -1809,7 +1871,9 @@ class DespairBattle:
         return {
             "winner": 0 if won else 1,
             "won": won,
-            "timeout": self.round >= limit and not won and bool(self.living()),
+            "timeout": (self.round >= limit or self.phase_timed_out)
+            and not won
+            and bool(self.living()),
             "rounds": self.round,
             "seed": self.seed,
             "heroes": [
@@ -1848,6 +1912,7 @@ class DespairBattle:
                 "resonance_triggers": self.resonance_triggers,
                 "crown": self.crown,
                 "revive_blocked": self.revive_blocked,
+                "phase_timeout": self.phase_timed_out,
             },
             "judgment": self.judgment,
             "judgments": self.judgment_history,

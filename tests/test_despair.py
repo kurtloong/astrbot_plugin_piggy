@@ -111,6 +111,7 @@ def test_combat_log_explains_actual_skill_and_boss_effects():
             ],
         }
     ]
+    heroes[1]["stats"]["spd"] = 100
     config = copy.deepcopy(DESPAIR_BOSS)
     config["max_rounds"] = 1
     result = simulate_despair(heroes, seed=3, boss=config)
@@ -330,7 +331,7 @@ def test_simulation_is_deterministic_and_result_is_json_ready():
     second = simulate_despair(party(), seed=19)
     assert first == second
     json.dumps(first, ensure_ascii=False)
-    assert first["rounds"] <= 20
+    assert first["rounds"] <= 100
     assert first["won"]
     assert [item["phase"] for item in first["phases"]] == [1, 2, 3, 4, 5]
     assert all(
@@ -338,6 +339,19 @@ def test_simulation_is_deterministic_and_result_is_json_ready():
         for hero in first["heroes"]
     )
     assert len(first["ultimate"]["history"]) == 2
+
+
+def test_successful_phases_each_take_between_ten_and_twenty_rounds():
+    config = copy.deepcopy(DESPAIR_BOSS)
+    config["stats"] = {"hp": 1000, "atk": 1, "def": 20}
+    for phase in config["phases"]:
+        phase["skills"] = [{"name": "御前裁决", "power": 0.01, "cooldown": 0}]
+    result = simulate_despair(party(hp=300, atk=1_000), seed=2, boss=config)
+
+    assert result["won"]
+    assert len(result["phase_reports"]) == 5
+    durations = [item["end_round"] - item["start_round"] + 1 for item in result["phase_reports"]]
+    assert all(10 <= duration <= 20 for duration in durations)
 
 
 def test_player_adapter_supports_special_effects_without_basic_fallback():
@@ -699,7 +713,8 @@ def test_poise_break_without_warning_grants_expose_and_custom_timeout_is_true():
 
 def test_start_of_round_dot_transition_uses_first_phase_two_disaster():
     config = copy.deepcopy(DESPAIR_BOSS)
-    config["max_rounds"] = 1
+    config["max_rounds"] = 2
+    config["min_phase_rounds"] = 1
     fight = DespairBattle(party(atk=1), seed=8, boss=config)
     fight.boss_dots.append(
         {"source": fight.heroes[1], "pct": 25, "turns": 1, "label": "跨阶段灼烧"}
