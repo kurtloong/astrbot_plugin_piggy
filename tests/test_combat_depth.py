@@ -6,6 +6,7 @@ from core.raid import (
     POISE_BREAK_DAMAGE,
     POISE_MAX,
     POISE_SECOND_CYCLE_FACTOR,
+    TANK_POISE_MAX_PER_ACTION,
     ULTIMATE_ROUND,
     _RaidBattle,
     boss_fighter,
@@ -112,6 +113,26 @@ class CombatDepthTests(unittest.TestCase):
         fight.effect(support, fight.boss, cleanse["effects"][0], cleanse)
         self.assertLess(fight.poise, after_debuff)
         self.assertTrue(any("辅助" in note[0] for note in fight.notes))
+
+    def test_tank_damage_poise_is_batched_and_capped_per_action(self):
+        fight = battle()
+        fight.round = 7
+        tank = by_role(fight, "坦克")
+        boss = fight.boss
+        needle_rain = active(
+            "针雨",
+            [{"type": "damage", "power": 0.001, "hits": 60, "true": True}],
+            cd=0,
+        )
+        boss.actives = [needle_rain]
+
+        fight.act(boss, tank)
+
+        contribution = fight.poise_contributions[id(tank)]
+        self.assertGreater(contribution, 0)
+        self.assertLessEqual(contribution, TANK_POISE_MAX_PER_ACTION)
+        tank_notes = [note for note in fight.notes if "坚守承伤" in note[0]]
+        self.assertEqual(len(tank_notes), 1)
 
     def test_break_window_boosts_damage_interrupts_once_then_recovers(self):
         fight = battle()
