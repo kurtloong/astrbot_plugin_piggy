@@ -524,12 +524,7 @@ class DespairBattle:
     def _heal(self, target: _Hero, amount: float, source: _Hero | None) -> float:
         if not target.alive:
             return 0.0
-        phase_penalty = (
-            float(self.phase_data.get("healing_penalty", 0.0))
-            if source is not None and source.role == "治疗"
-            else 0.0
-        )
-        penalty = max(self.heal_penalty, phase_penalty)
+        penalty = self.heal_penalty
         famine = next((item for item in target.debuffs if item["type"] == "饥荒"), None)
         if famine:
             penalty = max(penalty, 0.40)
