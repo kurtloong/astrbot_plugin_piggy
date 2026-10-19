@@ -379,6 +379,27 @@ def test_late_despair_pressure_makes_boss_hits_substantially_stronger():
     assert late > early * 3
 
 
+def test_phase_pressure_scales_boss_damage_and_reduces_double_healer_recovery():
+    config = copy.deepcopy(DESPAIR_BOSS)
+    config["stats"] = {"hp": 10_000, "atk": 100, "def": 20}
+    config.update(damage_scale=1, pressure_per_round=0, enrage_per_round=0)
+    config["phases"][0].update(outgoing_damage_scale=2, healing_penalty=0.25)
+    fight = DespairBattle(party(hp=1_000), seed=2, boss=config)
+    target = fight.heroes[0]
+    target.dodge = 0
+
+    damage = fight._boss_hit(target, 1)
+    target.hp -= 100
+    restored = fight._heal(target, 40, fight.heroes[2])
+
+    baseline = copy.deepcopy(config)
+    baseline["phases"][0]["outgoing_damage_scale"] = 1
+    other = DespairBattle(party(hp=1_000), seed=2, boss=baseline)
+    other.heroes[0].dodge = 0
+    assert damage == pytest.approx(other._boss_hit(other.heroes[0], 1) * 2)
+    assert restored == pytest.approx(30)
+
+
 def test_player_adapter_supports_special_effects_without_basic_fallback():
     fight = DespairBattle(party(), seed=41)
     hero, ally = fight.heroes[:2]
