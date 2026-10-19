@@ -219,7 +219,7 @@ async def despair_battle_message(settings, root: Path, battle: dict):
         messages.append(DeferredMessage(build_message))
     if not battle.get("won") and len(reports[:5]) < 5:
         last = reports[min(len(reports), 5) - 1]
-        reason = "达到 100 回合仍未击败 Boss" if result.get("timeout") else "全队已经倒下"
+        reason = "达到安全回合上限仍未分出胜负" if result.get("timeout") else "全队已经倒下"
         messages.append(
             Message(
                 f"绝境战挑战失败：队伍止步第 {last.get('phase', 1)}/5 阶段"

@@ -18,7 +18,7 @@ from .battle import describe_effect
 
 ROLES = ("坦克", "输出", "治疗", "辅助")
 DESPAIR_PARTY_SIZE = 8
-DESPAIR_MAX_ROUNDS = 100
+DESPAIR_MAX_ROUNDS = 200
 SUPPORTED_HERO_EFFECTS = frozenset(
     {
         "absorb", "aura", "bleed_burst", "block", "buff", "channel", "charge",
@@ -1774,6 +1774,35 @@ class DespairBattle:
             action["detail"] = detail
             self.log.append(f"R{self.round} 万相猪皇发动「绝境余波」，{detail}。")
 
+    def _soft_enrage(self):
+        """Apply unavoidable raid pressure so late fights end through combat, not a timer."""
+        enrage_round = int(self.config.get("enrage_round", DESPAIR_MAX_ROUNDS))
+        layer = self.round - enrage_round
+        if layer <= 0 or not self.living():
+            return
+        base = float(self.config.get("enrage_aoe_base_pct", 0.0))
+        step = float(self.config.get("enrage_aoe_step_pct", 0.0))
+        pct = base + (layer - 1) * step
+        if pct <= 0:
+            return
+        before = self._detail_snapshot()
+        action = {
+            "round": self.round,
+            "phase": self.phase,
+            "skill": "绝境威压",
+            "extra": True,
+            "layer": layer,
+        }
+        self.boss_actions.append(action)
+        for hero in list(self.living()):
+            self._hurt(hero, hero.max_hp * pct / 100, linked=False)
+        detail = "；".join(self._detail_notes(before, boss_actor=True) or ["没有产生有效效果"])
+        action["detail"] = detail
+        self.log.append(
+            f"R{self.round} 万相猪皇发动软狂暴「绝境威压」第 {layer} 层"
+            f"（全队 {pct:g}% 最大生命伤害），{detail}。"
+        )
+
     def run(self) -> dict:
         max_rounds = min(DESPAIR_MAX_ROUNDS, self.config.get("max_rounds", DESPAIR_MAX_ROUNDS))
         while self.round < max_rounds:
@@ -1816,6 +1845,7 @@ class DespairBattle:
                     break
             self._boss_turn()
             self._phase_event_end()
+            self._soft_enrage()
             if phase_at_start == 4 and self.phase == 4 and self.vulnerable_turns:
                 self.vulnerable_turns -= 1
                 if not self.vulnerable_turns and not self.crown_restored:

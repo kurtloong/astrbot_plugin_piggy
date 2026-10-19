@@ -379,6 +379,21 @@ def test_late_despair_pressure_makes_boss_hits_substantially_stronger():
     assert late > early * 3
 
 
+def test_soft_enrage_applies_raidwide_pressure_even_when_boss_is_controlled():
+    config = copy.deepcopy(DESPAIR_BOSS)
+    config.update(enrage_round=60, enrage_aoe_base_pct=1.5, enrage_aoe_step_pct=1.25)
+    fight = DespairBattle(party(hp=1_000), seed=2, boss=config)
+    fight.round = 61
+    fight.boss_stun = 99
+    before = [hero.hp for hero in fight.heroes]
+
+    fight._soft_enrage()
+
+    assert all(old - hero.hp == pytest.approx(15) for old, hero in zip(before, fight.heroes))
+    assert fight.boss_actions[-1]["skill"] == "绝境威压"
+    assert "软狂暴「绝境威压」第 1 层" in fight.log[-1]
+
+
 def test_phase_pressure_scales_boss_damage_without_reducing_healing():
     config = copy.deepcopy(DESPAIR_BOSS)
     config["stats"] = {"hp": 10_000, "atk": 100, "def": 20}
