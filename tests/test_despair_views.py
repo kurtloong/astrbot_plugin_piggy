@@ -3,12 +3,34 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.config import Settings
-from core.despair_rendering import MAX_PHASE_LOG_LINES, _phase_log_lines
+from core.despair_rendering import MAX_PHASE_LOG_LINES, _defeat_log_lines, _phase_log_lines
 from core.despair_views import despair_battle_message
 from core.rendering import Card
 
 
 class DespairViewTests(unittest.IsolatedAsyncioTestCase):
+    def test_defeat_summary_keeps_the_lethal_boss_action(self):
+        class Measure:
+            @staticmethod
+            def wrap(text, size, width):
+                return [text]
+
+        lines = _defeat_log_lines(
+            Measure(),
+            {
+                "log": [
+                    "R69 玩家施放技能。",
+                    "R70 万相猪皇发动软狂暴「绝境威压」，甲受到 80 伤害并倒下；乙受到 90 伤害并倒下。",
+                    "R70 甲 倒下。",
+                    "R70 乙 倒下。",
+                ]
+            },
+        )
+
+        self.assertTrue(any("绝境威压" in line and "并倒下" in line for line, _ in lines))
+        self.assertTrue(any("甲 倒下" in line for line, _ in lines))
+        self.assertTrue(any("乙 倒下" in line for line, _ in lines))
+
     def test_oversized_phase_log_keeps_boss_actions_within_image_budget(self):
         class Measure:
             @staticmethod

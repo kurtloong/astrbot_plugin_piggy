@@ -20,7 +20,7 @@ from .rendering import (
 
 PHASE_NAMES = ("王座重压", "七灾回响", "血月同命", "破冠攻坚", "万相归一")
 MAX_PHASE_LOG_LINES = 86
-MAX_FINAL_LOG_LINES = 68
+MAX_FINAL_LOG_LINES = 54
 
 
 def _spread(entries: list[tuple[int, list[str], str]]) -> list[tuple[int, list[str], str]]:
@@ -103,6 +103,27 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
     ]
 
 
+def _defeat_log_lines(measure: Canvas, report: dict, limit: int = 18):
+    """Show the final cause plus one explicit record for every fallen pig."""
+    log = [str(entry) for entry in report.get("log") or []]
+    deaths = [entry for entry in log if " 倒下" in entry][-8:]
+    lethal = [entry for entry in log if "并倒下" in entry or "被持续伤害击倒" in entry]
+    actions = [
+        entry
+        for entry in log
+        if "万相猪皇施放" in entry or "万相猪皇发动" in entry
+    ]
+    cause = lethal[-1:] or actions[-1:]
+    entries = [*cause, *deaths]
+    lines = []
+    for entry in entries:
+        for line in measure.wrap(entry, 18, 920):
+            if len(lines) >= limit:
+                return lines
+            lines.append((line, entry))
+    return lines
+
+
 def render_despair_phase(root: Path, data: dict):
     """Render one complete phase so QQ can send the encounter as five reports."""
     report = data.get("report") or {}
@@ -124,6 +145,12 @@ def render_despair_phase(root: Path, data: dict):
         MAX_FINAL_LOG_LINES if data.get("final") else MAX_PHASE_LOG_LINES,
     )
     reward_lines = [line for entry in rewards for line in measure.wrap(str(entry), 19, 920)]
+    defeat_lines = (
+        _defeat_log_lines(measure, report)
+        if data.get("final") and not data.get("won") and not data.get("timeout")
+        else []
+    )
+    defeat_count = sum(" 倒下" in str(entry) for entry in report.get("log") or [])
     measure.image.close()
 
     party_h = 4 * 126
@@ -131,9 +158,10 @@ def render_despair_phase(root: Path, data: dict):
     log_h = max(1, len(log_lines)) * 29
     overall_h = (84 + max(1, len(overall)) * 38) if data.get("final") else 0
     reward_h = (75 + max(1, len(reward_lines)) * 33) if data.get("final") else 0
+    defeat_h = 70 + len(defeat_lines) * 29 if defeat_lines else 0
     party_top = 410 + mechanics_h
     log_top = party_top + 65 + party_h
-    height = log_top + 70 + log_h + overall_h + reward_h + 70
+    height = log_top + 70 + log_h + defeat_h + overall_h + reward_h + 70
     canvas = Canvas(root, WIDTH, height)
     phase = int(report.get("phase", 1))
     canvas.text("PIGGY  /  LAST STAND", 58, 34, 18, ACCENT, True)
@@ -199,8 +227,9 @@ def render_despair_phase(root: Path, data: dict):
         )
         _paste_art(canvas, root, side.get("asset", ""), (x + 10, y + 8, 88, 88), faded=not alive)
         canvas.text(side.get("pig", "小猪"), x + 110, y + 10, 20, TEXT, True, width=180)
+        state = "存活" if alive else "已倒下"
         canvas.text(
-            f"{side.get('owner', '玩家')} · {side.get('role', '输出')} · Lv{side.get('level', 0)}",
+            f"{side.get('owner', '玩家')} · {side.get('role', '输出')} · Lv{side.get('level', 0)} · {state}",
             x + 110,
             y + 40,
             16,
@@ -253,6 +282,19 @@ def render_despair_phase(root: Path, data: dict):
 
     footer_top = log_top + 70 + log_h
     if data.get("final"):
+        if defeat_lines:
+            canvas.draw.line((56, footer_top, 1024, footer_top), fill=BORDER, width=2)
+            canvas.text(
+                f"灭队过程 · {defeat_count} 只猪死亡记录",
+                58,
+                footer_top + 20,
+                27,
+                ACCENT,
+                True,
+            )
+            for index, (line, _) in enumerate(defeat_lines):
+                canvas.text(line, 70, footer_top + 65 + index * 29, 18, TEXT, True, width=930)
+            footer_top += defeat_h
         canvas.draw.line((56, footer_top, 1024, footer_top), fill=BORDER, width=2)
         canvas.text("全场输出统计", 58, footer_top + 20, 27, bold=True)
         canvas.text("伤害", 460, footer_top + 27, 16, SUB, True)

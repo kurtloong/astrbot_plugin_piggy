@@ -126,6 +126,18 @@ def test_combat_log_explains_actual_skill_and_boss_effects():
     assert all(line for report in result["phase_reports"] for line in report["log"])
 
 
+def test_lethal_damage_records_which_pig_fell_in_early_phases():
+    fight = DespairBattle(party(), seed=3)
+    target = fight.heroes[0]
+    before = fight._detail_snapshot()
+
+    fight._hurt(target, target.max_hp * 2, linked=False)
+    notes = fight._detail_notes(before, boss_actor=True)
+
+    assert any(f"{target.label}受到" in note and "并倒下" in note for note in notes)
+    assert any(f"{target.label} 倒下" in line for line in fight.log)
+
+
 def test_blood_moon_pair_shares_thirty_percent_without_recursion():
     fight = DespairBattle(party())
     fight.phase = 3
