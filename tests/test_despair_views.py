@@ -3,11 +3,34 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.config import Settings
+from core.despair_rendering import MAX_PHASE_LOG_LINES, _phase_log_lines
 from core.despair_views import despair_battle_message
 from core.rendering import Card
 
 
 class DespairViewTests(unittest.IsolatedAsyncioTestCase):
+    def test_oversized_phase_log_keeps_boss_actions_within_image_budget(self):
+        class Measure:
+            @staticmethod
+            def wrap(text, size, width):
+                return [text]
+
+        log = []
+        for round_number in range(1, 101):
+            log.extend(
+                [
+                    f"R{round_number} 玩家施放「普通技能」，造成完整效果。",
+                    f"R{round_number} 万相猪皇施放「阶段招式」，造成完整效果。",
+                    f"R{round_number} 持续治疗生效。",
+                ]
+            )
+
+        lines = _phase_log_lines(Measure(), {"log": log}, MAX_PHASE_LOG_LINES)
+
+        self.assertLessEqual(len(lines), MAX_PHASE_LOG_LINES)
+        self.assertIn("为适配 QQ 图片尺寸", lines[0][0])
+        self.assertTrue(any("万相猪皇施放" in line for line, _ in lines))
+
     async def test_battle_message_builds_one_card_per_phase_with_catalog_boss_art(self):
         reports = [
             {
@@ -50,6 +73,8 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
             side_effect=[Card(f"card-{phase}".encode(), 1080, 1200) for phase in range(1, 6)],
         ) as render:
             messages = await despair_battle_message(Settings(), Path("/tmp"), battle)
+            self.assertEqual(render.call_count, 0)
+            messages = [await message.resolve() for message in messages]
 
         self.assertEqual(len(messages), 5)
         self.assertTrue(all(message.local for message in messages))

@@ -4,7 +4,7 @@
   "max_rounds": 100,
   "hp_scale": 3.0,
   "hero_damage_scale": 0.5,
-  "damage_scale": 0.9,
+  "damage_scale": 1.15,
   "pressure_per_round": 0.005,
   "enrage_round": 60,
   "enrage_per_round": 0.2,

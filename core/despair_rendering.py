@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from .rendering import (
@@ -18,6 +19,88 @@ from .rendering import (
 )
 
 PHASE_NAMES = ("王座重压", "七灾回响", "血月同命", "破冠攻坚", "万相归一")
+MAX_PHASE_LOG_LINES = 86
+MAX_FINAL_LOG_LINES = 68
+
+
+def _spread(entries: list[tuple[int, list[str], str]]) -> list[tuple[int, list[str], str]]:
+    """Visit a long list from across its full timeline instead of only its opener."""
+    if len(entries) < 3:
+        return entries
+    middle = entries[1:-1]
+    return [entries[0], entries[-1], *middle[::2], *middle[1::2]]
+
+
+def _phase_log_lines(measure: Canvas, report: dict, limit: int):
+    entries = []
+    for index, source in enumerate(report.get("log") or []):
+        source = str(source)
+        entries.append((index, measure.wrap(source, 18, 920), source))
+    if sum(len(lines) for _, lines, _ in entries) <= limit:
+        return [(line, source) for _, lines, source in entries for line in lines]
+
+    # Five passive replies is QQ's hard ceiling, so every phase must remain one
+    # image. Keep a chronological cross-section of real skill effects and all
+    # kinds of important events, while folding repeated basic/status ticks.
+    notice = (
+        f"本阶段共有 {len(entries)} 条记录；为适配 QQ 图片尺寸，以下保留关键机制、"
+        "Boss 行动及代表性技能效果，重复行动已折叠。"
+    )
+    notice_lines = measure.wrap(notice, 18, 920)
+    budget = max(1, limit - len(notice_lines))
+    special_words = (
+        "极限技",
+        "预警",
+        "阶段",
+        "韧性击破",
+        "倒下",
+        "击败",
+        "复活",
+        "裁定印",
+        "王冠",
+        "生命共鸣",
+    )
+    specials = [
+        item
+        for item in entries
+        if any(actor in item[2] for actor in ("万相猪皇施放", "万相猪皇发动"))
+        or any(word in item[2] for word in special_words)
+    ]
+
+    # Ensure each reached round has at least one fully explained player action.
+    round_actions = []
+    seen_rounds = set()
+    for item in entries:
+        match = re.match(r"R(\d+) ", item[2])
+        if (
+            match
+            and match.group(1) not in seen_rounds
+            and "万相猪皇" not in item[2]
+            and any(word in item[2] for word in ("施放", "发动", "触发"))
+        ):
+            seen_rounds.add(match.group(1))
+            round_actions.append(item)
+
+    chosen: dict[int, tuple[int, list[str], str]] = {}
+
+    def take(candidates):
+        nonlocal budget
+        for item in _spread(candidates):
+            if item[0] in chosen:
+                continue
+            cost = len(item[1])
+            if cost <= budget:
+                chosen[item[0]] = item
+                budget -= cost
+
+    take(specials)
+    take(round_actions)
+    take(entries)
+    selected = [chosen[index] for index in sorted(chosen)]
+    return [
+        *((line, notice) for line in notice_lines),
+        *((line, source) for _, lines, source in selected for line in lines),
+    ]
 
 
 def render_despair_phase(root: Path, data: dict):
@@ -35,9 +118,11 @@ def render_despair_phase(root: Path, data: dict):
         # against a narrower measure to leave room for the bullet and heavier face.
         for index, line in enumerate(measure.wrap(f"{name}：{description}", 18, 840)):
             mechanic_lines.append((line, index == 0))
-    log_lines = []
-    for entry in report.get("log") or []:
-        log_lines.extend((line, entry) for line in measure.wrap(str(entry), 18, 920))
+    log_lines = _phase_log_lines(
+        measure,
+        report,
+        MAX_FINAL_LOG_LINES if data.get("final") else MAX_PHASE_LOG_LINES,
+    )
     reward_lines = [line for entry in rewards for line in measure.wrap(str(entry), 19, 920)]
     measure.image.close()
 
