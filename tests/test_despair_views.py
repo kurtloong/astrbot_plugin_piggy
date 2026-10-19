@@ -93,3 +93,44 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             all(call.args[1]["report"]["mechanics"] for call in render.call_args_list)
         )
+
+    async def test_early_defeat_adds_an_explicit_failure_message(self):
+        reports = [
+            {
+                "phase": phase,
+                "name": f"阶段{phase}",
+                "start_round": phase,
+                "end_round": phase,
+                "heroes": [],
+                "log": [],
+            }
+            for phase in range(1, 4)
+        ]
+        battle = {
+            "id": 8,
+            "won": False,
+            "test": True,
+            "fighters": [],
+            "raid": {"leader_user": {"open_id": "tester", "nickname": "测试者"}},
+            "result": {
+                "timeout": False,
+                "boss": {"max_hp": 600, "hp": 250, "phase": 3},
+                "phase_reports": reports,
+            },
+        }
+
+        with patch(
+            "core.despair_views.render_despair_phase",
+            return_value=Card(b"card", 1080, 1200),
+        ) as render:
+            messages = await despair_battle_message(Settings(), Path("/tmp"), battle)
+            self.assertEqual(render.call_count, 0)
+            await messages[2].resolve()
+
+        self.assertEqual(len(messages), 4)
+        self.assertIn("挑战失败", messages[-1].text)
+        self.assertIn("止步第 3/5 阶段", messages[-1].text)
+        self.assertIn("全队已经倒下", messages[-1].text)
+        final_data = render.call_args.args[1]
+        self.assertTrue(final_data["final"])
+        self.assertFalse(final_data["won"])

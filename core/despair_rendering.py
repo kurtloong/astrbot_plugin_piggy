@@ -142,12 +142,22 @@ def render_despair_phase(root: Path, data: dict):
     )
     start_round = report.get("start_round", 1)
     end_round = report.get("end_round", start_round)
+    if data.get("final"):
+        if data.get("won"):
+            status = "挑战成功 · 万相猪皇已被击败"
+        else:
+            reason = "达到回合上限" if data.get("timeout") else "全队倒下"
+            status = f"挑战失败 · 止步第 {phase}/5 阶段 · {reason}"
+    else:
+        status = "阶段结算"
     canvas.text(
-        f"总回合 R{start_round}–R{end_round} · {'最终结算' if data.get('final') else '阶段结算'}",
+        f"总回合 R{start_round}–R{end_round} · {status}",
         58,
         144,
         22,
-        SUB,
+        ACCENT if data.get("final") else SUB,
+        bool(data.get("final")),
+        width=950,
     )
 
     canvas.draw.rounded_rectangle(
@@ -266,7 +276,8 @@ def render_despair_phase(root: Path, data: dict):
             canvas.text(str(row.get("poise", 0)), 890, y, 17, TEXT, width=115)
         footer_top += overall_h
         canvas.draw.line((56, footer_top, 1024, footer_top), fill=BORDER, width=2)
-        canvas.text("最终结算", 58, footer_top + 20, 27, bold=True)
+        outcome = "挑战成功" if data.get("won") else f"挑战失败 · 止步第 {phase}/5 阶段"
+        canvas.text(outcome, 58, footer_top + 20, 27, ACCENT, True)
         for index, line in enumerate(reward_lines or ["本次没有获得奖励"]):
             canvas.text(line, 70, footer_top + 65 + index * 33, 19, TEXT, width=930)
         footer_top += reward_h

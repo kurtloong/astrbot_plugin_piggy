@@ -6,7 +6,7 @@ import asyncio
 import math
 from pathlib import Path
 
-from .delivery import DeferredMessage
+from .delivery import DeferredMessage, Message
 from .despair import DESPAIR_BOSS
 from .despair_rendering import PHASE_NAMES, render_despair_phase
 from .views import card_message, display_name, text_message
@@ -187,6 +187,8 @@ async def despair_battle_message(settings, root: Path, battle: dict):
             "boss": result.get("boss") or {},
             "boss_asset": boss_asset,
             "final": index == len(reports[:5]) - 1,
+            "won": bool(battle.get("won")),
+            "timeout": bool(result.get("timeout")),
             "overall_stats": overall_stats,
             "rewards": rewards,
             "footer": f"绝境战 #{battle.get('id', '')} · {battle.get('week', '')} · "
@@ -215,4 +217,18 @@ async def despair_battle_message(settings, root: Path, battle: dict):
             )
 
         messages.append(DeferredMessage(build_message))
+    if not battle.get("won") and len(reports[:5]) < 5:
+        last = reports[min(len(reports), 5) - 1]
+        reason = "达到 100 回合仍未击败 Boss" if result.get("timeout") else "全队已经倒下"
+        messages.append(
+            Message(
+                f"绝境战挑战失败：队伍止步第 {last.get('phase', 1)}/5 阶段"
+                f"「{last.get('name', '未知阶段')}」，{reason}。"
+                + (
+                    "这是测试战，不会改动收藏、次数或进度。"
+                    if battle.get("test")
+                    else "失败不扣除出战小猪，可以重新组队挑战。"
+                )
+            )
+        )
     return tuple(messages)
