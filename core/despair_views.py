@@ -6,9 +6,9 @@ import asyncio
 import math
 from pathlib import Path
 
-from .delivery import DeferredMessage, Message
+from .delivery import DeferredMessage
 from .despair import DESPAIR_BOSS
-from .despair_rendering import PHASE_NAMES, render_despair_phase
+from .despair_rendering import PHASE_NAMES, render_despair_phase, stack_despair_phase_cards
 from .views import card_message, display_name, text_message
 
 
@@ -165,7 +165,7 @@ async def despair_battle_message(settings, root: Path, battle: dict):
             }
         ]
     boss_asset = (battle.get("boss_pig") or {}).get("asset", "")
-    messages = []
+    render_payloads = []
     owner = (battle.get("raid") or {}).get("leader_user") or (
         fighters[0]["user"] if fighters else {"open_id": ""}
     )
@@ -195,40 +195,23 @@ async def despair_battle_message(settings, root: Path, battle: dict):
             f"{'通关' if battle.get('won') else '挑战失败'}",
         }
 
-        async def build_message(
-            render_data=render_data,
-            report=report,
-            index=index,
-        ):
-            card = await asyncio.to_thread(
-                render_despair_phase,
-                root,
-                render_data,
-            )
-            return card_message(
-                settings,
-                owner,
-                card,
-                f"绝境战第 {report['phase']} 阶段战报",
-                "raid",
-                buttons=[("绝境战", "绝境战"), ("再次组队", "开启绝境战 ")]
-                if index == len(reports[:5]) - 1
-                else (),
-            )
+        render_payloads.append(render_data)
 
-        messages.append(DeferredMessage(build_message))
-    if not battle.get("won") and len(reports[:5]) < 5:
-        last = reports[min(len(reports), 5) - 1]
-        reason = "达到安全回合上限仍未分出胜负" if result.get("timeout") else "全队已经倒下"
-        messages.append(
-            Message(
-                f"绝境战挑战失败：队伍止步第 {last.get('phase', 1)}/5 阶段"
-                f"「{last.get('name', '未知阶段')}」，{reason}。"
-                + (
-                    "这是测试战，不会改动收藏、次数或进度。"
-                    if battle.get("test")
-                    else "失败不扣除出战小猪，可以重新组队挑战。"
-                )
+    async def build_message():
+        phase_cards = await asyncio.gather(
+            *(
+                asyncio.to_thread(render_despair_phase, root, render_data)
+                for render_data in render_payloads
             )
         )
-    return tuple(messages)
+        card = await asyncio.to_thread(stack_despair_phase_cards, phase_cards)
+        return card_message(
+            settings,
+            owner,
+            card,
+            f"绝境战完整战报 · {len(render_payloads)} 个阶段",
+            "raid",
+            buttons=[("绝境战", "绝境战"), ("再次组队", "开启绝境战 ")],
+        )
+
+    return DeferredMessage(build_message)

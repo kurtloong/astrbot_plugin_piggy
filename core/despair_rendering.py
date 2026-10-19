@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import re
 from pathlib import Path
+
+from PIL import Image
 
 from .rendering import (
     ACCENT,
@@ -13,6 +16,7 @@ from .rendering import (
     TEXT,
     WIDTH,
     Canvas,
+    Card,
     _hp_bar,
     _paste_art,
     finish,
@@ -21,6 +25,32 @@ from .rendering import (
 PHASE_NAMES = ("王座重压", "七灾回响", "血月同命", "破冠攻坚", "万相归一")
 MAX_PHASE_LOG_LINES = 86
 MAX_FINAL_LOG_LINES = 54
+PHASE_CARD_GAP = 24
+
+
+def stack_despair_phase_cards(cards: list[Card]) -> Card:
+    """Join every reached phase into one image so QQ only receives one reply."""
+    if not cards:
+        raise ValueError("至少需要一张绝境战阶段图片")
+    if len(cards) == 1:
+        return cards[0]
+
+    images = []
+    try:
+        for card in cards:
+            with Image.open(io.BytesIO(card.data)) as source:
+                images.append(source.convert("RGB"))
+        width = max(image.width for image in images)
+        height = sum(image.height for image in images) + PHASE_CARD_GAP * (len(images) - 1)
+        combined = Image.new("RGB", (width, height), PANEL)
+        y = 0
+        for image in images:
+            combined.paste(image, ((width - image.width) // 2, y))
+            y += image.height + PHASE_CARD_GAP
+        return finish(combined)
+    finally:
+        for image in images:
+            image.close()
 
 
 def _spread(entries: list[tuple[int, list[str], str]]) -> list[tuple[int, list[str], str]]:
@@ -39,9 +69,9 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
     if sum(len(lines) for _, lines, _ in entries) <= limit:
         return [(line, source) for _, lines, source in entries for line in lines]
 
-    # Five passive replies is QQ's hard ceiling, so every phase must remain one
-    # image. Keep a chronological cross-section of real skill effects and all
-    # kinds of important events, while folding repeated basic/status ticks.
+    # Keep each phase compact enough to become one readable section in the final
+    # long image. Preserve a chronological cross-section of real skill effects
+    # and important events while folding repeated basic/status ticks.
     notice = (
         f"本阶段共有 {len(entries)} 条记录；为适配 QQ 图片尺寸，以下保留关键机制、"
         "Boss 行动及代表性技能效果，重复行动已折叠。"
@@ -125,7 +155,7 @@ def _defeat_log_lines(measure: Canvas, report: dict, limit: int = 18):
 
 
 def render_despair_phase(root: Path, data: dict):
-    """Render one complete phase so QQ can send the encounter as five reports."""
+    """Render one complete section for the encounter's combined long report."""
     report = data.get("report") or {}
     party = list(data.get("party") or [])
     overall = list(data.get("overall_stats") or []) if data.get("final") else []

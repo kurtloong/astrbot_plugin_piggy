@@ -1,14 +1,37 @@
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 from core.config import Settings
-from core.despair_rendering import MAX_PHASE_LOG_LINES, _defeat_log_lines, _phase_log_lines
+from core.despair_rendering import (
+    MAX_PHASE_LOG_LINES,
+    PHASE_CARD_GAP,
+    _defeat_log_lines,
+    _phase_log_lines,
+    stack_despair_phase_cards,
+)
 from core.despair_views import despair_battle_message
 from core.rendering import Card
 
 
 class DespairViewTests(unittest.IsolatedAsyncioTestCase):
+    def test_phase_cards_are_stacked_into_one_valid_png(self):
+        cards = []
+        for size, color in [((1080, 120), "red"), ((900, 80), "blue")]:
+            with Image.new("RGB", size, color) as image, BytesIO() as output:
+                image.save(output, "PNG")
+                cards.append(Card(output.getvalue(), *size))
+
+        combined = stack_despair_phase_cards(cards)
+
+        self.assertEqual(combined.width, 1080)
+        self.assertEqual(combined.height, 200 + PHASE_CARD_GAP)
+        with Image.open(BytesIO(combined.data)) as image:
+            self.assertEqual(image.size, (combined.width, combined.height))
+
     def test_defeat_summary_keeps_the_lethal_boss_action(self):
         class Measure:
             @staticmethod
@@ -53,7 +76,7 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("为适配 QQ 图片尺寸", lines[0][0])
         self.assertTrue(any("万相猪皇施放" in line for line, _ in lines))
 
-    async def test_battle_message_builds_one_card_per_phase_with_catalog_boss_art(self):
+    async def test_battle_message_builds_one_long_card_with_catalog_boss_art(self):
         reports = [
             {
                 "phase": phase,
@@ -90,20 +113,25 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
             "rewards": [],
         }
 
-        with patch(
-            "core.despair_views.render_despair_phase",
-            side_effect=[Card(f"card-{phase}".encode(), 1080, 1200) for phase in range(1, 6)],
-        ) as render:
-            messages = await despair_battle_message(Settings(), Path("/tmp"), battle)
+        phase_cards = [Card(f"card-{phase}".encode(), 1080, 1200) for phase in range(1, 6)]
+        combined = Card(b"combined", 1080, 6000)
+        with (
+            patch(
+                "core.despair_views.render_despair_phase",
+                side_effect=phase_cards,
+            ) as render,
+            patch(
+                "core.despair_views.stack_despair_phase_cards",
+                return_value=combined,
+            ) as stack,
+        ):
+            message = await despair_battle_message(Settings(), Path("/tmp"), battle)
             self.assertEqual(render.call_count, 0)
-            messages = [await message.resolve() for message in messages]
+            resolved = await message.resolve()
 
-        self.assertEqual(len(messages), 5)
-        self.assertTrue(all(message.local for message in messages))
-        self.assertEqual(
-            [message.images[0] for message in messages],
-            [f"card-{phase}".encode() for phase in range(1, 6)],
-        )
+        self.assertTrue(resolved.local)
+        self.assertEqual(resolved.images, (b"combined",))
+        stack.assert_called_once_with(phase_cards)
         self.assertTrue(
             all(call.args[1]["boss_asset"] == "castle.webp" for call in render.call_args_list)
         )
@@ -116,7 +144,7 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
             all(call.args[1]["report"]["mechanics"] for call in render.call_args_list)
         )
 
-    async def test_early_defeat_adds_an_explicit_failure_message(self):
+    async def test_early_defeat_is_included_in_the_single_long_card(self):
         reports = [
             {
                 "phase": phase,
@@ -141,18 +169,24 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        with patch(
-            "core.despair_views.render_despair_phase",
-            return_value=Card(b"card", 1080, 1200),
-        ) as render:
-            messages = await despair_battle_message(Settings(), Path("/tmp"), battle)
+        combined = Card(b"combined", 1080, 3600)
+        with (
+            patch(
+                "core.despair_views.render_despair_phase",
+                return_value=Card(b"card", 1080, 1200),
+            ) as render,
+            patch(
+                "core.despair_views.stack_despair_phase_cards",
+                return_value=combined,
+            ) as stack,
+        ):
+            message = await despair_battle_message(Settings(), Path("/tmp"), battle)
             self.assertEqual(render.call_count, 0)
-            await messages[2].resolve()
+            resolved = await message.resolve()
 
-        self.assertEqual(len(messages), 4)
-        self.assertIn("挑战失败", messages[-1].text)
-        self.assertIn("止步第 3/5 阶段", messages[-1].text)
-        self.assertIn("全队已经倒下", messages[-1].text)
-        final_data = render.call_args.args[1]
+        self.assertEqual(resolved.images, (b"combined",))
+        self.assertEqual(render.call_count, 3)
+        self.assertEqual(len(stack.call_args.args[0]), 3)
+        final_data = render.call_args_list[-1].args[1]
         self.assertTrue(final_data["final"])
         self.assertFalse(final_data["won"])
