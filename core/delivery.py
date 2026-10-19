@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -160,6 +161,23 @@ class Message:
         return result
 
 
+@dataclass(frozen=True)
+class DeferredMessage:
+    """Build an expensive reply only when Sender is ready to upload it.
+
+    This lets multi-card reports render and send progressively instead of using
+    most of QQ's passive-reply window before the first card is delivered.
+    """
+
+    factory: Callable[[], Awaitable[Message]]
+
+    async def resolve(self) -> Message:
+        message = await self.factory()
+        if not isinstance(message, Message):
+            raise PiggyError("延迟回复没有生成有效消息。")
+        return message
+
+
 def message_key(event, app_id: str) -> str:
     raw = f"{app_id}:{event.get_group_id()}:{event.message_obj.message_id}"
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -232,7 +250,12 @@ class Sender:
         self,
         event,
         app_id: str,
-        message: Message | tuple[Message, ...] | list[Message],
+        message: (
+            Message
+            | DeferredMessage
+            | tuple[Message | DeferredMessage, ...]
+            | list[Message | DeferredMessage]
+        ),
         deadline: float | None = None,
         *,
         force_upload: bool = False,
@@ -241,15 +264,22 @@ class Sender:
         receipt = await self.db.delivery(key)
         if receipt["done"]:
             return
-        messages = (message,) if isinstance(message, Message) else tuple(message)
+        messages = (message,) if isinstance(message, (Message, DeferredMessage)) else tuple(message)
         if not messages:
             raise PiggyError("回复内容为空。")
-        part_counts = [1 if item.images or item.local else len(item.parts()) for item in messages]
+        part_counts = [
+            1
+            if isinstance(item, DeferredMessage) or item.images or item.local
+            else len(item.parts())
+            for item in messages
+        ]
         if sum(part_counts) > 5:
             raise PiggyError("单次回复最多发送五条消息。")
         sequence = receipt["sequence"]
         deadline = deadline if deadline is not None else time.monotonic() + 240
         for message_index, item in enumerate(messages):
+            if isinstance(item, DeferredMessage):
+                item = await item.resolve()
             urls = []
             media = None
             if item.local:

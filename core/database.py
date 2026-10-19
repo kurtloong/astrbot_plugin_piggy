@@ -1326,7 +1326,7 @@ class Database:
                     entry,
                     level,
                     f"{player_name(owner)}的{pig['name']}",
-                    rarity=rarity_for(pig["id"]),
+                    rarity="神话",
                 )
                 hero.update(seat=seat, owner_seat=owner_seat, owner_id=owner["id"])
                 party.append(hero)
@@ -1362,7 +1362,7 @@ class Database:
                 "raid": {"leader_user": user},
                 "won": bool(result.get("won")),
                 "status": "test",
-                "week": f"10级随机阵容 · 种子 {fight_seed}",
+                "week": f"10级全神话随机阵容 · 种子 {fight_seed}",
                 "result": result,
                 "fighters": fighters,
                 "boss_pig": dict(boss_pig) if boss_pig else None,

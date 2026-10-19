@@ -6,6 +6,7 @@ import asyncio
 import math
 from pathlib import Path
 
+from .delivery import DeferredMessage
 from .despair import DESPAIR_BOSS
 from .despair_rendering import PHASE_NAMES, render_despair_phase
 from .views import card_message, display_name, text_message
@@ -164,7 +165,10 @@ async def despair_battle_message(settings, root: Path, battle: dict):
             }
         ]
     boss_asset = (battle.get("boss_pig") or {}).get("asset", "")
-    cards = []
+    messages = []
+    owner = (battle.get("raid") or {}).get("leader_user") or (
+        fighters[0]["user"] if fighters else {"open_id": ""}
+    )
     for index, report in enumerate(reports[:5]):
         phase_index = max(0, min(4, int(report.get("phase", 1)) - 1))
         if not report.get("mechanics"):
@@ -177,35 +181,38 @@ async def despair_battle_message(settings, root: Path, battle: dict):
             for offset, item in enumerate(report.get("heroes") or [])
         }
         phase_party = [{**side, **states.get(offset, {})} for offset, side in enumerate(party)]
-        cards.append(
-            await asyncio.to_thread(
+        render_data = {
+            "report": report,
+            "party": phase_party,
+            "boss": result.get("boss") or {},
+            "boss_asset": boss_asset,
+            "final": index == len(reports[:5]) - 1,
+            "overall_stats": overall_stats,
+            "rewards": rewards,
+            "footer": f"绝境战 #{battle.get('id', '')} · {battle.get('week', '')} · "
+            f"{'通关' if battle.get('won') else '挑战失败'}",
+        }
+
+        async def build_message(
+            render_data=render_data,
+            report=report,
+            index=index,
+        ):
+            card = await asyncio.to_thread(
                 render_despair_phase,
                 root,
-                {
-                    "report": report,
-                    "party": phase_party,
-                    "boss": result.get("boss") or {},
-                    "boss_asset": boss_asset,
-                    "final": index == len(reports[:5]) - 1,
-                    "overall_stats": overall_stats,
-                    "rewards": rewards,
-                    "footer": f"绝境战 #{battle.get('id', '')} · {battle.get('week', '')} · "
-                    f"{'通关' if battle.get('won') else '挑战失败'}",
-                },
+                render_data,
             )
-        )
-    raid = battle.get("raid") or {}
-    owner = raid.get("leader_user") or (fighters[0]["user"] if fighters else {"open_id": ""})
-    return tuple(
-        card_message(
-            settings,
-            owner,
-            card,
-            f"绝境战第 {reports[index]['phase']} 阶段战报",
-            "raid",
-            buttons=[("绝境战", "绝境战"), ("再次组队", "开启绝境战 ")]
-            if index == len(cards) - 1
-            else (),
-        )
-        for index, card in enumerate(cards)
-    )
+            return card_message(
+                settings,
+                owner,
+                card,
+                f"绝境战第 {report['phase']} 阶段战报",
+                "raid",
+                buttons=[("绝境战", "绝境战"), ("再次组队", "开启绝境战 ")]
+                if index == len(reports[:5]) - 1
+                else (),
+            )
+
+        messages.append(DeferredMessage(build_message))
+    return tuple(messages)

@@ -16,7 +16,7 @@ from test_delivery_storage import FakeHost, FakeTransport, settings
 from core.avatars import Avatars
 from core.config import PiggyError, Settings
 from core.database import Database
-from core.delivery import Message, QQError, QQTransport, Sender
+from core.delivery import DeferredMessage, Message, QQError, QQTransport, Sender
 from core.rendering import clean_cards
 from core.storage import ImagePublisher, S3Host, UploadError
 
@@ -73,6 +73,20 @@ class ModeTests(unittest.IsolatedAsyncioTestCase):
             [payload["media"]["file_info"] for payload in self.transport.payloads],
             [f"file-{index}" for index in range(5)],
         )
+
+    async def test_deferred_phase_reports_render_immediately_before_each_send(self):
+        async def build(index):
+            self.assertEqual(len(self.transport.payloads), index)
+            return Message("", (f"phase-{index}".encode(),), local=True)
+
+        messages = tuple(
+            DeferredMessage(lambda index=index: build(index)) for index in range(5)
+        )
+        self.transport.upload_image.side_effect = [f"file-{index}" for index in range(5)]
+
+        await self.sender.send(self.event, "app", messages)
+
+        self.assertEqual(len(self.transport.payloads), 5)
 
     async def test_upload_retries_are_bounded_and_do_not_send_on_failure(self):
         self.transport.upload_image.side_effect = QQError(0, 0, uncertain=True)
