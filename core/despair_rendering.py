@@ -23,8 +23,10 @@ from .rendering import (
 )
 
 PHASE_NAMES = ("王座重压", "七灾回响", "血月同命", "破冠攻坚", "万相归一")
-MAX_PHASE_LOG_LINES = 86
-MAX_FINAL_LOG_LINES = 54
+# A combined report only performs one QQ upload, so it can spend substantially
+# more vertical space on each phase than the old multi-message version.
+MAX_PHASE_LOG_LINES = 180
+MAX_FINAL_LOG_LINES = 140
 PHASE_CARD_GAP = 24
 
 
@@ -86,6 +88,8 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
         "倒下",
         "击败",
         "复活",
+        "净化",
+        "护盾",
         "裁定印",
         "王冠",
         "生命共鸣",
@@ -97,18 +101,20 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
         or any(word in item[2] for word in special_words)
     ]
 
-    # Ensure each reached round has at least one fully explained player action.
+    # Keep two fully explained player actions from every reached round. Together
+    # with every selected Boss action this makes the compressed timeline much
+    # easier to follow without letting routine ticks dominate the long image.
     round_actions = []
-    seen_rounds = set()
+    round_action_counts = {}
     for item in entries:
         match = re.match(r"R(\d+) ", item[2])
         if (
             match
-            and match.group(1) not in seen_rounds
+            and round_action_counts.get(match.group(1), 0) < 2
             and "万相猪皇" not in item[2]
             and any(word in item[2] for word in ("施放", "发动", "触发"))
         ):
-            seen_rounds.add(match.group(1))
+            round_action_counts[match.group(1)] = round_action_counts.get(match.group(1), 0) + 1
             round_actions.append(item)
 
     chosen: dict[int, tuple[int, list[str], str]] = {}

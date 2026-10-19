@@ -76,6 +76,30 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("为适配 QQ 图片尺寸", lines[0][0])
         self.assertTrue(any("万相猪皇施放" in line for line, _ in lines))
 
+    def test_compressed_phase_log_keeps_two_player_actions_per_round(self):
+        class Measure:
+            @staticmethod
+            def wrap(text, size, width):
+                return [text]
+
+        log = []
+        for round_number in range(1, 4):
+            log.extend(
+                [
+                    f"R{round_number} 甲施放「技能甲」，造成伤害。",
+                    f"R{round_number} 乙施放「技能乙」，获得护盾。",
+                    f"R{round_number} 丙施放「技能丙」，造成伤害。",
+                ]
+            )
+        log.extend(f"额外记录 {index}" for index in range(30))
+
+        lines = _phase_log_lines(Measure(), {"log": log}, 12)
+        sources = {source for _, source in lines}
+
+        for round_number in range(1, 4):
+            self.assertIn(f"R{round_number} 甲施放「技能甲」，造成伤害。", sources)
+            self.assertIn(f"R{round_number} 乙施放「技能乙」，获得护盾。", sources)
+
     async def test_battle_message_builds_one_long_card_with_catalog_boss_art(self):
         reports = [
             {
