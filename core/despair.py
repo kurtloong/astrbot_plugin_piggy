@@ -290,7 +290,8 @@ class DespairBattle:
             if hp_delta > 0:
                 notes.append(f"{hero.label}恢复 {round(hp_delta)} 生命")
             elif hp_delta < 0:
-                notes.append(f"{hero.label}受到 {round(-hp_delta)} 伤害")
+                suffix = "并倒下" if old["hp"] > 0 and not hero.alive else ""
+                notes.append(f"{hero.label}受到 {round(-hp_delta)} 伤害{suffix}")
             shield_delta = hero.shield - old["shield"]
             if shield_delta > 0:
                 notes.append(f"{hero.label}获得 {round(shield_delta)} 护盾")
@@ -519,7 +520,11 @@ class DespairBattle:
             mate = self.mate_of(hero)
             if self.phase >= 3 and mate is not None and mate.alive:
                 mate.grief = True
-                self.log.append(f"{hero.label} 倒下，{mate.label} 获得悲鸣。")
+                self.log.append(
+                    f"R{self.round} {hero.label} 倒下；{mate.label} 获得悲鸣。"
+                )
+            else:
+                self.log.append(f"R{self.round} {hero.label} 倒下。")
 
     def _heal(self, target: _Hero, amount: float, source: _Hero | None) -> float:
         if not target.alive:
