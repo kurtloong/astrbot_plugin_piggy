@@ -1337,6 +1337,7 @@ class DespairBattle:
             * power
             * (1 + self.damage_bonus)
             * float(self.config.get("damage_scale", 1.0))
+            * float(self.phase_data.get("outgoing_damage_scale", 1.0))
             * (1 + pressure)
         )
         if self.boss_weaken:
