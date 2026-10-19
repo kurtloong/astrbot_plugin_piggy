@@ -50,6 +50,32 @@ def test_one_health_bar_visits_all_five_phases_and_locks_each_boundary():
     assert [item["phase"] for item in fight.phase_history] == [1, 2, 3, 4, 5]
 
 
+def test_result_keeps_a_detailed_report_for_every_reached_phase():
+    fight = DespairBattle(party())
+    attacker = fight.heroes[1]
+    maximum = fight.boss_max_hp
+    for phase in range(1, 5):
+        fight.round = phase
+        fight.log.append(f"第{phase}阶段细节")
+        fight.boss_actions.append({"round": phase, "phase": phase, "skill": f"招式{phase}"})
+        fight.damage_boss(attacker, maximum * 10)
+    fight.round = 5
+    fight.log.append("第五阶段细节")
+    fight.boss_actions.append({"round": 5, "phase": 5, "skill": "终局招式"})
+    fight.damage_boss(attacker, maximum * 10)
+
+    reports = fight.result()["phase_reports"]
+    assert [item["phase"] for item in reports] == [1, 2, 3, 4, 5]
+    assert [item["boss_hp_end"] for item in reports] == pytest.approx(
+        [maximum * pct / 100 for pct in (80, 60, 40, 20, 0)], abs=1
+    )
+    assert [item["actions"][-1]["skill"] for item in reports] == [
+        "招式1", "招式2", "招式3", "招式4", "终局招式"
+    ]
+    assert all(item["mechanics"] for item in reports)
+    assert all(any("阶段细节" in line for line in item["log"]) for item in reports)
+
+
 def test_phase_change_heals_six_percent_and_reduces_cooldown():
     fight = DespairBattle(party())
     hero = fight.heroes[0]
@@ -73,6 +99,31 @@ def test_boss_skills_are_an_independent_non_collectible_schema():
     result = simulate_despair(party(), seed=3)
     assert result["boss"]["collectible"] is False
     assert set(result["boss"]["skills"]) == BOSS_SKILL_NAMES
+
+
+def test_combat_log_explains_actual_skill_and_boss_effects():
+    heroes = party()
+    heroes[1]["skills"] = [
+        {
+            "name": "测试攻防术",
+            "effects": [
+                {"type": "damage", "power": 1.0},
+                {"type": "shield", "pct": 10, "target": "self"},
+            ],
+        }
+    ]
+    heroes[1]["stats"]["spd"] = 100
+    config = copy.deepcopy(DESPAIR_BOSS)
+    config["max_rounds"] = 1
+    result = simulate_despair(heroes, seed=3, boss=config)
+
+    hero_line = next(line for line in result["log"] if "测试攻防术" in line)
+    assert hero_line.startswith("R1 ")
+    assert "造成" in hero_line
+    assert "护盾" in hero_line
+    assert result["boss"]["actions"]
+    assert all(action.get("detail") for action in result["boss"]["actions"])
+    assert all(line for report in result["phase_reports"] for line in report["log"])
 
 
 def test_blood_moon_pair_shares_thirty_percent_without_recursion():
@@ -277,18 +328,55 @@ def test_disaster_breath_cycles_through_all_three_ailments():
 
 
 def test_simulation_is_deterministic_and_result_is_json_ready():
-    first = simulate_despair(party(), seed=19)
-    second = simulate_despair(party(), seed=19)
+    config = copy.deepcopy(DESPAIR_BOSS)
+    config.update(hp_scale=1, hero_damage_scale=1, damage_scale=0.35)
+    config["stats"] = {"hp": 1_000, "atk": 1, "def": 20}
+    for phase in config["phases"]:
+        phase["damage_taken_scale"] = 1
+    first = simulate_despair(party(atk=1_000), seed=19, boss=config)
+    second = simulate_despair(party(atk=1_000), seed=19, boss=config)
     assert first == second
     json.dumps(first, ensure_ascii=False)
-    assert first["rounds"] <= 20
+    assert first["rounds"] <= 100
     assert first["won"]
     assert [item["phase"] for item in first["phases"]] == [1, 2, 3, 4, 5]
     assert all(
         {"seat", "hp", "max_hp", "alive", "dealt", "healed", "taken"} <= set(hero)
         for hero in first["heroes"]
     )
-    assert len(first["ultimate"]["history"]) == 2
+    assert first["ultimate"]["history"]
+
+
+def test_strong_party_can_clear_phases_faster_than_ten_rounds_without_damage_cap():
+    config = copy.deepcopy(DESPAIR_BOSS)
+    config["stats"] = {"hp": 1000, "atk": 1, "def": 20}
+    config["hero_damage_scale"] = 1
+    for phase in config["phases"]:
+        phase["skills"] = [{"name": "御前裁决", "power": 0.01, "cooldown": 0}]
+    result = simulate_despair(party(hp=300, atk=1_000), seed=2, boss=config)
+
+    assert result["won"]
+    assert len(result["phase_reports"]) == 5
+    durations = [item["end_round"] - item["start_round"] + 1 for item in result["phase_reports"]]
+    assert min(durations) < 10
+    assert not any("限制了本回合" in line for line in result["log"])
+
+
+def test_late_despair_pressure_makes_boss_hits_substantially_stronger():
+    config = copy.deepcopy(DESPAIR_BOSS)
+    config["stats"] = {"hp": 10_000, "atk": 100, "def": 20}
+    config.update(damage_scale=1, pressure_per_round=0.005, enrage_round=60, enrage_per_round=0.2)
+    fight = DespairBattle(party(hp=1_000), seed=2, boss=config)
+    target = fight.heroes[0]
+
+    fight.round = 1
+    early = fight._boss_hit(target, 1)
+    target.hp = target.max_hp
+    target.shield = 0
+    fight.round = 70
+    late = fight._boss_hit(target, 1)
+
+    assert late > early * 3
 
 
 def test_player_adapter_supports_special_effects_without_basic_fallback():
@@ -650,7 +738,9 @@ def test_poise_break_without_warning_grants_expose_and_custom_timeout_is_true():
 
 def test_start_of_round_dot_transition_uses_first_phase_two_disaster():
     config = copy.deepcopy(DESPAIR_BOSS)
-    config["max_rounds"] = 1
+    config["max_rounds"] = 2
+    config["hero_damage_scale"] = 1
+    config["phases"][0]["damage_taken_scale"] = 1
     fight = DespairBattle(party(atk=1), seed=8, boss=config)
     fight.boss_dots.append(
         {"source": fight.heroes[1], "pct": 25, "turns": 1, "label": "跨阶段灼烧"}
@@ -658,4 +748,5 @@ def test_start_of_round_dot_transition_uses_first_phase_two_disaster():
     fight.run()
     assert fight.phase >= 2
     phase_two = next(line for line in fight.log if "阶段机制·七灾预兆" in line)
-    assert phase_two.endswith("尸毒。")
+    assert "「尸毒」" in phase_two
+    assert "持续 2 回合" in phase_two

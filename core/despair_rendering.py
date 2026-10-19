@@ -20,6 +20,176 @@ from .rendering import (
 PHASE_NAMES = ("王座重压", "七灾回响", "血月同命", "破冠攻坚", "万相归一")
 
 
+def render_despair_phase(root: Path, data: dict):
+    """Render one complete phase so QQ can send the encounter as five reports."""
+    report = data.get("report") or {}
+    party = list(data.get("party") or [])
+    overall = list(data.get("overall_stats") or []) if data.get("final") else []
+    rewards = list(data.get("rewards") or []) if data.get("final") else []
+    measure = Canvas(root, WIDTH, 1)
+    mechanic_lines = []
+    for mechanic in report.get("mechanics") or []:
+        name = mechanic.get("name", "阶段机制")
+        description = mechanic.get("text", "")
+        # The first line is bold like the regular raid mechanic list, so wrap
+        # against a narrower measure to leave room for the bullet and heavier face.
+        for index, line in enumerate(measure.wrap(f"{name}：{description}", 18, 840)):
+            mechanic_lines.append((line, index == 0))
+    log_lines = []
+    for entry in report.get("log") or []:
+        log_lines.extend((line, entry) for line in measure.wrap(str(entry), 18, 920))
+    reward_lines = [line for entry in rewards for line in measure.wrap(str(entry), 19, 920)]
+    measure.image.close()
+
+    party_h = 4 * 126
+    mechanics_h = 70 + len(mechanic_lines) * 29 if mechanic_lines else 0
+    log_h = max(1, len(log_lines)) * 29
+    overall_h = (84 + max(1, len(overall)) * 38) if data.get("final") else 0
+    reward_h = (75 + max(1, len(reward_lines)) * 33) if data.get("final") else 0
+    party_top = 410 + mechanics_h
+    log_top = party_top + 65 + party_h
+    height = log_top + 70 + log_h + overall_h + reward_h + 70
+    canvas = Canvas(root, WIDTH, height)
+    phase = int(report.get("phase", 1))
+    canvas.text("PIGGY  /  LAST STAND", 58, 34, 18, ACCENT, True)
+    canvas.text(
+        f"第 {phase}/5 阶段 · {report.get('name', PHASE_NAMES[phase - 1])}", 54, 76, 48, bold=True
+    )
+    start_round = report.get("start_round", 1)
+    end_round = report.get("end_round", start_round)
+    canvas.text(
+        f"总回合 R{start_round}–R{end_round} · {'最终结算' if data.get('final') else '阶段结算'}",
+        58,
+        144,
+        22,
+        SUB,
+    )
+
+    canvas.draw.rounded_rectangle(
+        (56, 194, 1024, 374), radius=28, fill="#ffffff", outline=BORDER, width=2
+    )
+    _paste_art(canvas, root, data.get("boss_asset", ""), (76, 207, 160, 154))
+    canvas.text("万相猪皇", 265, 218, 30, ACCENT, True)
+    canvas.text("唯一 Boss · 五相轮转", 265, 260, 20, SUB)
+    maximum = max(1, (data.get("boss") or {}).get("max_hp", 1))
+    start_hp = max(0, report.get("boss_hp_start", maximum))
+    end_hp = max(0, report.get("boss_hp_end", start_hp))
+    _hp_bar(canvas, 265, 315, 515, end_hp, maximum, ACCENT if end_hp else SUB)
+    canvas.text(f"{start_hp} → {end_hp} / {maximum}", 800, 303, 17, SUB, width=210)
+
+    if mechanic_lines:
+        canvas.text("阶段机制", 58, 410, 27, ACCENT, True)
+        for index, (line, first) in enumerate(mechanic_lines):
+            canvas.text(
+                ("· " if first else "  ") + line,
+                70,
+                457 + index * 29,
+                18,
+                TEXT,
+                first,
+                width=930,
+            )
+
+    canvas.text("本阶段队伍状态", 58, party_top, 27, bold=True)
+    for index, side in enumerate(party):
+        row, column = divmod(index, 2)
+        x, y = 56 + column * 492, party_top + 48 + row * 126
+        alive = side.get("alive", True)
+        canvas.draw.rounded_rectangle(
+            (x, y, x + 472, y + 108),
+            radius=18,
+            fill="#ffffff" if alive else "#eee9e3",
+            outline=BORDER,
+            width=1,
+        )
+        _paste_art(canvas, root, side.get("asset", ""), (x + 10, y + 8, 88, 88), faded=not alive)
+        canvas.text(side.get("pig", "小猪"), x + 110, y + 10, 20, TEXT, True, width=180)
+        canvas.text(
+            f"{side.get('owner', '玩家')} · {side.get('role', '输出')} · Lv{side.get('level', 0)}",
+            x + 110,
+            y + 40,
+            16,
+            SUB,
+            width=345,
+        )
+        _hp_bar(
+            canvas,
+            x + 110,
+            y + 73,
+            180,
+            side.get("hp", 0),
+            side.get("max_hp", 1),
+            ACCENT if alive else SUB,
+        )
+        canvas.text(
+            f"HP {side.get('hp', 0)}/{side.get('max_hp', 1)}",
+            x + 302,
+            y + 58,
+            14,
+            SUB,
+            width=158,
+        )
+        canvas.text(
+            f"伤{side.get('dealt', 0)} 治{side.get('healed', 0)} "
+            f"承{side.get('taken', 0)} 韧{side.get('poise', 0)}",
+            x + 302,
+            y + 81,
+            13,
+            SUB,
+            width=158,
+        )
+
+    canvas.text("完整战斗细节", 58, log_top, 27, bold=True)
+    for index, item in enumerate(log_lines or [("本阶段没有额外战斗记录", "")]):
+        line, source = item
+        boss_action = any(
+            key in source for key in ("万相猪皇施放", "万相猪皇发动")
+        )
+        highlight = any(key in source for key in ("阶段", "极限技", "倒下", "击破", "击败"))
+        canvas.text(
+            line,
+            70,
+            log_top + 47 + index * 29,
+            18,
+            ACCENT if highlight else TEXT if boss_action else SUB,
+            highlight or boss_action,
+            width=930,
+        )
+
+    footer_top = log_top + 70 + log_h
+    if data.get("final"):
+        canvas.draw.line((56, footer_top, 1024, footer_top), fill=BORDER, width=2)
+        canvas.text("全场输出统计", 58, footer_top + 20, 27, bold=True)
+        canvas.text("伤害", 460, footer_top + 27, 16, SUB, True)
+        canvas.text("治疗", 610, footer_top + 27, 16, SUB, True)
+        canvas.text("承伤", 750, footer_top + 27, 16, SUB, True)
+        canvas.text("削韧", 890, footer_top + 27, 16, SUB, True)
+        for index, row in enumerate(overall):
+            y = footer_top + 68 + index * 38
+            canvas.text(
+                f"{index + 1}. {row.get('owner', '')} · {row.get('pig', '')}",
+                70,
+                y,
+                17,
+                TEXT,
+                index < 3,
+                width=360,
+            )
+            canvas.text(str(row.get("dealt", 0)), 460, y, 17, ACCENT, True, width=125)
+            canvas.text(str(row.get("healed", 0)), 610, y, 17, TEXT, width=115)
+            canvas.text(str(row.get("taken", 0)), 750, y, 17, TEXT, width=115)
+            canvas.text(str(row.get("poise", 0)), 890, y, 17, TEXT, width=115)
+        footer_top += overall_h
+        canvas.draw.line((56, footer_top, 1024, footer_top), fill=BORDER, width=2)
+        canvas.text("最终结算", 58, footer_top + 20, 27, bold=True)
+        for index, line in enumerate(reward_lines or ["本次没有获得奖励"]):
+            canvas.text(line, 70, footer_top + 65 + index * 33, 19, TEXT, width=930)
+        footer_top += reward_h
+    canvas.draw.line((56, height - 75, 1024, height - 75), fill=BORDER, width=2)
+    canvas.text(data.get("footer", "绝境战阶段战报"), 58, height - 53, 18, ACCENT, width=950)
+    return finish(canvas.image)
+
+
 def render_despair_poster(root: Path, data: dict):
     """Render one compact report from the persisted battle result."""
     log = list(data.get("log") or [])

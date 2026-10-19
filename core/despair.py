@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import json
 import random
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .battle import describe_effect
+
 ROLES = ("坦克", "输出", "治疗", "辅助")
 DESPAIR_PARTY_SIZE = 8
-DESPAIR_MAX_ROUNDS = 20
+DESPAIR_MAX_ROUNDS = 100
 SUPPORTED_HERO_EFFECTS = frozenset(
     {
         "absorb", "aura", "bleed_burst", "block", "buff", "channel", "charge",
@@ -153,8 +156,11 @@ class DespairBattle:
         self.heroes = [_Hero(data, index, owners[index]) for index, data in enumerate(heroes)]
         total_hp = sum(hero.max_hp for hero in self.heroes)
         total_atk = sum(hero.atk for hero in self.heroes)
+        base_boss_hp = max(total_hp * 1.65, total_atk * 5.5)
         self.boss_max_hp = float(
-            self.config.get("stats", {}).get("hp", max(total_hp * 1.65, total_atk * 5.5))
+            self.config.get("stats", {}).get(
+                "hp", base_boss_hp * float(self.config.get("hp_scale", 1.0))
+            )
         )
         self.boss_hp = self.boss_max_hp
         self.boss_atk = float(
@@ -220,6 +226,8 @@ class DespairBattle:
                                 "turns": int(effect.get("turns", 99)),
                             }
                         )
+        self.phase_reports: list[dict] = []
+        self._phase_report_start = self._new_phase_report_start()
 
     @staticmethod
     def _owner(data: dict):
@@ -234,6 +242,153 @@ class DespairBattle:
 
     def living(self) -> list[_Hero]:
         return [hero for hero in self.heroes if hero.alive]
+
+    def _detail_snapshot(self) -> dict:
+        return {
+            "boss_hp": self.boss_hp,
+            "poise": self.poise,
+            "crown": self.crown,
+            "boss_states": {
+                "易伤": len(self.boss_expose),
+                "虚弱": len(self.boss_weaken),
+                "持续伤害": len(self.boss_dots),
+                "延迟伤害": len(self.boss_delays),
+                "腐化治疗": len(self.boss_corrupting),
+                "沉默": self.boss_silence,
+                "禁锢": self.boss_root,
+                "眩晕": self.boss_stun,
+            },
+            "heroes": [
+                {
+                    "hp": hero.hp,
+                    "shield": hero.shield,
+                    "debuffs": Counter(item["type"] for item in hero.debuffs),
+                }
+                for hero in self.heroes
+            ],
+        }
+
+    def _detail_notes(self, before: dict, *, boss_actor: bool = False) -> list[str]:
+        notes = []
+        boss_delta = before["boss_hp"] - self.boss_hp
+        if boss_delta > 0:
+            notes.append(
+                f"万相猪皇受到 {round(boss_delta)} 反击伤害"
+                if boss_actor
+                else f"对万相猪皇造成 {round(boss_delta)} 伤害"
+            )
+        elif boss_delta < 0:
+            notes.append(f"万相猪皇恢复 {round(-boss_delta)} 生命")
+        poise = before["poise"] - self.poise
+        if poise > 0:
+            notes.append(f"削减 {round(poise)} 点韧性")
+        crown = before["crown"] - self.crown
+        if crown > 0:
+            notes.append(f"击碎 {round(crown)} 层王冠")
+        for hero, old in zip(self.heroes, before["heroes"]):
+            hp_delta = hero.hp - old["hp"]
+            if hp_delta > 0:
+                notes.append(f"{hero.label}恢复 {round(hp_delta)} 生命")
+            elif hp_delta < 0:
+                notes.append(f"{hero.label}受到 {round(-hp_delta)} 伤害")
+            shield_delta = hero.shield - old["shield"]
+            if shield_delta > 0:
+                notes.append(f"{hero.label}获得 {round(shield_delta)} 护盾")
+            elif shield_delta < 0:
+                notes.append(f"{hero.label}损失 {round(-shield_delta)} 护盾")
+            current = Counter(item["type"] for item in hero.debuffs)
+            added = list((current - old["debuffs"]).elements())
+            removed = list((old["debuffs"] - current).elements())
+            if added:
+                notes.append(f"{hero.label}获得{'、'.join(added)}")
+            if removed:
+                notes.append(f"清除{hero.label}的{'、'.join(removed)}")
+        current_states = {
+            "易伤": len(self.boss_expose),
+            "虚弱": len(self.boss_weaken),
+            "持续伤害": len(self.boss_dots),
+            "延迟伤害": len(self.boss_delays),
+            "腐化治疗": len(self.boss_corrupting),
+            "沉默": self.boss_silence,
+            "禁锢": self.boss_root,
+            "眩晕": self.boss_stun,
+        }
+        for name, value in current_states.items():
+            increase = value - before["boss_states"][name]
+            if increase > 0:
+                notes.append(f"万相猪皇获得{name}" + (f"×{increase}" if increase > 1 else ""))
+        return notes
+
+    @staticmethod
+    def _effect_notes(effects: list[dict]) -> list[str]:
+        notes = []
+        for effect in effects:
+            if effect.get("type") in {"damage", "heal", "mass_heal", "triage", "cleanse_heal"}:
+                continue
+            try:
+                text = describe_effect(effect)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if text not in notes:
+                notes.append(text)
+        return notes
+
+    def _complete_log(self, index: int, text: str):
+        """Fill an action placeholder, including a phase snapshot taken mid-action."""
+        self.log[index] = text
+        for report in reversed(self.phase_reports):
+            if report.get("log") and report["log"][-1] == "":
+                report["log"][-1] = text
+                break
+
+    def _new_phase_report_start(self) -> dict:
+        return {
+            "phase": self.phase,
+            "name": self.phase_data["name"],
+            "round": max(1, self.round),
+            "boss_hp": self.boss_hp,
+            "log": len(self.log),
+            "actions": len(self.boss_actions),
+            "hero_totals": [
+                {
+                    "dealt": hero.dealt,
+                    "healed": hero.healed,
+                    "taken": hero.taken,
+                    "poise": hero.poise,
+                }
+                for hero in self.heroes
+            ],
+        }
+
+    def _phase_report(self) -> dict:
+        start = self._phase_report_start
+        phase_config = self.config["phases"][start["phase"] - 1]
+        heroes = []
+        for hero, totals in zip(self.heroes, start["hero_totals"]):
+            heroes.append(
+                {
+                    "index": hero.index,
+                    "hp": round(hero.hp),
+                    "max_hp": round(hero.max_hp),
+                    "alive": hero.alive,
+                    "dealt": round(hero.dealt - totals["dealt"]),
+                    "healed": round(hero.healed - totals["healed"]),
+                    "taken": round(hero.taken - totals["taken"]),
+                    "poise": round(hero.poise - totals["poise"]),
+                }
+            )
+        return {
+            "phase": start["phase"],
+            "name": start["name"],
+            "start_round": start["round"],
+            "end_round": self.round,
+            "boss_hp_start": round(start["boss_hp"]),
+            "boss_hp_end": round(self.boss_hp),
+            "mechanics": phase_config.get("mechanics", []),
+            "heroes": heroes,
+            "actions": self.boss_actions[start["actions"] :],
+            "log": self.log[start["log"] :],
+        }
 
     @staticmethod
     def _has_effect(hero: _Hero, kind: str) -> bool:
@@ -477,11 +632,17 @@ class DespairBattle:
             factor *= 0.80
         if self.phase == 4:
             factor *= 1.25 if self.vulnerable_turns else 0.70
-        amount *= factor * (1.20 if hero.grief else 1.0)
+        amount *= (
+            factor
+            * (1.20 if hero.grief else 1.0)
+            * float(self.config.get("hero_damage_scale", 1.0))
+            * float(self.phase_data.get("damage_taken_scale", 1.0))
+        )
         boundary_pct = self.config["phase_thresholds"][self.phase - 1]
         boundary = self.boss_max_hp * boundary_pct / 100
         floor = boundary if self.phase < 5 else 0.0
-        dealt = min(max(0.0, amount), max(0.0, self.boss_hp - floor))
+        available = max(0.0, self.boss_hp - floor)
+        dealt = min(max(0.0, amount), available)
         self.boss_hp -= dealt
         hero.dealt += dealt
         if self.judgment and hero.role == "输出":
@@ -497,6 +658,7 @@ class DespairBattle:
         self.phase_round = 0
         if self.pending:
             self.log.append(f"阶段转换，预警「{self.pending['name']}」已取消。")
+        self.phase_reports.append(self._phase_report())
         self.pending = None
         self.judgment = None
         self.cooldowns.clear()
@@ -520,6 +682,7 @@ class DespairBattle:
         self.phase_history.append(
             {"phase": self.phase, "name": self.phase_data["name"], "round": self.round}
         )
+        self._phase_report_start = self._new_phase_report_start()
         self.log.append(f"万相猪皇由第 {old} 阶段进入「{self.phase_data['name']}」！")
 
     def _hero_targets(self, hero: _Hero, effect: dict) -> list[_Hero]:
@@ -553,7 +716,7 @@ class DespairBattle:
             score += 80 if self.boss_hp / self.boss_max_hp < 0.35 else -1000
         return score
 
-    def _cast_hero_skill(self, hero: _Hero, skill: dict) -> bool:
+    def _cast_hero_skill(self, hero: _Hero, skill: dict, *, triggered: bool = False) -> bool:
         def supported(items: list[dict]) -> bool:
             for item in items:
                 if item.get("type") not in SUPPORTED_HERO_EFFECTS:
@@ -567,7 +730,10 @@ class DespairBattle:
         normal = skill.get("effects", [])
         failed_effects = (skill.get("fail") or {}).get("effects", [])
         if not supported(normal) or not supported(failed_effects):
-            self.log.append(f"{hero.label} 的「{skill.get('name', '未知技能')}」含不支持的效果。")
+            self.log.append(
+                f"R{self.round} {hero.label}「{skill.get('name', '未知技能')}」，"
+                "含不支持的效果，本次改用职业行动。"
+            )
             return False
         cost = int(skill.get("cost", 0))
         if cost > hero.energy:
@@ -575,19 +741,33 @@ class DespairBattle:
         hero.energy -= cost
         hero.energy = min(100, hero.energy + int(skill.get("gain", 0)))
         self._leech_pool = 0.0
+        before = self._detail_snapshot()
+        log_index = len(self.log)
+        self.log.append("")
         effects = normal
         failure = skill.get("fail")
         failed = False
+        failure_text = ""
         if failure and self.rng.randrange(100) < int(failure.get("chance", 0)):
             failed = True
             effects = failure.get("effects", [])
-            self.log.append(f"{hero.label}「{skill['name']}」失手了：{failure.get('text', '失败')}。")
+            failure_text = f"失手：{failure.get('text', '失败')}"
         useful = False
         phase = self.phase
         for effect in effects:
             useful = self._apply_hero_effect(hero, effect) or useful
             if self.phase != phase or self.boss_hp <= 0 or not hero.alive:
                 break
+        notes = self._detail_notes(before)
+        notes.extend(note for note in self._effect_notes(effects) if note not in notes)
+        if failure_text:
+            notes.insert(0, failure_text)
+        action = "触发" if triggered else "施放"
+        self._complete_log(log_index, (
+            f"R{self.round} {hero.label}{action}「{skill['name']}」，"
+            + "；".join(notes or ["没有产生有效效果"])
+            + "。"
+        ))
         # A valid cast is consumed even if every chance roll missed.  Only an
         # unsupported schema returns False and may fall back to the role action.
         return useful or failed
@@ -904,27 +1084,43 @@ class DespairBattle:
         return False
 
     def _role_action(self, hero: _Hero):
+        notes = []
         if hero.role == "治疗":
             target = min(self.living(), key=lambda unit: (unit.ratio, unit.index))
-            self._heal(target, target.max_hp * 0.18, hero)
+            healed = self._heal(target, target.max_hp * 0.18, hero)
+            if healed:
+                notes.append(f"为{target.label}恢复 {round(healed)} 生命")
             power = 0.45
         elif hero.role == "辅助":
             afflicted = max(self.living(), key=lambda unit: (len(unit.debuffs), -unit.index))
             if afflicted.debuffs:
+                removed = "、".join(item["type"] for item in afflicted.debuffs)
                 afflicted.debuffs.clear()
                 hero.cleansed += 1
+                notes.append(f"清除{afflicted.label}的{removed}")
                 if self.judgment:
                     self.judgment["values"]["辅助"] += 1
                     self._check_seals()
             power = 0.65
         elif hero.role == "坦克":
-            hero.shield += hero.max_hp * 0.06
+            shield = hero.max_hp * 0.06
+            hero.shield += shield
+            notes.append(f"自身获得 {round(shield)} 护盾")
             power = 0.80
         else:
             power = 1.45
         raw = self._hero_stat(hero, "atk")
         raw *= power * self.rng.uniform(0.94, 1.06) * 60 / (60 + self.boss_def)
-        self.damage_boss(hero, raw)
+        log_index = len(self.log)
+        self.log.append("")
+        dealt = self.damage_boss(hero, raw)
+        if dealt:
+            notes.insert(0, f"对万相猪皇造成 {round(dealt)} 伤害")
+        self._complete_log(log_index, (
+            f"R{self.round} {hero.label}执行{hero.role}职业行动，"
+            + "；".join(notes or ["没有产生有效效果"])
+            + "。"
+        ))
 
     def _hero_turn(self, hero: _Hero):
         if not hero.alive:
@@ -955,10 +1151,20 @@ class DespairBattle:
             delayed["turns"] -= 1
             if delayed["turns"] <= 0:
                 target = delayed["target"]
-                self._heal(target, target.max_hp * delayed["pct"] / 100, delayed["source"])
+                healed = self._heal(
+                    target, target.max_hp * delayed["pct"] / 100, delayed["source"]
+                )
                 hero.delay_heals.remove(delayed)
+                self.log.append(
+                    f"R{self.round} {hero.label}的延迟治疗生效，"
+                    f"为{target.label}恢复 {round(healed)} 生命。"
+                )
         for regen in list(hero.regens):
-            self._heal(hero, hero.max_hp * regen["pct"] / 100, regen["source"])
+            healed = self._heal(hero, hero.max_hp * regen["pct"] / 100, regen["source"])
+            if healed:
+                self.log.append(
+                    f"R{self.round} {hero.label}的持续治疗生效，恢复 {round(healed)} 生命。"
+                )
             regen["turns"] -= 1
             if regen["turns"] <= 0:
                 hero.regens.remove(regen)
@@ -966,16 +1172,25 @@ class DespairBattle:
             charge["turns"] -= 1
             if charge["turns"] <= 0:
                 raw = self._hero_stat(hero, "atk") * charge["power"] * 60 / (60 + self.boss_def)
-                self.damage_boss(hero, raw)
+                dealt = self.damage_boss(hero, raw)
                 hero.charges.remove(charge)
-                self.log.append(f"{hero.label} 完成蓄力并发动攻击。")
+                self.log.append(
+                    f"R{self.round} {hero.label}完成蓄力，对万相猪皇造成 {round(dealt)} 伤害。"
+                )
         channeling = bool(hero.channels)
         for channel in list(hero.channels):
+            details = []
             if channel["power"]:
                 raw = self._hero_stat(hero, "atk") * channel["power"] * 60 / (60 + self.boss_def)
-                self.damage_boss(hero, raw)
+                dealt = self.damage_boss(hero, raw)
+                details.append(f"对万相猪皇造成 {round(dealt)} 伤害")
             if channel["heal_pct"]:
-                self._heal(hero, hero.max_hp * channel["heal_pct"] / 100, hero)
+                healed = self._heal(hero, hero.max_hp * channel["heal_pct"] / 100, hero)
+                details.append(f"自身恢复 {round(healed)} 生命")
+            if details:
+                self.log.append(
+                    f"R{self.round} {hero.label}维持引导，{'；'.join(details)}。"
+                )
             channel["turns"] -= 1
             if channel["turns"] <= 0:
                 hero.channels.remove(channel)
@@ -1036,7 +1251,6 @@ class DespairBattle:
             useful = self._cast_hero_skill(hero, skill)
             if useful:
                 hero.skill_cooldowns[skill["name"]] = int(skill.get("cd", 0)) + 1
-                self.log.append(f"{hero.label} 施放「{skill['name']}」。")
         if not useful:
             self._role_action(hero)
             if any("cost" in item or "gain" in item for item in hero.data.get("skills", [])):
@@ -1095,10 +1309,9 @@ class DespairBattle:
                 continue
             if int(skill.get("cost", 0)) > hero.energy:
                 continue
-            applied = self._cast_hero_skill(hero, skill)
+            applied = self._cast_hero_skill(hero, skill, triggered=True)
             if applied:
                 hero.skill_cooldowns[skill["name"]] = int(skill.get("cd", 0)) + 1
-                self.log.append(f"{hero.label} 触发「{skill['name']}」。")
             return
 
     def _boss_hit(self, target: _Hero, power: float, *, max_hp_pct: float = 0.0) -> float:
@@ -1112,7 +1325,20 @@ class DespairBattle:
                 if ally is not target:
                     self._trigger(ally, "on_ally_dodge")
             return 0.0
-        raw = self.boss_atk * power * (1 + self.damage_bonus)
+        pressure = max(0, self.round - 1) * float(
+            self.config.get("pressure_per_round", 0.0)
+        )
+        enrage_round = int(self.config.get("enrage_round", DESPAIR_MAX_ROUNDS))
+        pressure += max(0, self.round - enrage_round) * float(
+            self.config.get("enrage_per_round", 0.0)
+        )
+        raw = (
+            self.boss_atk
+            * power
+            * (1 + self.damage_bonus)
+            * float(self.config.get("damage_scale", 1.0))
+            * (1 + pressure)
+        )
         if self.boss_weaken:
             raw *= 1 - max(item["pct"] for item in self.boss_weaken) / 100
         raw += target.max_hp * max_hp_pct
@@ -1158,12 +1384,22 @@ class DespairBattle:
 
     def _use_skill(self, skill: dict):
         name = skill["name"]
+        before = self._detail_snapshot()
+        log_index = len(self.log)
+        self.log.append("")
         self.skill_counts[name] = self.skill_counts.get(name, 0) + 1
         if skill.get("cooldown"):
             self.cooldowns[name] = skill["cooldown"] + 1
             self.last_nonbasic = name
-        self.boss_actions.append({"round": self.round, "phase": self.phase, "skill": name})
-        self.log.append(f"万相猪皇施放「{name}」。")
+        action = {"round": self.round, "phase": self.phase, "skill": name}
+        self.boss_actions.append(action)
+
+        def finish():
+            detail = "；".join(
+                self._detail_notes(before, boss_actor=True) or ["没有产生有效效果"]
+            )
+            action["detail"] = detail
+            self._complete_log(log_index, f"R{self.round} 万相猪皇施放「{name}」，{detail}。")
 
         if name in ("御前裁决", "裂甲獠牙", "断生獠牙", "绝境剥夺"):
             target = self._target(lowest=name in ("断生獠牙", "绝境剥夺"))
@@ -1175,11 +1411,13 @@ class DespairBattle:
                 self._add_debuff(target, {"type": "破甲", "turns": 2}, "weaken")
             elif name == "绝境剥夺" and dealt > 0:
                 self._add_debuff(target, {"type": "封技", "turns": 2})
+            finish()
             return
         if name in ("震地三连", "裂界连爪"):
             pool = self.living()
             for target in sorted(pool, key=lambda hero: (hero.ratio, hero.index))[:3]:
                 self._boss_hit(target, skill["power"])
+            finish()
             return
         if name == "灾厄吐息":
             ailments = ("尸毒", "寒意", "易伤")
@@ -1191,12 +1429,14 @@ class DespairBattle:
                         {"type": ailments[(offset + index) % len(ailments)], "turns": 3},
                         "dot",
                     )
+            finish()
             return
         if name == "颠倒敕令":
             for target in sorted(self.living(), key=lambda hero: (-hero.shield, hero.index))[:3]:
                 removed = min(target.shield, target.max_hp * 0.10)
                 target.shield -= removed
                 self._heal_boss(removed * 0.20)
+            finish()
             return
         if name in ("禁声钟鸣", "王冠震荡", "血税征收"):
             for target in list(self.living()):
@@ -1205,8 +1445,9 @@ class DespairBattle:
                 if name == "禁声钟鸣" and target.index < 2 and dealt > 0:
                     self._add_debuff(target, {"type": "沉默", "turns": 1})
                 if name == "血税征收":
-                    dealt += self._hurt(target, target.max_hp * 0.02)
+                    dealt += self._hurt(target, target.max_hp * 0.005)
                     self._heal_boss(dealt * 0.20)
+            finish()
             return
         if name == "同命撕咬":
             owner = min(
@@ -1216,11 +1457,13 @@ class DespairBattle:
             for target in [hero for hero in self.living() if hero.owner == owner]:
                 if self._boss_hit(target, skill["power"]) > 0:
                     self._add_debuff(target, {"type": "受疗降低", "turns": 2}, "weaken")
+            finish()
             return
         if name == "饥荒凝视":
             self._add_debuff(
                 self._target(healer=True), {"type": "饥荒", "turns": 4, "uses": 2}, "weaken"
             )
+            finish()
             return
         if name == "生灭倒转":
             healers = sorted(
@@ -1229,6 +1472,7 @@ class DespairBattle:
             for target in healers:
                 if self._boss_hit(target, skill["power"]) > 0:
                     self._add_debuff(target, {"type": "逆疗", "turns": 2}, "weaken")
+            finish()
             return
         if name == "四职崩坏":
             for role in ROLES:
@@ -1237,10 +1481,12 @@ class DespairBattle:
                     self._boss_hit(
                         min(pool, key=lambda hero: (hero.ratio, hero.index)), skill["power"]
                     )
+            finish()
             return
         if name == "万相轮舞":
             for target in sorted(self.living(), key=lambda hero: (hero.ratio, hero.index))[:4]:
                 self._boss_hit(target, skill["power"])
+        finish()
 
     def _warn_signature(self):
         signature = self.phase_data["signature"]
@@ -1281,8 +1527,11 @@ class DespairBattle:
             return False
         self.pending = None
         self.skill_counts[name] = self.skill_counts.get(name, 0) + 1
-        self.boss_actions.append({"round": self.round, "phase": self.phase, "skill": name})
-        self.log.append(f"万相猪皇施放阶段绝招「{name}」！")
+        before = self._detail_snapshot()
+        log_index = len(self.log)
+        self.log.append("")
+        action = {"round": self.round, "phase": self.phase, "skill": name}
+        self.boss_actions.append(action)
         if name == "王座冲锋":
             self._boss_hit(self._target(), pending["power"])
         elif name == "万疫归一":
@@ -1311,6 +1560,13 @@ class DespairBattle:
             for hero in list(self.living()):
                 self._boss_hit(hero, pending["power"] * (1 - seals * 0.15))
             self.judgment = None
+        detail = "；".join(
+            self._detail_notes(before, boss_actor=True) or ["没有产生有效效果"]
+        )
+        action["detail"] = detail
+        self._complete_log(
+            log_index, f"R{self.round} 万相猪皇施放阶段绝招「{name}」，{detail}！"
+        )
         return True
 
     def _check_seals(self):
@@ -1338,18 +1594,30 @@ class DespairBattle:
         if self.phase == 2 and self.living():
             disasters = ("尸毒", "冰封", "星爆标记", "腐化护幕")
             disaster = disasters[(self.phase_round - 1) % len(disasters)]
-            self.log.append(f"阶段机制·七灾预兆：{disaster}。")
             if disaster == "腐化护幕":
-                self._heal_boss(self.boss_max_hp * 0.01)
+                restored = self._heal_boss(self.boss_max_hp * 0.01)
+                detail = f"万相猪皇恢复 {round(restored)} 生命"
             else:
                 target = min(self.living(), key=lambda hero: (len(hero.debuffs), hero.index))
-                self._add_debuff(target, {"type": disaster, "turns": 2}, "dot")
+                applied = self._add_debuff(
+                    target, {"type": disaster, "turns": 2}, "dot"
+                )
+                detail = (
+                    f"{target.label}获得{disaster}，持续 2 回合"
+                    if applied
+                    else f"{target.label}免疫{disaster}"
+                )
+            self.log.append(f"R{self.round} 阶段机制·七灾预兆「{disaster}」，{detail}。")
 
     def _tick_boss_statuses(self):
         for dot in list(self.boss_dots):
             source = dot["source"]
             if source.alive:
-                self.damage_boss(source, self.boss_max_hp * dot["pct"] / 100)
+                dealt = self.damage_boss(source, self.boss_max_hp * dot["pct"] / 100)
+                self.log.append(
+                    f"R{self.round} {source.label}施加的{dot['label']}结算，"
+                    f"对万相猪皇造成 {round(dealt)} 伤害。"
+                )
                 if self.phase_five_ultimate_pending:
                     self.phase_five_ultimate_pending = False
                     self._maybe_ultimate()
@@ -1361,7 +1629,13 @@ class DespairBattle:
             if delayed["turns"] <= 0:
                 source = delayed["source"]
                 if source.alive:
-                    self.damage_boss(source, self.boss_max_hp * delayed["pct"] / 100)
+                    dealt = self.damage_boss(
+                        source, self.boss_max_hp * delayed["pct"] / 100
+                    )
+                    self.log.append(
+                        f"R{self.round} {source.label}施加的{delayed['label']}爆发，"
+                        f"对万相猪皇造成 {round(dealt)} 伤害。"
+                    )
                 self.boss_delays.remove(delayed)
         for statuses in (self.boss_expose, self.boss_weaken):
             for status in list(statuses):
@@ -1375,9 +1649,15 @@ class DespairBattle:
 
     def _phase_event_end(self):
         if self.phase == 3:
-            self.log.append("阶段机制·血潮席卷全队。")
+            before = self._detail_snapshot()
+            log_index = len(self.log)
+            self.log.append("")
             for hero in list(self.living()):
                 self._boss_hit(hero, 0.12)
+            detail = "；".join(
+                self._detail_notes(before, boss_actor=True) or ["没有产生有效效果"]
+            )
+            self._complete_log(log_index, f"R{self.round} 阶段机制「血潮」，{detail}。")
 
     def _best_caster(self, role: str) -> _Hero | None:
         pool = [hero for hero in self.living() if hero.role == role]
@@ -1428,6 +1708,9 @@ class DespairBattle:
             living, key=lambda hero: self._hero_stat(hero, "atk")
         )
         role = caster.role
+        before = self._detail_snapshot()
+        log_index = len(self.log)
+        self.log.append("")
         if role == "输出":
             self.damage_boss(caster, caster.atk * 8)
         elif role == "坦克":
@@ -1449,7 +1732,10 @@ class DespairBattle:
             self.ultimate_warning_used.add(warning_cycle)
         item = {"round": self.round, "phase": self.phase, "role": role, "caster": caster.label}
         self.ultimate_history.append(item)
-        self.log.append(f"{caster.label} 发动{role}极限技！")
+        detail = "；".join(self._detail_notes(before) or ["没有产生有效效果"])
+        self._complete_log(
+            log_index, f"R{self.round} {caster.label}发动{role}极限技，{detail}！"
+        )
 
     def _boss_turn(self):
         actions = self.phase_data["actions"]
@@ -1476,14 +1762,19 @@ class DespairBattle:
         self.boss_root = max(0, self.boss_root - 1)
         self.boss_stun = max(0, self.boss_stun - 1)
         if self.phase == 5 and self.p5_rounds > 5 and self.living():
-            self.boss_actions.append(
-                {"round": self.round, "phase": 5, "skill": "绝境余波", "extra": True}
-            )
+            before = self._detail_snapshot()
+            action = {"round": self.round, "phase": 5, "skill": "绝境余波", "extra": True}
+            self.boss_actions.append(action)
             for hero in list(self.living()):
                 self._boss_hit(hero, 0.35)
+            detail = "；".join(
+                self._detail_notes(before, boss_actor=True) or ["没有产生有效效果"]
+            )
+            action["detail"] = detail
+            self.log.append(f"R{self.round} 万相猪皇发动「绝境余波」，{detail}。")
 
     def run(self) -> dict:
-        max_rounds = min(DESPAIR_MAX_ROUNDS, self.config.get("max_rounds", 20))
+        max_rounds = min(DESPAIR_MAX_ROUNDS, self.config.get("max_rounds", DESPAIR_MAX_ROUNDS))
         while self.round < max_rounds:
             if not self.living() or self.boss_hp <= 0:
                 break
@@ -1534,7 +1825,13 @@ class DespairBattle:
 
     def result(self, *, max_rounds: int | None = None) -> dict:
         won = self.boss_hp <= 0
-        limit = max_rounds or min(DESPAIR_MAX_ROUNDS, self.config.get("max_rounds", 20))
+        limit = max_rounds or min(
+            DESPAIR_MAX_ROUNDS, self.config.get("max_rounds", DESPAIR_MAX_ROUNDS)
+        )
+        phase_reports = [*self.phase_reports]
+        current_report = self._phase_report()
+        if not phase_reports or phase_reports[-1]["phase"] != current_report["phase"]:
+            phase_reports.append(current_report)
         return {
             "winner": 0 if won else 1,
             "won": won,
@@ -1570,6 +1867,7 @@ class DespairBattle:
                 "actions": self.boss_actions,
             },
             "phases": self.phase_history,
+            "phase_reports": phase_reports,
             "log": self.log,
             "stats": {
                 "poise_breaks": self.poise_breaks,

@@ -232,7 +232,7 @@ class Sender:
         self,
         event,
         app_id: str,
-        message: Message,
+        message: Message | tuple[Message, ...] | list[Message],
         deadline: float | None = None,
         *,
         force_upload: bool = False,
@@ -241,82 +241,85 @@ class Sender:
         receipt = await self.db.delivery(key)
         if receipt["done"]:
             return
+        messages = (message,) if isinstance(message, Message) else tuple(message)
+        if not messages:
+            raise PiggyError("回复内容为空。")
+        part_counts = [1 if item.images or item.local else len(item.parts()) for item in messages]
+        if sum(part_counts) > 5:
+            raise PiggyError("单次回复最多发送五条消息。")
         sequence = receipt["sequence"]
         deadline = deadline if deadline is not None else time.monotonic() + 240
-        urls = []
-        media = None
-        if message.local:
-            if len(message.images) != 1 or not isinstance(message.images[0], bytes):
-                raise PiggyError("普通图片消息必须包含一张完整的渲染卡片。")
-            media = await self._upload_local(event, message.images[0], deadline)
-        else:
-            for path in message.images:
-                urls.append(
-                    await self.publisher.publish(path, force=force_upload, deadline=deadline)
-                )
-        refreshed = False
-        parts = [message.text] if message.images or message.local else message.parts()
-        for index, part in enumerate(parts):
-            final = index == len(parts) - 1
-            for attempt in range(self.settings.image_retry_count + 1):
-                if time.monotonic() >= deadline:
-                    raise PiggyError("本次回复等待过久，请重新发送指令；抽取记录已保留。")
-                payload = {
-                    "msg_id": event.message_obj.message_id,
-                    "msg_seq": sequence,
-                }
-                if message.local:
-                    payload.update(msg_type=7, media={"file_info": media})
-                elif message.images or message.markdown:
-                    payload.update(
-                        msg_type=2,
-                        markdown={
-                            "content": message.content(urls) if message.images else part,
-                            **({"force_verify_image_resource": True} if message.images else {}),
-                        },
+        for message_index, item in enumerate(messages):
+            urls = []
+            media = None
+            if item.local:
+                if len(item.images) != 1 or not isinstance(item.images[0], bytes):
+                    raise PiggyError("普通图片消息必须包含一张完整的渲染卡片。")
+                media = await self._upload_local(event, item.images[0], deadline)
+            else:
+                for path in item.images:
+                    urls.append(
+                        await self.publisher.publish(path, force=force_upload, deadline=deadline)
                     )
-                    if message.keyboard and final:
-                        payload["keyboard"] = message.keyboard
-                else:
-                    payload.update(msg_type=0, content=part)
-                try:
-                    await self.transport.request(event, payload)
-                except QQError as exc:
-                    if exc.code in DEDUPE_ERRORS:
-                        # Same persisted sequence: a previous attempt already reached QQ.
-                        break
-                    image_error = exc.code in IMAGE_ERRORS or (message.local and exc.code == 304080)
-                    retryable = image_error or exc.retryable
-                    delay = self._retry_delay(
-                        exc, attempt, self.settings.image_retry_count, deadline, "send", retryable
-                    )
-                    if not retryable:
-                        raise
-                    if not exc.uncertain:
-                        # QQ explicitly rejected this message. It is safe to allocate the next
-                        # sequence.
-                        sequence += 1
-                        await self.db.delivery_update(key, sequence, False)
-                    if delay is None:
-                        raise
-                    await asyncio.sleep(delay)
-                    if image_error and message.local:
-                        media = await self._upload_local(event, message.images[0], deadline)
-                    elif image_error and not refreshed:
-                        # Repair expired/deleted host objects once per message, then let QQ
-                        # retry transfer.
-                        urls = [
-                            await self.publisher.publish(path, force=True, deadline=deadline)
-                            for path in message.images
-                        ]
-                        refreshed = True
-                    continue
-                break
-            if final:
-                await self.db.delivery_update(key, sequence, True)
-                return
-            sequence += 1
-            await self.db.delivery_update(key, sequence, False)
+            refreshed = False
+            parts = [item.text] if item.images or item.local else item.parts()
+            for index, part in enumerate(parts):
+                part_final = index == len(parts) - 1
+                final = message_index == len(messages) - 1 and part_final
+                for attempt in range(self.settings.image_retry_count + 1):
+                    if time.monotonic() >= deadline:
+                        raise PiggyError("本次回复等待过久，请重新发送指令；抽取记录已保留。")
+                    payload = {
+                        "msg_id": event.message_obj.message_id,
+                        "msg_seq": sequence,
+                    }
+                    if item.local:
+                        payload.update(msg_type=7, media={"file_info": media})
+                    elif item.images or item.markdown:
+                        payload.update(
+                            msg_type=2,
+                            markdown={
+                                "content": item.content(urls) if item.images else part,
+                                **({"force_verify_image_resource": True} if item.images else {}),
+                            },
+                        )
+                        if item.keyboard and part_final:
+                            payload["keyboard"] = item.keyboard
+                    else:
+                        payload.update(msg_type=0, content=part)
+                    try:
+                        await self.transport.request(event, payload)
+                    except QQError as exc:
+                        if exc.code in DEDUPE_ERRORS:
+                            break
+                        image_error = exc.code in IMAGE_ERRORS or (item.local and exc.code == 304080)
+                        retryable = image_error or exc.retryable
+                        delay = self._retry_delay(
+                            exc, attempt, self.settings.image_retry_count, deadline, "send", retryable
+                        )
+                        if not retryable:
+                            raise
+                        if not exc.uncertain:
+                            sequence += 1
+                            await self.db.delivery_update(key, sequence, False)
+                        if delay is None:
+                            raise
+                        await asyncio.sleep(delay)
+                        if image_error and item.local:
+                            media = await self._upload_local(event, item.images[0], deadline)
+                        elif image_error and not refreshed:
+                            urls = [
+                                await self.publisher.publish(path, force=True, deadline=deadline)
+                                for path in item.images
+                            ]
+                            refreshed = True
+                        continue
+                    break
+                if final:
+                    await self.db.delivery_update(key, sequence, True)
+                    return
+                sequence += 1
+                await self.db.delivery_update(key, sequence, False)
 
     async def _upload_local(self, event, data: bytes, deadline: float) -> str:
         for attempt in range(self.settings.upload_retry_count + 1):

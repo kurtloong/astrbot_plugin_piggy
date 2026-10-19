@@ -720,6 +720,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.plugin.reload.admin_only)
         self.assertTrue(self.plugin.backup.admin_only)
         self.assertTrue(self.plugin.diagnose.admin_only)
+        self.assertTrue(self.plugin.despair_test.admin_only)
         manifest = self.root / "catalog" / "pigs.json"
         pigs = json.loads(manifest.read_text("utf-8"))
         pigs[0]["enabled"] = False
@@ -736,6 +737,25 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.initialize()
         self.assertFalse(manifest.exists())
         self.assertEqual((await self.plugin.db.collection(999))["active_total"], active)
+
+    async def test_admin_despair_preview_accepts_reproducible_seed(self):
+        await self.plugin.initialize()
+        preview = {"id": "TEST-00000007", "test": True}
+        with (
+            patch.object(
+                self.plugin.db, "test_despair", new=AsyncMock(return_value=preview)
+            ) as simulate,
+            patch(
+                "astrbot_plugin_piggy.main.despair_battle_message",
+                new=AsyncMock(return_value=self.module.Message("测试战报")),
+            ) as report,
+        ):
+            await self.plugin.despair_test(OfficialEvent("despair-test", text="测试绝境战 7"))
+
+        self.assertEqual(simulate.await_args.kwargs, {"level": 10, "seed": 7})
+        self.assertIs(report.await_args.args[2], preview)
+        payload = self.plugin.transport.request.await_args.args[1]
+        self.assertEqual(payload["content"], "测试战报")
 
 
 if __name__ == "__main__":

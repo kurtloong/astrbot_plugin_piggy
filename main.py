@@ -99,6 +99,7 @@ BATTLE_COMMANDS = {
     "despair_open",
     "despair_join",
     "despair_leave",
+    "despair_test",
     "grant_pig",
     "grant_draw",
 }
@@ -756,6 +757,17 @@ class PiggyPlugin(Star):
 
     async def _despair(self, app_id: str, group: str, user: dict, command: str, words: tuple):
         settings, uid = self.settings, user["id"]
+        if command == "despair_test":
+            if len(words) > 1:
+                raise PiggyError("用法：测试绝境战 [随机种子]")
+            try:
+                seed = int(words[0]) if words else None
+            except ValueError:
+                raise PiggyError("随机种子必须是整数。") from None
+            if settings.use_host("raid"):
+                settings.check_host()
+            battle = await self.db.test_despair(user, level=10, seed=seed)
+            return await despair_battle_message(settings, self.root, battle)
         if command == "despair":
             status = await self.db.despair_status(app_id, group, uid)
             return despair_status_message(settings, user, status)
@@ -921,6 +933,12 @@ class PiggyPlugin(Star):
     async def despair_leave(self, event: AstrMessageEvent):
         """组队期间退出绝境战；队长退出会解散整队。"""
         await self._handle(event, "despair_leave")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("测试绝境战")
+    async def despair_test(self, event: AstrMessageEvent):
+        """仅管理员：随机选四职业各两只 10 级猪，生成完整绝境战测试战报。"""
+        await self._handle(event, "despair_test", command_words(event, ("测试绝境战",)))
 
     async def duel_ranking(self, event: AstrMessageEvent):
         """查看本群玩家的斗猪胜率排行，至少 3 场上榜。"""

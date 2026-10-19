@@ -1240,6 +1240,7 @@ class Database:
             "heroes": result.get("heroes", []),
             "timeout": bool(result.get("timeout")),
             "phases": result.get("phases", result.get("phase", [])),
+            "phase_reports": result.get("phase_reports", []),
             "ultimate": result.get("ultimate", []),
         }
         cursor = conn.execute(
@@ -1269,6 +1270,7 @@ class Database:
         view = cls._despair_view(
             conn, conn.execute("SELECT * FROM despair_raids WHERE id=?", (raid_id,)).fetchone()
         )
+        boss_pig_row = conn.execute("SELECT * FROM pigs WHERE id=?", ("pighub0253",)).fetchone()
         return {
             "id": cursor.lastrowid,
             "raid": view,
@@ -1277,8 +1279,98 @@ class Database:
             "week": settlement_week,
             "result": result,
             "fighters": fighters,
+            "boss_pig": dict(boss_pig_row) if boss_pig_row else None,
             "rewards": rewards,
         }
+
+    async def test_despair(self, user: dict, *, level: int = 10, seed: int | None = None) -> dict:
+        """Build a read-only random balanced party and run a complete report preview."""
+        from .despair import simulate_despair
+
+        fight_seed = secrets.randbits(32) if seed is None else seed
+
+        def simulate(conn):
+            rng = random.Random(fight_seed)
+            pools = {role: [] for role in ROLES}
+            for row in conn.execute("SELECT * FROM pigs WHERE enabled=1 ORDER BY id"):
+                pig = dict(row)
+                entry = entry_for(pig.get("battle"))
+                role = entry.get("role", "输出")
+                if role in pools:
+                    pools[role].append((pig, entry))
+            missing = [role for role, pigs in pools.items() if len(pigs) < 2]
+            if missing:
+                raise PiggyError(
+                    f"猪库缺少可测试职业：{'、'.join(missing)}（每个职业至少需要 2 只）"
+                )
+            selected = []
+            for role in ROLES:
+                selected.extend(rng.sample(pools[role], 2))
+            rng.shuffle(selected)
+
+            party, metadata = [], []
+            test_users = [
+                {
+                    **user,
+                    "id": -(index + 1),
+                    "alias": f"测试玩家{index + 1}",
+                    "nickname": f"测试玩家{index + 1}",
+                }
+                for index in range(4)
+            ]
+            for seat, (pig, entry) in enumerate(selected):
+                owner_seat = seat // 2
+                owner = test_users[owner_seat]
+                hero = fighter(
+                    pig,
+                    entry,
+                    level,
+                    f"{player_name(owner)}的{pig['name']}",
+                    rarity=rarity_for(pig["id"]),
+                )
+                hero.update(seat=seat, owner_seat=owner_seat, owner_id=owner["id"])
+                party.append(hero)
+                metadata.append((owner, pig, hero))
+
+            result = simulate_despair(party, seed=fight_seed ^ 0xD35FA17)
+            outcomes = {item["seat"]: item for item in result.get("heroes", [])}
+            fighters = []
+            for seat, (owner, pig, hero) in enumerate(metadata):
+                state = outcomes.get(seat, {})
+                fighters.append(
+                    {
+                        "seat": seat,
+                        "owner_seat": hero["owner_seat"],
+                        "user": owner,
+                        "pig": {key: value for key, value in pig.items() if key != "battle"},
+                        "level": level,
+                        "role": hero["role"],
+                        "style": hero["style"],
+                        "rarity": hero["rarity"],
+                        "hp": state.get("hp", hero["stats"]["hp"]),
+                        "max_hp": state.get("max_hp", hero["stats"]["hp"]),
+                        "alive": state.get("alive", True),
+                        "dealt": state.get("dealt", 0),
+                        "healed": state.get("healed", 0),
+                        "taken": state.get("taken", 0),
+                        "poise": state.get("poise", 0),
+                    }
+                )
+            boss_pig = conn.execute("SELECT * FROM pigs WHERE id=?", ("pighub0253",)).fetchone()
+            return {
+                "id": f"TEST-{fight_seed:08X}",
+                "raid": {"leader_user": user},
+                "won": bool(result.get("won")),
+                "status": "test",
+                "week": f"10级随机阵容 · 种子 {fight_seed}",
+                "result": result,
+                "fighters": fighters,
+                "boss_pig": dict(boss_pig) if boss_pig else None,
+                "rewards": [],
+                "test": True,
+            }
+
+        return await self.run(simulate)
 
     @staticmethod
     def _wild_view(conn, row) -> dict:

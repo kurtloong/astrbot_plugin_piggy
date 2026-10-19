@@ -60,6 +60,20 @@ class ModeTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_five_local_phase_reports_use_one_reply_sequence(self):
+        messages = tuple(Message("", (f"phase-{index}".encode(),), local=True) for index in range(5))
+        self.transport.upload_image.side_effect = [f"file-{index}" for index in range(5)]
+
+        await self.sender.send(self.event, "app", messages)
+        await self.sender.send(self.event, "app", messages)
+
+        self.assertEqual(self.transport.upload_image.await_count, 5)
+        self.assertEqual([payload["msg_seq"] for payload in self.transport.payloads], [100, 101, 102, 103, 104])
+        self.assertEqual(
+            [payload["media"]["file_info"] for payload in self.transport.payloads],
+            [f"file-{index}" for index in range(5)],
+        )
+
     async def test_upload_retries_are_bounded_and_do_not_send_on_failure(self):
         self.transport.upload_image.side_effect = QQError(0, 0, uncertain=True)
         with patch("asyncio.sleep", new_callable=AsyncMock):
