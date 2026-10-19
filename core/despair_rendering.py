@@ -25,8 +25,8 @@ from .rendering import (
 PHASE_NAMES = ("王座重压", "七灾回响", "血月同命", "破冠攻坚", "万相归一")
 # A combined report only performs one QQ upload, so it can spend substantially
 # more vertical space on each phase than the old multi-message version.
-MAX_PHASE_LOG_LINES = 180
-MAX_FINAL_LOG_LINES = 140
+MAX_PHASE_LOG_LINES = 320
+MAX_FINAL_LOG_LINES = 280
 PHASE_CARD_GAP = 24
 
 
@@ -75,8 +75,8 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
     # long image. Preserve a chronological cross-section of real skill effects
     # and important events while folding repeated basic/status ticks.
     notice = (
-        f"本阶段共有 {len(entries)} 条记录；为适配 QQ 图片尺寸，以下保留关键机制、"
-        "Boss 行动及代表性技能效果，重复行动已折叠。"
+        f"本阶段共有 {len(entries)} 条记录；Boss 每次技能、机制及其前后记录完整保留，"
+        "其余重复行动按时间线折叠。"
     )
     notice_lines = measure.wrap(notice, 18, 920)
     budget = max(1, limit - len(notice_lines))
@@ -101,6 +101,31 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
         or any(word in item[2] for word in special_words)
     ]
 
+    # A Boss cast is only understandable with the state immediately leading into
+    # it and the reactions immediately following it. Keep two records on either
+    # side of every cast, warning, phase mechanic and break mechanic. Required
+    # context is allowed to exceed the ordinary line target; correctness is more
+    # important than shaving a few thousand pixels from the one-shot long image.
+    boss_context_words = (
+        "万相猪皇施放",
+        "万相猪皇发动",
+        "万相猪皇预警",
+        "万相猪皇由第",
+        "阶段机制",
+        "阶段转换",
+        "韧性击破",
+        "崩裂王冠",
+        "裁定印",
+        "生命共鸣",
+    )
+    required_indices = set()
+    for position, item in enumerate(entries):
+        if any(word in item[2] for word in boss_context_words):
+            required_indices.update(
+                range(max(0, position - 2), min(len(entries), position + 3))
+            )
+    required = [entries[position] for position in sorted(required_indices)]
+
     # Keep two fully explained player actions from every reached round. Together
     # with every selected Boss action this makes the compressed timeline much
     # easier to follow without letting routine ticks dominate the long image.
@@ -119,6 +144,14 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
 
     chosen: dict[int, tuple[int, list[str], str]] = {}
 
+    def take_required(candidates):
+        nonlocal budget
+        for item in candidates:
+            if item[0] in chosen:
+                continue
+            chosen[item[0]] = item
+            budget -= len(item[1])
+
     def take(candidates):
         nonlocal budget
         for item in _spread(candidates):
@@ -129,6 +162,7 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
                 chosen[item[0]] = item
                 budget -= cost
 
+    take_required(required)
     take(specials)
     take(round_actions)
     take(entries)
@@ -303,7 +337,7 @@ def render_despair_phase(root: Path, data: dict):
     for index, item in enumerate(log_lines or [("本阶段没有额外战斗记录", "")]):
         line, source = item
         boss_action = any(
-            key in source for key in ("万相猪皇施放", "万相猪皇发动")
+            key in source for key in ("万相猪皇施放", "万相猪皇发动", "万相猪皇预警")
         )
         highlight = any(key in source for key in ("阶段", "极限技", "倒下", "击破", "击败"))
         canvas.text(

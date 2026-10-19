@@ -54,14 +54,14 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("甲 倒下" in line for line, _ in lines))
         self.assertTrue(any("乙 倒下" in line for line, _ in lines))
 
-    def test_oversized_phase_log_keeps_boss_actions_within_image_budget(self):
+    def test_oversized_phase_log_keeps_every_boss_action_and_its_context(self):
         class Measure:
             @staticmethod
             def wrap(text, size, width):
                 return [text]
 
         log = []
-        for round_number in range(1, 101):
+        for round_number in range(1, 151):
             log.extend(
                 [
                     f"R{round_number} 玩家施放「普通技能」，造成完整效果。",
@@ -72,9 +72,15 @@ class DespairViewTests(unittest.IsolatedAsyncioTestCase):
 
         lines = _phase_log_lines(Measure(), {"log": log}, MAX_PHASE_LOG_LINES)
 
-        self.assertLessEqual(len(lines), MAX_PHASE_LOG_LINES)
-        self.assertIn("为适配 QQ 图片尺寸", lines[0][0])
-        self.assertTrue(any("万相猪皇施放" in line for line, _ in lines))
+        sources = [source for _, source in lines]
+        self.assertIn("Boss 每次技能、机制及其前后记录完整保留", lines[0][0])
+        for round_number in range(1, 151):
+            self.assertIn(
+                f"R{round_number} 万相猪皇施放「阶段招式」，造成完整效果。",
+                sources,
+            )
+            self.assertIn(f"R{round_number} 玩家施放「普通技能」，造成完整效果。", sources)
+            self.assertIn(f"R{round_number} 持续治疗生效。", sources)
 
     def test_compressed_phase_log_keeps_two_player_actions_per_round(self):
         class Measure:
