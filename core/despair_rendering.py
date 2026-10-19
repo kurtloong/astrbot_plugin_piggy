@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import re
 from pathlib import Path
+
+from PIL import Image
 
 from .rendering import (
     ACCENT,
@@ -13,14 +16,43 @@ from .rendering import (
     TEXT,
     WIDTH,
     Canvas,
+    Card,
     _hp_bar,
     _paste_art,
     finish,
 )
 
 PHASE_NAMES = ("王座重压", "七灾回响", "血月同命", "破冠攻坚", "万相归一")
-MAX_PHASE_LOG_LINES = 86
-MAX_FINAL_LOG_LINES = 54
+# A combined report only performs one QQ upload, so it can spend substantially
+# more vertical space on each phase than the old multi-message version.
+MAX_PHASE_LOG_LINES = 320
+MAX_FINAL_LOG_LINES = 280
+PHASE_CARD_GAP = 24
+
+
+def stack_despair_phase_cards(cards: list[Card]) -> Card:
+    """Join every reached phase into one image so QQ only receives one reply."""
+    if not cards:
+        raise ValueError("至少需要一张绝境战阶段图片")
+    if len(cards) == 1:
+        return cards[0]
+
+    images = []
+    try:
+        for card in cards:
+            with Image.open(io.BytesIO(card.data)) as source:
+                images.append(source.convert("RGB"))
+        width = max(image.width for image in images)
+        height = sum(image.height for image in images) + PHASE_CARD_GAP * (len(images) - 1)
+        combined = Image.new("RGB", (width, height), PANEL)
+        y = 0
+        for image in images:
+            combined.paste(image, ((width - image.width) // 2, y))
+            y += image.height + PHASE_CARD_GAP
+        return finish(combined)
+    finally:
+        for image in images:
+            image.close()
 
 
 def _spread(entries: list[tuple[int, list[str], str]]) -> list[tuple[int, list[str], str]]:
@@ -39,12 +71,12 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
     if sum(len(lines) for _, lines, _ in entries) <= limit:
         return [(line, source) for _, lines, source in entries for line in lines]
 
-    # Five passive replies is QQ's hard ceiling, so every phase must remain one
-    # image. Keep a chronological cross-section of real skill effects and all
-    # kinds of important events, while folding repeated basic/status ticks.
+    # Keep each phase compact enough to become one readable section in the final
+    # long image. Preserve a chronological cross-section of real skill effects
+    # and important events while folding repeated basic/status ticks.
     notice = (
-        f"本阶段共有 {len(entries)} 条记录；为适配 QQ 图片尺寸，以下保留关键机制、"
-        "Boss 行动及代表性技能效果，重复行动已折叠。"
+        f"本阶段共有 {len(entries)} 条记录；Boss 每次技能、机制及其前后记录完整保留，"
+        "其余重复行动按时间线折叠。"
     )
     notice_lines = measure.wrap(notice, 18, 920)
     budget = max(1, limit - len(notice_lines))
@@ -56,6 +88,8 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
         "倒下",
         "击败",
         "复活",
+        "净化",
+        "护盾",
         "裁定印",
         "王冠",
         "生命共鸣",
@@ -67,21 +101,56 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
         or any(word in item[2] for word in special_words)
     ]
 
-    # Ensure each reached round has at least one fully explained player action.
+    # A Boss cast is only understandable with the state immediately leading into
+    # it and the reactions immediately following it. Keep two records on either
+    # side of every cast, warning, phase mechanic and break mechanic. Required
+    # context is allowed to exceed the ordinary line target; correctness is more
+    # important than shaving a few thousand pixels from the one-shot long image.
+    boss_context_words = (
+        "万相猪皇施放",
+        "万相猪皇发动",
+        "万相猪皇预警",
+        "万相猪皇由第",
+        "阶段机制",
+        "阶段转换",
+        "韧性击破",
+        "崩裂王冠",
+        "裁定印",
+        "生命共鸣",
+    )
+    required_indices = set()
+    for position, item in enumerate(entries):
+        if any(word in item[2] for word in boss_context_words):
+            required_indices.update(
+                range(max(0, position - 2), min(len(entries), position + 3))
+            )
+    required = [entries[position] for position in sorted(required_indices)]
+
+    # Keep two fully explained player actions from every reached round. Together
+    # with every selected Boss action this makes the compressed timeline much
+    # easier to follow without letting routine ticks dominate the long image.
     round_actions = []
-    seen_rounds = set()
+    round_action_counts = {}
     for item in entries:
         match = re.match(r"R(\d+) ", item[2])
         if (
             match
-            and match.group(1) not in seen_rounds
+            and round_action_counts.get(match.group(1), 0) < 2
             and "万相猪皇" not in item[2]
             and any(word in item[2] for word in ("施放", "发动", "触发"))
         ):
-            seen_rounds.add(match.group(1))
+            round_action_counts[match.group(1)] = round_action_counts.get(match.group(1), 0) + 1
             round_actions.append(item)
 
     chosen: dict[int, tuple[int, list[str], str]] = {}
+
+    def take_required(candidates):
+        nonlocal budget
+        for item in candidates:
+            if item[0] in chosen:
+                continue
+            chosen[item[0]] = item
+            budget -= len(item[1])
 
     def take(candidates):
         nonlocal budget
@@ -93,6 +162,7 @@ def _phase_log_lines(measure: Canvas, report: dict, limit: int):
                 chosen[item[0]] = item
                 budget -= cost
 
+    take_required(required)
     take(specials)
     take(round_actions)
     take(entries)
@@ -125,7 +195,7 @@ def _defeat_log_lines(measure: Canvas, report: dict, limit: int = 18):
 
 
 def render_despair_phase(root: Path, data: dict):
-    """Render one complete phase so QQ can send the encounter as five reports."""
+    """Render one complete section for the encounter's combined long report."""
     report = data.get("report") or {}
     party = list(data.get("party") or [])
     overall = list(data.get("overall_stats") or []) if data.get("final") else []
@@ -267,7 +337,7 @@ def render_despair_phase(root: Path, data: dict):
     for index, item in enumerate(log_lines or [("本阶段没有额外战斗记录", "")]):
         line, source = item
         boss_action = any(
-            key in source for key in ("万相猪皇施放", "万相猪皇发动")
+            key in source for key in ("万相猪皇施放", "万相猪皇发动", "万相猪皇预警")
         )
         highlight = any(key in source for key in ("阶段", "极限技", "倒下", "击破", "击败"))
         canvas.text(
