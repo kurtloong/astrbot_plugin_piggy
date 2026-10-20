@@ -820,17 +820,25 @@ class PiggyPlugin(Star):
     async def _mythic(self, app_id: str, group: str, user: dict, command: str, words: tuple):
         settings, uid = self.settings, user["id"]
         if command == "mythic":
-            return mythic_status_message(await self.db.mythic_status(app_id, group, uid))
+            return mythic_status_message(
+                settings, user, await self.db.mythic_status(app_id, group, uid)
+            )
         if command == "mythic_key":
-            return mythic_key_message(await self.db.mythic_status(app_id, group, uid))
+            return mythic_key_message(
+                settings, user, await self.db.mythic_status(app_id, group, uid)
+            )
         if command == "mythic_key_claim":
             if words:
                 raise PiggyError("用法：领取钥匙")
-            return mythic_key_action_message(await self.db.claim_mythic_key(uid), "claim")
+            return mythic_key_action_message(
+                settings, user, await self.db.claim_mythic_key(uid), "claim"
+            )
         if command == "mythic_key_lower":
             if words:
                 raise PiggyError("用法：降级钥匙")
-            return mythic_key_action_message(await self.db.lower_mythic_key(uid), "lower")
+            return mythic_key_action_message(
+                settings, user, await self.db.lower_mythic_key(uid), "lower"
+            )
         if command == "mythic_ranking":
             if words and words[0] not in {"总分", "周榜"}:
                 raise PiggyError("用法：大秘境排行 [周榜/总分]")
@@ -856,6 +864,7 @@ class PiggyPlugin(Star):
         if command == "mythic_leave":
             result = await self.db.leave_mythic(app_id, group, uid)
             return mythic_lobby_message(
+                settings,
                 result, "cancelled" if result["cancelled"] else "leave"
             )
         if not words:
@@ -870,7 +879,7 @@ class PiggyPlugin(Star):
                 pig["id"],
                 level_cap=settings.battle_level_cap,
             )
-            return mythic_lobby_message(result, "open")
+            return mythic_lobby_message(settings, result, "open")
         result = await self.db.join_mythic(
             app_id,
             group,
@@ -882,7 +891,7 @@ class PiggyPlugin(Star):
             return await asyncio.to_thread(
                 mythic_battle_message, settings, self.root, result["battle"]
             )
-        return mythic_lobby_message(result, "join")
+        return mythic_lobby_message(settings, result, "join")
 
     async def _failure(self, event, text: str):
         try:
