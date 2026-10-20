@@ -3,6 +3,7 @@
 import math
 from pathlib import Path
 
+from .config import Settings
 from .delivery import Message
 from .rendering import (
     ACCENT,
@@ -349,9 +350,14 @@ def render_mythic_report(root: Path, battle: dict, *, test: bool = False):
     return card
 
 
-def mythic_battle_message(root: Path, battle: dict, *, test: bool = False) -> Message:
+def mythic_battle_message(
+    settings: Settings, root: Path, battle: dict, *, test: bool = False
+) -> Message:
     card = render_mythic_report(root, battle, test=test)
-    return Message("", (card.data,), local=True)
+    hosted = settings.use_host("raid")
+    title = "小猪大秘境测试战报" if test else "小猪大秘境战报"
+    text = f"![{title} #{card.width}px #{card.height}px]({{{{image:0}}}})" if hosted else ""
+    return Message(text, (card.data,), local=not hosted)
 
 
 def mythic_rankings_message(board: dict, total: bool = False) -> Message:
