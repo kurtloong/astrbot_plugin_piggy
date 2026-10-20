@@ -31,6 +31,7 @@ from .raid import (
     mechanics_for,
     recommended_functions,
 )
+from .rarity import RARITIES
 from .rendering import (
     ATLAS_SHEET_SIZE,
     PEN_SHEET_SIZE,
@@ -591,8 +592,10 @@ async def raid_battle_message(settings: Settings, root: Path, battle: dict) -> M
     return message
 
 
-def _pen_entries(progress: dict, filters: tuple[str, ...] = ()) -> list[dict]:
-    """Owned pigs ordered 坦克 → 输出 → 治疗 → 辅助 for the pen card."""
+def _pen_entries(
+    progress: dict, filters: tuple[str, ...] = (), level_cap: int = 20
+) -> list[dict]:
+    """Group owned pigs by role, then order by level and rarity descending."""
     rank = {role: index for index, role in enumerate(ROLES)}
     items = []
     for pig in progress["entries"]:
@@ -606,7 +609,15 @@ def _pen_entries(progress: dict, filters: tuple[str, ...] = ()) -> list[dict]:
         if filters and not all(tag in tags for tag in filters):
             continue
         items.append({**pig, "role": role, "tags": tags})
-    items.sort(key=lambda pig: (rank[pig["role"]], pig.get("sort_order", 0), pig["id"]))
+    items.sort(
+        key=lambda pig: (
+            rank[pig["role"]],
+            -level_for(pig["count"], level_cap),
+            -RARITIES.get(pig.get("rarity", "普通"), RARITIES["普通"])["rank"],
+            pig.get("sort_order", 0),
+            pig["id"],
+        )
+    )
     return items
 
 
@@ -628,7 +639,7 @@ async def collection_message(
         invalid = [tag for tag in filters if tag not in TAGS]
         if invalid:
             raise PiggyError(f"未知猪圈标签：{'/'.join(invalid)}。可用职业或机制标签筛选。")
-        items = _pen_entries(progress, filters)
+        items = _pen_entries(progress, filters, settings.battle_level_cap)
         view = {
             **progress,
             "role_counts": {role: sum(1 for p in items if p["role"] == role) for role in ROLES},
@@ -762,6 +773,21 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
             "全队必须恰好 2 坦克 / 2 输出 / 2 治疗 / 2 辅助，且 8 个猪种不能重复",
             "万相猪皇只有一条血条但会连续进入 5 个阶段；失败不扣猪，可重新挑战",
             "每周首次通关每人获得真正十连，并保证一只尚未觉醒的猪获得性格；全觉醒后改为神话保底",
+        ],
+        "【小猪大秘境】",
+        [
+            "永久通关全部 7 个普通副本后解锁；发送「领取钥匙」获得初始随机 +2 钥石",
+            "查询钥匙 —— 查看当前钥石、七本限时最高层和永久降级保底",
+            "降级钥匙 —— 主动降低一级，但不会低于七本共同达到的保底层",
+            f"开启大秘境 {example} —— 使用自己的钥石组队；四只参战猪都必须达到 Lv5",
+            "固定挑战六组主题小怪和三名 Boss；每组至少有坦克、输出、治疗三只猪，全程累计回合",
+            "整趟有 30% 概率触发 ADD，命中后最多 1–2 次；增援来自本副本小怪池，战报会写明触发小猪",
+            "+2 起有强韧/残暴词缀，+7 增加火山，+12 增加重伤；词缀会实际参与战斗",
+            "全队都是 Lv5–9 时，+2/+3/+4 获得逐层衰减的新锐祝福，+5 起完全失效",
+            "每次限时必得自己的参战猪；+7/+12/+17 另得 1/2/3 次当天再抽",
+            "每周限时层数奖励：+2 稀有、+7 史诗、+12 神话、+17 十连抽，各档每周一次",
+            "大秘境排行 —— 按固定四人组合排行；更换小猪不改变队伍身份",
+            "测试大秘境 [副本] [层数] [种子] —— 管理员随机或定向生成不落库测试战报",
         ],
     ]
     if favorite:

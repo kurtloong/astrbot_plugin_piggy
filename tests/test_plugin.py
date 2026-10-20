@@ -721,6 +721,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.plugin.backup.admin_only)
         self.assertTrue(self.plugin.diagnose.admin_only)
         self.assertTrue(self.plugin.despair_test.admin_only)
+        self.assertTrue(self.plugin.mythic_test.admin_only)
         manifest = self.root / "catalog" / "pigs.json"
         pigs = json.loads(manifest.read_text("utf-8"))
         pigs[0]["enabled"] = False
@@ -756,6 +757,91 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(report.await_args.args[2], preview)
         payload = self.plugin.transport.request.await_args.args[1]
         self.assertEqual(payload["content"], "测试战报")
+
+    async def test_admin_mythic_preview_parses_dungeon_level_and_seed(self):
+        await self.plugin.initialize()
+        preview = {"completed": True}
+        with (
+            patch.object(
+                self.plugin.db, "test_mythic", new=AsyncMock(return_value=preview)
+            ) as simulate,
+            patch(
+                "astrbot_plugin_piggy.main.mythic_battle_message",
+                new=Mock(return_value=self.module.Message("大秘境测试战报")),
+            ) as report,
+        ):
+            await self.plugin.mythic_test(
+                OfficialEvent("mythic-test", text="测试大秘境 3 8 29")
+            )
+
+        self.assertEqual(
+            simulate.await_args.kwargs,
+            {"dungeon_key": 3, "key_level": 8, "seed": 29},
+        )
+        self.assertEqual(report.call_args.kwargs, {"test": True})
+        self.assertIs(report.call_args.args[1], preview)
+        payload = self.plugin.transport.request.await_args.args[1]
+        self.assertEqual(payload["content"], "大秘境测试战报")
+
+    async def test_admin_mythic_preview_without_arguments_is_random(self):
+        await self.plugin.initialize()
+        preview = {"completed": True}
+        with (
+            patch.object(
+                self.plugin.db, "test_mythic", new=AsyncMock(return_value=preview)
+            ) as simulate,
+            patch(
+                "astrbot_plugin_piggy.main.mythic_battle_message",
+                new=Mock(return_value=self.module.Message("随机大秘境测试战报")),
+            ),
+        ):
+            await self.plugin.mythic_test(
+                OfficialEvent("mythic-random", text="测试大秘境")
+            )
+
+        arguments = simulate.await_args.kwargs
+        self.assertIn(arguments["dungeon_key"], range(1, 8))
+        self.assertIn(arguments["key_level"], range(2, 24))
+        self.assertIn(arguments["seed"], range(2**32))
+
+    async def test_key_commands_use_claim_query_and_lower_workflows(self):
+        await self.plugin.initialize()
+        status = {
+            "unlocked": True,
+            "missing": [],
+            "key": None,
+            "key_floor": 2,
+            "key_progress": {},
+            "weekly_rewards": [],
+            "weekly_milestones": [],
+            "week": "2026-10-19",
+            "raid": None,
+        }
+        claimed = {
+            "key": {"dungeon": 1, "level": 2},
+            "created": True,
+            "floor": 2,
+            "dungeons": {},
+        }
+        lowered = {
+            "key": {"dungeon": 1, "level": 2},
+            "old_level": 2,
+            "changed": False,
+            "floor": 2,
+            "dungeons": {},
+        }
+        with (
+            patch.object(self.plugin.db, "mythic_status", new=AsyncMock(return_value=status)) as query,
+            patch.object(self.plugin.db, "claim_mythic_key", new=AsyncMock(return_value=claimed)) as claim,
+            patch.object(self.plugin.db, "lower_mythic_key", new=AsyncMock(return_value=lowered)) as lower,
+        ):
+            await self.plugin.mythic_key(OfficialEvent("key-query", text="查询钥匙"))
+            await self.plugin.mythic_key_claim(OfficialEvent("key-claim", text="领取钥匙"))
+            await self.plugin.mythic_key_lower(OfficialEvent("key-lower", text="降级钥匙"))
+
+        query.assert_awaited_once()
+        claim.assert_awaited_once()
+        lower.assert_awaited_once()
 
 
 if __name__ == "__main__":

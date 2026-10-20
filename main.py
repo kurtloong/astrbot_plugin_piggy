@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import re
+import secrets
 import sqlite3
 import time
 from pathlib import Path
@@ -31,6 +32,14 @@ from .core.despair_views import (
     despair_status_message,
 )
 from .core.diagnostics import exception_detail
+from .core.mythic_views import (
+    mythic_battle_message,
+    mythic_key_action_message,
+    mythic_key_message,
+    mythic_lobby_message,
+    mythic_rankings_message,
+    mythic_status_message,
+)
 from .core.raid import DUNGEONS, dungeon
 from .core.rendering import clean_cards
 from .core.storage import ImagePublisher, UploadError
@@ -100,6 +109,15 @@ BATTLE_COMMANDS = {
     "despair_join",
     "despair_leave",
     "despair_test",
+    "mythic",
+    "mythic_open",
+    "mythic_join",
+    "mythic_leave",
+    "mythic_key",
+    "mythic_key_claim",
+    "mythic_key_lower",
+    "mythic_ranking",
+    "mythic_test",
     "grant_pig",
     "grant_draw",
 }
@@ -213,7 +231,7 @@ def mention_targets(event) -> tuple[list[dict], set[str]]:
     return targets, bots
 
 
-@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与副本", "1.15.0")
+@register("astrbot_plugin_piggy", "yun474", "QQ 官方机器人每日小猪收集与副本", "1.16.0")
 class PiggyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -613,6 +631,8 @@ class PiggyPlugin(Star):
             return await self._raid(app_id, group, user, command, words)
         if command.startswith("despair"):
             return await self._despair(app_id, group, user, command, words)
+        if command.startswith("mythic"):
+            return await self._mythic(app_id, group, user, command, words)
         if command == "shop":
             shop = await self.db.shop(app_id, group, user["id"])
             if settings.use_host("shop"):
@@ -797,6 +817,69 @@ class PiggyPlugin(Star):
             return await despair_battle_message(settings, self.root, result["battle"])
         return despair_lobby_message(settings, result, "join")
 
+    async def _mythic(self, app_id: str, group: str, user: dict, command: str, words: tuple):
+        settings, uid = self.settings, user["id"]
+        if command == "mythic":
+            return mythic_status_message(await self.db.mythic_status(app_id, group, uid))
+        if command == "mythic_key":
+            return mythic_key_message(await self.db.mythic_status(app_id, group, uid))
+        if command == "mythic_key_claim":
+            if words:
+                raise PiggyError("用法：领取钥匙")
+            return mythic_key_action_message(await self.db.claim_mythic_key(uid), "claim")
+        if command == "mythic_key_lower":
+            if words:
+                raise PiggyError("用法：降级钥匙")
+            return mythic_key_action_message(await self.db.lower_mythic_key(uid), "lower")
+        if command == "mythic_ranking":
+            if words and words[0] not in {"总分", "周榜"}:
+                raise PiggyError("用法：大秘境排行 [周榜/总分]")
+            board = await self.db.mythic_rankings(app_id, group)
+            return mythic_rankings_message(board, total=bool(words and words[0] == "总分"))
+        if command == "mythic_test":
+            if len(words) > 3:
+                raise PiggyError("用法：测试大秘境 [副本编号] [层数] [随机种子]")
+            try:
+                dungeon_key = int(words[0]) if words else 1 + secrets.randbelow(len(DUNGEONS))
+                key_level = int(words[1].lstrip("+")) if len(words) >= 2 else 2 + secrets.randbelow(22)
+                seed = int(words[2]) if len(words) >= 3 else secrets.randbits(32)
+            except ValueError:
+                raise PiggyError("副本编号、层数和随机种子必须是整数。") from None
+            if not 1 <= dungeon_key <= len(DUNGEONS) or key_level < 2:
+                raise PiggyError("副本编号必须是 1–7，层数必须不低于 2。")
+            report = await self.db.test_mythic(
+                user, dungeon_key=dungeon_key, key_level=key_level, seed=seed
+            )
+            return await asyncio.to_thread(mythic_battle_message, self.root, report, test=True)
+        if command == "mythic_leave":
+            result = await self.db.leave_mythic(app_id, group, uid)
+            return mythic_lobby_message(
+                result, "cancelled" if result["cancelled"] else "leave"
+            )
+        if not words:
+            verb = "开启" if command == "mythic_open" else "加入"
+            raise PiggyError(f"用法：{verb}大秘境 你的小猪")
+        pig = await self.db.find_pig(" ".join(words))
+        if command == "mythic_open":
+            result = await self.db.open_mythic(
+                app_id,
+                group,
+                uid,
+                pig["id"],
+                level_cap=settings.battle_level_cap,
+            )
+            return mythic_lobby_message(result, "open")
+        result = await self.db.join_mythic(
+            app_id,
+            group,
+            uid,
+            pig["id"],
+            level_cap=settings.battle_level_cap,
+        )
+        if result["started"]:
+            return await asyncio.to_thread(mythic_battle_message, self.root, result["battle"])
+        return mythic_lobby_message(result, "join")
+
     async def _failure(self, event, text: str):
         try:
             await self.transport.request(
@@ -913,6 +996,52 @@ class PiggyPlugin(Star):
     async def raid_retreat(self, event: AstrMessageEvent):
         """队长：打完一关后带着奖励撤退。"""
         await self._handle(event, "raid_retreat")
+
+    @filter.command("小猪大秘境")
+    async def mythic(self, event: AstrMessageEvent):
+        """查看自己的钥石、本周规则和本群大秘境队伍。"""
+        await self._handle(event, "mythic")
+
+    @filter.command("查询钥匙")
+    async def mythic_key(self, event: AstrMessageEvent):
+        """查询当前大秘境钥石、保底层及七本限时进度。"""
+        await self._handle(event, "mythic_key")
+
+    @filter.command("领取钥匙")
+    async def mythic_key_claim(self, event: AstrMessageEvent):
+        """通关七个普通副本后，领取初始随机副本 +2 钥石。"""
+        await self._handle(event, "mythic_key_claim", command_words(event, ("领取钥匙",)))
+
+    @filter.command("降级钥匙")
+    async def mythic_key_lower(self, event: AstrMessageEvent):
+        """将钥石降低一级，但不会低于七本限时进度形成的保底层。"""
+        await self._handle(event, "mythic_key_lower", command_words(event, ("降级钥匙",)))
+
+    @filter.command("开启大秘境")
+    async def mythic_open(self, event: AstrMessageEvent):
+        """使用自己的钥石发起四人大秘境。用法：开启大秘境 你的小猪"""
+        await self._handle(event, "mythic_open", command_words(event, ("开启大秘境",)))
+
+    @filter.command("加入大秘境")
+    async def mythic_join(self, event: AstrMessageEvent):
+        """加入本群的大秘境队伍。用法：加入大秘境 你的小猪"""
+        await self._handle(event, "mythic_join", command_words(event, ("加入大秘境",)))
+
+    @filter.command("退出大秘境")
+    async def mythic_leave(self, event: AstrMessageEvent):
+        """退出大秘境队伍；队长退出会解散队伍。"""
+        await self._handle(event, "mythic_leave")
+
+    @filter.command("大秘境排行")
+    async def mythic_ranking(self, event: AstrMessageEvent):
+        """查看四人队伍周榜或七本总分榜。用法：大秘境排行 [周榜/总分]"""
+        await self._handle(event, "mythic_ranking", command_words(event, ("大秘境排行",)))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("测试大秘境")
+    async def mythic_test(self, event: AstrMessageEvent):
+        """仅管理员：无参数随机测试，也可指定副本、层数和种子。"""
+        await self._handle(event, "mythic_test", command_words(event, ("测试大秘境",)))
 
     @filter.command("绝境战")
     async def despair(self, event: AstrMessageEvent):

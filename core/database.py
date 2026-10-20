@@ -13,6 +13,14 @@ from pathlib import Path
 from .battle import ROLES, SKILL_SLOTS, entry_for, fighter, level_for, simulate
 from .catalog import PIG_REPLACEMENTS
 from .config import PiggyError
+from .mythic import (
+    MIN_LEVEL,
+    START_KEY_LEVEL,
+    WEEKLY_REWARD_MILESTONES,
+    run_reward_draws,
+    simulate_mythic,
+    weekly_reward_milestones,
+)
 from .personalities import PERSONALITIES, PERSONALITY_CHANCE, choices_for
 from .raid import (
     DUNGEONS,
@@ -124,7 +132,7 @@ class Database:
             if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise PiggyError("数据库检查失败，已停止写入；请检查备份，数据库不会被自动清空。")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, 5):
+            if version not in (0, 1, 2, 3, 4, 5, 6, 7):
                 raise PiggyError("数据库版本高于当前插件支持版本，请勿降级运行。")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
@@ -305,6 +313,49 @@ class Database:
                     count_before INTEGER NOT NULL, count_after INTEGER NOT NULL,
                     PRIMARY KEY(reward_id,slot)
                 );
+                CREATE TABLE IF NOT EXISTS mythic_keys (
+                    user_id INTEGER PRIMARY KEY REFERENCES users(id),
+                    dungeon INTEGER NOT NULL, level INTEGER NOT NULL CHECK(level >= 2),
+                    updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS mythic_raids (
+                    id INTEGER PRIMARY KEY, app_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                    week TEXT NOT NULL, dungeon INTEGER NOT NULL, key_level INTEGER NOT NULL,
+                    leader INTEGER NOT NULL REFERENCES users(id),
+                    status TEXT NOT NULL DEFAULT 'forming' CHECK(status IN
+                        ('forming','cleared','failed','cancelled')),
+                    seed INTEGER NOT NULL, report TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL, expires_at REAL NOT NULL, updated_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS mythic_raids_group
+                    ON mythic_raids(app_id,group_id,status);
+                CREATE TABLE IF NOT EXISTS mythic_members (
+                    raid_id INTEGER NOT NULL REFERENCES mythic_raids(id),
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    pig_id TEXT NOT NULL REFERENCES pigs(id), seat INTEGER NOT NULL,
+                    joined_at REAL NOT NULL, PRIMARY KEY(raid_id,user_id), UNIQUE(raid_id,seat)
+                );
+                CREATE INDEX IF NOT EXISTS mythic_members_user ON mythic_members(user_id);
+                CREATE TABLE IF NOT EXISTS mythic_records (
+                    id INTEGER PRIMARY KEY, raid_id INTEGER NOT NULL UNIQUE
+                        REFERENCES mythic_raids(id),
+                    app_id TEXT NOT NULL, group_id TEXT NOT NULL, week TEXT NOT NULL,
+                    team_key TEXT NOT NULL, dungeon INTEGER NOT NULL, key_level INTEGER NOT NULL,
+                    completed INTEGER NOT NULL, timed INTEGER NOT NULL, upgrade INTEGER NOT NULL,
+                    rounds INTEGER NOT NULL, limit_rounds INTEGER NOT NULL,
+                    deaths INTEGER NOT NULL, add_count INTEGER NOT NULL, score INTEGER NOT NULL,
+                    report TEXT NOT NULL, completed_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS mythic_records_board
+                    ON mythic_records(app_id,group_id,week,key_level,timed,rounds);
+                CREATE TABLE IF NOT EXISTS mythic_weekly_rewards (
+                    user_id INTEGER NOT NULL REFERENCES users(id), week TEXT NOT NULL,
+                    tier TEXT NOT NULL, raid_id INTEGER NOT NULL REFERENCES mythic_raids(id),
+                    key_level INTEGER NOT NULL, items TEXT NOT NULL,
+                    granted_at REAL NOT NULL, PRIMARY KEY(user_id,week,tier)
+                );
+                CREATE INDEX IF NOT EXISTS mythic_weekly_rewards_week
+                    ON mythic_weekly_rewards(user_id,week);
             """)
             columns = {row[1] for row in conn.execute("PRAGMA table_info(pigs)")}
             if "battle" not in columns:
@@ -315,7 +366,7 @@ class Database:
                 conn.execute(
                     "ALTER TABLE battle_records ADD COLUMN summary TEXT NOT NULL DEFAULT ''"
                 )
-            conn.execute("PRAGMA user_version=5")
+            conn.execute("PRAGMA user_version=7")
             conn.execute("COMMIT")
 
         try:
@@ -811,6 +862,13 @@ class Database:
         ).fetchone()
         if active:
             raise PiggyError("你已经在一支绝境战队伍里了。")
+        mythic = conn.execute(
+            "SELECT 1 FROM mythic_members m JOIN mythic_raids r ON r.id=m.raid_id "
+            "WHERE m.user_id=? AND r.status='forming'",
+            (user_id,),
+        ).fetchone()
+        if mythic:
+            raise PiggyError("你已经在一支大秘境队伍里，不能同时参加绝境战。")
         return cls._despair_pigs(conn, user_id, pig_ids)
 
     @staticmethod
@@ -963,6 +1021,8 @@ class Database:
             regular = self._group_raid(conn, app_id, group_id)
             if regular:
                 raise PiggyError("本群已有普通副本队伍，结束后才能开启绝境战。")
+            if self._group_mythic(conn, app_id, group_id):
+                raise PiggyError("本群已有大秘境队伍，结束后才能开启绝境战。")
             pigs = self._despair_member_check(conn, user_id, pig_ids)
             cursor = conn.execute(
                 "INSERT INTO despair_raids(app_id,group_id,week,leader,seed,created_at,"
@@ -1631,6 +1691,13 @@ class Database:
         ).fetchone()
         if despair:
             raise PiggyError("你已经在绝境战队伍里了，同一时间只能参加一支队伍。")
+        mythic = conn.execute(
+            "SELECT 1 FROM mythic_members m JOIN mythic_raids r ON r.id=m.raid_id "
+            "WHERE m.user_id=? AND r.status='forming'",
+            (user_id,),
+        ).fetchone()
+        if mythic:
+            raise PiggyError("你已经在大秘境队伍里了，同一时间只能参加一支队伍。")
         if conn.execute(
             "SELECT 1 FROM raid_entries WHERE user_id=? AND day=? AND dungeon=?",
             (user_id, day, dungeon_key),
@@ -1691,6 +1758,8 @@ class Database:
             self._despair_expire(conn, app_id, group_id, stamp)
             if self._group_despair(conn, app_id, group_id):
                 raise PiggyError("本群已有绝境战队伍，结束后才能开启普通副本。")
+            if self._group_mythic(conn, app_id, group_id):
+                raise PiggyError("本群已有大秘境队伍，结束后才能开启普通副本。")
             active = self._group_raid(conn, app_id, group_id)
             if active:
                 name = dungeon(active["dungeon"])["name"]
@@ -2788,6 +2857,654 @@ class Database:
             }
 
         return await self.run(exchange)
+
+    # ----- 小猪大秘境 -----
+
+    @staticmethod
+    def _mythic_expire(conn, app_id: str, group_id: str, stamp: float) -> list[dict]:
+        rows = conn.execute(
+            "SELECT * FROM mythic_raids WHERE status='forming' AND expires_at<=?", (stamp,)
+        ).fetchall()
+        expired = []
+        for row in rows:
+            conn.execute(
+                "UPDATE mythic_raids SET status='cancelled',updated_at=? WHERE id=?",
+                (stamp, row["id"]),
+            )
+            if row["app_id"] == app_id and row["group_id"] == group_id:
+                expired.append({**dict(row), "status": "cancelled"})
+        return expired
+
+    @staticmethod
+    def _group_mythic(conn, app_id: str, group_id: str):
+        return conn.execute(
+            "SELECT * FROM mythic_raids WHERE app_id=? AND group_id=? AND status='forming' "
+            "ORDER BY id DESC LIMIT 1",
+            (app_id, group_id),
+        ).fetchone()
+
+    @classmethod
+    def _mythic_key(cls, conn, user_id: int, *, require_unlock: bool = True):
+        if require_unlock:
+            cls._mythic_require_unlocked(conn, user_id)
+        row = conn.execute("SELECT * FROM mythic_keys WHERE user_id=?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    def _mythic_key_progress(conn, user_id: int) -> dict:
+        rows = conn.execute(
+            "SELECT r.dungeon,MAX(r.key_level) AS level FROM mythic_records r "
+            "JOIN mythic_members m ON m.raid_id=r.raid_id "
+            "WHERE m.user_id=? AND r.timed=1 GROUP BY r.dungeon",
+            (user_id,),
+        ).fetchall()
+        best = {row["dungeon"]: row["level"] for row in rows}
+        dungeon_keys = {item["key"] for item in DUNGEONS}
+        floor = (
+            max(START_KEY_LEVEL, min(best[key] for key in dungeon_keys))
+            if dungeon_keys <= best.keys()
+            else START_KEY_LEVEL
+        )
+        return {"floor": floor, "dungeons": best}
+
+    @classmethod
+    def _mythic_require_unlocked(cls, conn, user_id: int):
+        cleared = cls._despair_unlock(conn, user_id)
+        missing = [item["name"] for item in DUNGEONS if item["key"] not in cleared]
+        if missing:
+            raise PiggyError(f"小猪大秘境尚未解锁，还需通关：{'、'.join(missing)}。")
+
+    @staticmethod
+    def _mythic_pig(conn, user_id: int, pig_id: str, level_cap: int) -> dict:
+        row = conn.execute("SELECT * FROM pigs WHERE id=? AND enabled=1", (pig_id,)).fetchone()
+        if not row:
+            raise PiggyError("所选小猪不存在或当前未启用。")
+        count = _owned(conn, user_id, pig_id)
+        if count < 1:
+            raise PiggyError(f"你的猪圈里没有「{row['name']}」。")
+        level = level_for(count, level_cap)
+        if level < MIN_LEVEL:
+            raise PiggyError(
+                f"大秘境只允许 Lv{MIN_LEVEL} 及以上的小猪参战。"
+                f"「{row['name']}」当前为 Lv{level}。"
+            )
+        return {**dict(row), "count": count, "level": level}
+
+    @classmethod
+    def _mythic_view(cls, conn, row) -> dict | None:
+        if not row:
+            return None
+        raid = dict(row)
+        raid["dungeon"] = dungeon(row["dungeon"])
+        raid["leader_user"] = dict(
+            conn.execute("SELECT * FROM users WHERE id=?", (row["leader"],)).fetchone()
+        )
+        raid["members"] = []
+        for member in conn.execute(
+            "SELECT * FROM mythic_members WHERE raid_id=? ORDER BY seat", (row["id"],)
+        ):
+            pig = dict(conn.execute("SELECT * FROM pigs WHERE id=?", (member["pig_id"],)).fetchone())
+            role = entry_for(pig.get("battle")).get("role", "输出")
+            pig.pop("battle", None)
+            pig["role"] = role if role in ROLES else "输出"
+            raid["members"].append(
+                {
+                    **dict(member),
+                    "user": dict(
+                        conn.execute("SELECT * FROM users WHERE id=?", (member["user_id"],)).fetchone()
+                    ),
+                    "pig": pig,
+                }
+            )
+        raid["report"] = json.loads(raid["report"]) if raid.get("report") else None
+        return raid
+
+    async def mythic_status(
+        self, app_id: str, group_id: str, user_id: int, now: datetime | None = None
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        stamp = now.timestamp()
+        week = _week_key(now)
+
+        def read(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            expired = self._mythic_expire(conn, app_id, group_id, stamp)
+            cleared = self._despair_unlock(conn, user_id)
+            unlocked = len(cleared) == len(DUNGEONS)
+            key = self._mythic_key(conn, user_id, require_unlock=False) if unlocked else None
+            progress = self._mythic_key_progress(conn, user_id)
+            row = self._group_mythic(conn, app_id, group_id)
+            return {
+                "week": week,
+                "unlocked": unlocked,
+                "missing": [item["name"] for item in DUNGEONS if item["key"] not in cleared],
+                "key": key,
+                "key_floor": progress["floor"],
+                "key_progress": progress["dungeons"],
+                "weekly_rewards": [
+                    dict(reward)
+                    for reward in conn.execute(
+                        "SELECT tier,key_level,items,granted_at FROM mythic_weekly_rewards "
+                        "WHERE user_id=? AND week=? ORDER BY key_level",
+                        (user_id, week),
+                    )
+                ],
+                "weekly_milestones": [dict(item) for item in WEEKLY_REWARD_MILESTONES],
+                "raid": self._mythic_view(conn, row),
+                "expired": expired,
+                "now": stamp,
+            }
+
+        return await self.run(read)
+
+    async def claim_mythic_key(
+        self, user_id: int, now: datetime | None = None
+    ) -> dict:
+        stamp = (now or datetime.now(timezone.utc)).timestamp()
+
+        def claim(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._mythic_require_unlocked(conn, user_id)
+            key = self._mythic_key(conn, user_id, require_unlock=False)
+            created = key is None
+            if created:
+                dungeon_key = _SYSTEM_RANDOM.choice([item["key"] for item in DUNGEONS])
+                conn.execute(
+                    "INSERT INTO mythic_keys(user_id,dungeon,level,updated_at) VALUES(?,?,?,?)",
+                    (user_id, dungeon_key, START_KEY_LEVEL, stamp),
+                )
+                key = self._mythic_key(conn, user_id, require_unlock=False)
+            progress = self._mythic_key_progress(conn, user_id)
+            return {"key": key, "created": created, **progress}
+
+        return await self.run(claim)
+
+    async def lower_mythic_key(
+        self, user_id: int, now: datetime | None = None
+    ) -> dict:
+        stamp = (now or datetime.now(timezone.utc)).timestamp()
+
+        def lower(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._mythic_require_unlocked(conn, user_id)
+            key = self._mythic_key(conn, user_id, require_unlock=False)
+            if not key:
+                raise PiggyError("你还没有钥石，请先发送「领取钥匙」。")
+            busy = conn.execute(
+                "SELECT 1 FROM mythic_members m JOIN mythic_raids r ON r.id=m.raid_id "
+                "WHERE m.user_id=? AND r.status='forming'",
+                (user_id,),
+            ).fetchone()
+            if busy:
+                raise PiggyError("你正在大秘境队伍中，不能降级钥石。")
+            progress = self._mythic_key_progress(conn, user_id)
+            old_level = key["level"]
+            new_level = max(progress["floor"], old_level - 1)
+            if new_level != old_level:
+                conn.execute(
+                    "UPDATE mythic_keys SET level=?,updated_at=? WHERE user_id=?",
+                    (new_level, stamp, user_id),
+                )
+                key = {**key, "level": new_level, "updated_at": stamp}
+            return {
+                "key": key,
+                "old_level": old_level,
+                "changed": new_level != old_level,
+                **progress,
+            }
+
+        return await self.run(lower)
+
+    async def open_mythic(
+        self,
+        app_id: str,
+        group_id: str,
+        user_id: int,
+        pig_id: str,
+        *,
+        level_cap: int = 20,
+        now: datetime | None = None,
+        seed: int | None = None,
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        stamp, week = now.timestamp(), _week_key(now)
+
+        def create(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._mythic_expire(conn, app_id, group_id, stamp)
+            if self._group_mythic(conn, app_id, group_id):
+                raise PiggyError("本群已经有一支大秘境队伍，发送「加入大秘境 你的小猪」加入吧。")
+            if self._group_raid(conn, app_id, group_id) or self._group_despair(conn, app_id, group_id):
+                raise PiggyError("本群已有其他副本队伍，结束后才能开启大秘境。")
+            busy = conn.execute(
+                "SELECT 1 FROM mythic_members m JOIN mythic_raids r ON r.id=m.raid_id "
+                "WHERE m.user_id=? AND r.status='forming'",
+                (user_id,),
+            ).fetchone()
+            if busy:
+                raise PiggyError("你已经在一支大秘境队伍里了。")
+            regular = conn.execute(
+                "SELECT 1 FROM raid_members m JOIN raids r ON r.id=m.raid_id "
+                "WHERE m.user_id=? AND r.status IN ('forming','waiting')",
+                (user_id,),
+            ).fetchone()
+            despair = conn.execute(
+                "SELECT 1 FROM despair_members m JOIN despair_raids r ON r.id=m.raid_id "
+                "WHERE m.user_id=? AND r.status='forming'",
+                (user_id,),
+            ).fetchone()
+            if regular or despair:
+                raise PiggyError("你已经在其他副本队伍里，不能同时开启大秘境。")
+            key = self._mythic_key(conn, user_id)
+            if not key:
+                raise PiggyError("你还没有钥石，请先发送「领取钥匙」。")
+            self._mythic_pig(conn, user_id, pig_id, level_cap)
+            cursor = conn.execute(
+                "INSERT INTO mythic_raids(app_id,group_id,week,dungeon,key_level,leader,seed,"
+                "created_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    app_id,
+                    group_id,
+                    week,
+                    key["dungeon"],
+                    key["level"],
+                    user_id,
+                    secrets.randbits(32) if seed is None else seed,
+                    stamp,
+                    stamp + TIMEOUT_MINUTES * 60,
+                    stamp,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO mythic_members VALUES(?,?,?,?,?)",
+                (cursor.lastrowid, user_id, pig_id, 0, stamp),
+            )
+            row = conn.execute("SELECT * FROM mythic_raids WHERE id=?", (cursor.lastrowid,)).fetchone()
+            return {"raid": self._mythic_view(conn, row), "now": stamp}
+
+        return await self.run(create)
+
+    def _mythic_fight(self, conn, raid_id: int, stamp: float, level_cap: int) -> dict:
+        raid = conn.execute("SELECT * FROM mythic_raids WHERE id=?", (raid_id,)).fetchone()
+        rows = conn.execute(
+            "SELECT m.*,u.nickname,u.alias FROM mythic_members m "
+            "JOIN users u ON u.id=m.user_id WHERE m.raid_id=? ORDER BY m.seat",
+            (raid_id,),
+        ).fetchall()
+        members = []
+        for row in rows:
+            pig = self._mythic_pig(conn, row["user_id"], row["pig_id"], level_cap)
+            personality = conn.execute(
+                "SELECT personality FROM pig_personalities WHERE user_id=? AND pig_id=?",
+                (row["user_id"], row["pig_id"]),
+            ).fetchone()
+            user = dict(conn.execute("SELECT * FROM users WHERE id=?", (row["user_id"],)).fetchone())
+            members.append(
+                {
+                    "seat": row["seat"],
+                    "user": user,
+                    "pig": pig,
+                    "count": pig["count"],
+                    "label": f"{player_name(user)}的{pig['name']}",
+                    "personality": personality[0] if personality else None,
+                }
+            )
+        catalog = {
+            row["id"]: dict(row)
+            for row in conn.execute(
+                "SELECT * FROM pigs WHERE enabled=1",
+            )
+        }
+        missing = [slot for slot in dungeon(raid["dungeon"])["bosses"] if slot not in catalog]
+        if missing:
+            raise PiggyError("大秘境 Boss 数据缺失，请先恢复猪库后重试。")
+        report = simulate_mythic(
+            members,
+            catalog,
+            raid["dungeon"],
+            raid["key_level"],
+            raid["seed"],
+            level_cap=level_cap,
+        )
+        status = "cleared" if report["completed"] else "failed"
+        conn.execute(
+            "UPDATE mythic_raids SET status=?,report=?,updated_at=? WHERE id=?",
+            (status, json.dumps(report, ensure_ascii=False), stamp, raid_id),
+        )
+        team_key = ":".join(str(row["user_id"]) for row in sorted(rows, key=lambda r: r["user_id"]))
+        conn.execute(
+            "INSERT INTO mythic_records(raid_id,app_id,group_id,week,team_key,dungeon,key_level,"
+            "completed,timed,upgrade,rounds,limit_rounds,deaths,add_count,score,report,completed_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                raid_id,
+                raid["app_id"],
+                raid["group_id"],
+                raid["week"],
+                team_key,
+                raid["dungeon"],
+                raid["key_level"],
+                int(report["completed"]),
+                int(report["timed"]),
+                report["upgrade"],
+                report["rounds"],
+                report["limit"],
+                report["deaths"],
+                report["add_count"],
+                report["score"],
+                json.dumps(report, ensure_ascii=False),
+                stamp,
+            ),
+        )
+        key_floor = self._mythic_key_progress(conn, raid["leader"])["floor"]
+        next_level = max(key_floor, raid["key_level"] + report["upgrade"])
+        choices = [item["key"] for item in DUNGEONS if item["key"] != raid["dungeon"]]
+        next_dungeon = random.Random(raid["seed"] ^ 0xA11D).choice(choices)
+        conn.execute(
+            "UPDATE mythic_keys SET dungeon=?,level=?,updated_at=? WHERE user_id=?",
+            (next_dungeon, next_level, stamp, raid["leader"]),
+        )
+        rewards = []
+        if report["timed"]:
+            pool = [dict(row) for row in conn.execute("SELECT * FROM pigs WHERE enabled=1")]
+            day = datetime.fromtimestamp(stamp, timezone.utc).astimezone(EAST_ASIA).date().isoformat()
+            for member in members:
+                user_id = member["user"]["id"]
+                entered = member["pig"]
+                _give(conn, user_id, entered["id"], stamp)
+                draws = run_reward_draws(raid["key_level"], True)
+                if draws:
+                    conn.execute(
+                        "INSERT INTO draw_bonus VALUES(?,?,?,?,?) "
+                        "ON CONFLICT(app_id,group_id,user_id,day) DO UPDATE SET count=count+?",
+                        (raid["app_id"], raid["group_id"], user_id, day, draws, draws),
+                    )
+                weekly = []
+                reward_rng = random.Random(
+                    raid["seed"] ^ 0xC0FFEE ^ (user_id * 0x9E3779B1)
+                )
+                for milestone in weekly_reward_milestones(raid["key_level"], True):
+                    rarity_pool = (
+                        [pig for pig in pool if rarity_for(pig["id"]) == milestone["rarity"]]
+                        if milestone["rarity"]
+                        else pool
+                    )
+                    if not rarity_pool:
+                        continue
+                    picks = [reward_rng.choice(rarity_pool) for _ in range(milestone["pulls"])]
+                    inserted = conn.execute(
+                        "INSERT OR IGNORE INTO mythic_weekly_rewards"
+                        "(user_id,week,tier,raid_id,key_level,items,granted_at) "
+                        "VALUES(?,?,?,?,?,?,?)",
+                        (
+                            user_id,
+                            raid["week"],
+                            milestone["id"],
+                            raid_id,
+                            raid["key_level"],
+                            json.dumps([pig["id"] for pig in picks], ensure_ascii=False),
+                            stamp,
+                        ),
+                    ).rowcount
+                    if not inserted:
+                        continue
+                    for pig in picks:
+                        _give(conn, user_id, pig["id"], stamp)
+                    weekly.append(
+                        {
+                            **milestone,
+                            "items": [
+                                {k: v for k, v in pig.items() if k != "battle"} for pig in picks
+                            ],
+                        }
+                    )
+                rewards.append(
+                    {
+                        "user": member["user"],
+                        "pig": {k: v for k, v in entered.items() if k != "battle"},
+                        "draw": draws,
+                        "weekly": weekly,
+                    }
+                )
+        row = conn.execute("SELECT * FROM mythic_raids WHERE id=?", (raid_id,)).fetchone()
+        return {
+            "raid": self._mythic_view(conn, row),
+            "report": report,
+            "next_key": {"dungeon": dungeon(next_dungeon), "level": next_level},
+            "key_floor": key_floor,
+            "rewards": rewards,
+        }
+
+    async def join_mythic(
+        self,
+        app_id: str,
+        group_id: str,
+        user_id: int,
+        pig_id: str,
+        *,
+        level_cap: int = 20,
+        now: datetime | None = None,
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        stamp = now.timestamp()
+
+        def join(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            expired = self._mythic_expire(conn, app_id, group_id, stamp)
+            raid = self._group_mythic(conn, app_id, group_id)
+            if not raid:
+                note = "上一支大秘境队伍已超时取消。" if expired else ""
+                raise PiggyError(f"{note}本群没有正在组队的大秘境。")
+            if conn.execute(
+                "SELECT 1 FROM mythic_members WHERE raid_id=? AND user_id=?",
+                (raid["id"], user_id),
+            ).fetchone():
+                raise PiggyError("你已经在这支大秘境队伍里了。")
+            busy = conn.execute(
+                "SELECT 1 FROM mythic_members m JOIN mythic_raids r ON r.id=m.raid_id "
+                "WHERE m.user_id=? AND r.status='forming'",
+                (user_id,),
+            ).fetchone()
+            if busy:
+                raise PiggyError("你已经在另一支大秘境队伍里了。")
+            regular = conn.execute(
+                "SELECT 1 FROM raid_members m JOIN raids r ON r.id=m.raid_id "
+                "WHERE m.user_id=? AND r.status IN ('forming','waiting')",
+                (user_id,),
+            ).fetchone()
+            despair = conn.execute(
+                "SELECT 1 FROM despair_members m JOIN despair_raids r ON r.id=m.raid_id "
+                "WHERE m.user_id=? AND r.status='forming'",
+                (user_id,),
+            ).fetchone()
+            if regular or despair:
+                raise PiggyError("你已经在其他副本队伍里，不能同时参加大秘境。")
+            self._mythic_require_unlocked(conn, user_id)
+            self._mythic_pig(conn, user_id, pig_id, level_cap)
+            count = conn.execute(
+                "SELECT count(*) FROM mythic_members WHERE raid_id=?", (raid["id"],)
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO mythic_members VALUES(?,?,?,?,?)",
+                (raid["id"], user_id, pig_id, count, stamp),
+            )
+            if count + 1 < PARTY_SIZE:
+                row = conn.execute("SELECT * FROM mythic_raids WHERE id=?", (raid["id"],)).fetchone()
+                return {"raid": self._mythic_view(conn, row), "started": False, "now": stamp}
+            battle = self._mythic_fight(conn, raid["id"], stamp, level_cap)
+            return {"raid": battle["raid"], "started": True, "battle": battle, "now": stamp}
+
+        return await self.run(join)
+
+    async def leave_mythic(
+        self, app_id: str, group_id: str, user_id: int, now: datetime | None = None
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        stamp = now.timestamp()
+
+        def leave(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            self._mythic_expire(conn, app_id, group_id, stamp)
+            raid = self._group_mythic(conn, app_id, group_id)
+            if not raid or not conn.execute(
+                "SELECT 1 FROM mythic_members WHERE raid_id=? AND user_id=?",
+                (raid["id"], user_id),
+            ).fetchone():
+                raise PiggyError("你不在本群正在组队的大秘境队伍里。")
+            cancelled = raid["leader"] == user_id
+            if cancelled:
+                conn.execute(
+                    "UPDATE mythic_raids SET status='cancelled',updated_at=? WHERE id=?",
+                    (stamp, raid["id"]),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM mythic_members WHERE raid_id=? AND user_id=?",
+                    (raid["id"], user_id),
+                )
+                remaining = conn.execute(
+                    "SELECT user_id FROM mythic_members WHERE raid_id=? ORDER BY seat", (raid["id"],)
+                ).fetchall()
+                for seat, row in enumerate(remaining):
+                    conn.execute(
+                        "UPDATE mythic_members SET seat=? WHERE raid_id=? AND user_id=?",
+                        (seat, raid["id"], row["user_id"]),
+                    )
+            row = conn.execute("SELECT * FROM mythic_raids WHERE id=?", (raid["id"],)).fetchone()
+            return {"raid": self._mythic_view(conn, row), "cancelled": cancelled}
+
+        return await self.run(leave)
+
+    async def mythic_rankings(
+        self, app_id: str, group_id: str, now: datetime | None = None
+    ) -> dict:
+        now = now or datetime.now(timezone.utc)
+        week = _week_key(now)
+
+        def read(conn):
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM mythic_records WHERE app_id=? AND group_id=? AND week=? "
+                    "AND completed=1",
+                    (app_id, group_id, week),
+                )
+            ]
+
+            def quality(row):
+                return (
+                    row["key_level"],
+                    row["timed"],
+                    row["upgrade"],
+                    -row["rounds"],
+                    -row["deaths"],
+                    -row["completed_at"],
+                )
+
+            def roster(raid_id):
+                result = []
+                for member in conn.execute(
+                    "SELECT m.seat,u.*,p.name AS pig_name FROM mythic_members m "
+                    "JOIN users u ON u.id=m.user_id JOIN pigs p ON p.id=m.pig_id "
+                    "WHERE m.raid_id=? ORDER BY m.seat",
+                    (raid_id,),
+                ):
+                    result.append(
+                        {
+                            "user": dict(member),
+                            "name": player_name(member),
+                            "pig": member["pig_name"],
+                        }
+                    )
+                return result
+
+            weekly_best = {}
+            dungeon_best = {}
+            for row in rows:
+                if row["team_key"] not in weekly_best or quality(row) > quality(
+                    weekly_best[row["team_key"]]
+                ):
+                    weekly_best[row["team_key"]] = row
+                key = (row["team_key"], row["dungeon"])
+                if key not in dungeon_best or quality(row) > quality(dungeon_best[key]):
+                    dungeon_best[key] = row
+            totals = {}
+            for (team_key, _), row in dungeon_best.items():
+                totals.setdefault(team_key, {"score": 0, "dungeons": 0, "row": row})
+                totals[team_key]["score"] += row["score"]
+                totals[team_key]["dungeons"] += 1
+                if quality(row) > quality(totals[team_key]["row"]):
+                    totals[team_key]["row"] = row
+            weekly = sorted(weekly_best.values(), key=quality, reverse=True)[:10]
+            total = sorted(
+                totals.values(),
+                key=lambda item: (item["score"], item["dungeons"], quality(item["row"])),
+                reverse=True,
+            )[:10]
+            return {
+                "week": week,
+                "weekly": [{**row, "team": roster(row["raid_id"])} for row in weekly],
+                "total": [
+                    {**item, "team": roster(item["row"]["raid_id"])} for item in total
+                ],
+            }
+
+        return await self.run(read)
+
+    async def test_mythic(
+        self,
+        user: dict,
+        *,
+        dungeon_key: int = 1,
+        key_level: int = 2,
+        level: int = 10,
+        seed: int = 7,
+        add_chance: float = 30.0,
+    ) -> dict:
+        """Administrator preview with no persistence or rewards."""
+
+        def read(conn):
+            pools = {role: [] for role in ROLES}
+            for row in conn.execute("SELECT * FROM pigs WHERE enabled=1 ORDER BY id"):
+                pig = dict(row)
+                role = entry_for(pig.get("battle")).get("role", "输出")
+                if role in pools:
+                    pools[role].append(pig)
+            missing = [role for role, pigs in pools.items() if not pigs]
+            if missing:
+                raise PiggyError(f"猪库缺少可测试职业：{'、'.join(missing)}")
+            rng = random.Random(seed)
+            members = []
+            for seat, role in enumerate(ROLES):
+                mythic = [pig for pig in pools[role] if rarity_for(pig["id"]) == "神话"]
+                pig = dict(rng.choice(mythic or pools[role]))
+                members.append(
+                    {
+                        "seat": seat,
+                        "user": {**user, "id": user["id"] * 10 + seat + 1, "nickname": f"测试{role}"},
+                        "pig": pig,
+                        "count": level,
+                        "label": f"测试{role}的{pig['name']}",
+                        "personality": None,
+                    }
+                )
+            catalog = {
+                row["id"]: dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM pigs WHERE enabled=1",
+                )
+            }
+            return simulate_mythic(
+                members,
+                catalog,
+                dungeon_key,
+                key_level,
+                seed,
+                level_cap=max(level, 20),
+                add_chance=add_chance,
+            )
+
+        return await self.run(read)
 
     async def grant_pig(
         self, user_id: int, pig_id: str, count: int, *, level_cap: int = 20

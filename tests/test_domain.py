@@ -17,6 +17,7 @@ from core.config import PiggyError, Settings
 from core.database import Database
 from core.diagnostics import safe_detail
 from core.views import (
+    _pen_entries,
     collection_message,
     draw_all_message,
     keyboard,
@@ -533,6 +534,47 @@ class DomainTests(unittest.IsolatedAsyncioTestCase):
             await collection_message(
                 Settings(), self.root, self.user, progress, 1, False, ("不存在标签",)
             )
+
+    async def test_pen_sorts_each_role_by_level_then_rarity(self):
+        from core.battle import FALLBACK
+        from core.rarity import RARITIES
+
+        entries = []
+        for index, (pig_id, count, rarity) in enumerate(
+            (
+                ("low-mythic", 2, "神话"),
+                ("high-common", 4, "普通"),
+                ("high-legendary", 4, "传说"),
+                ("capped-common", 25, "普通"),
+                ("capped-rare", 20, "稀有"),
+            )
+        ):
+            entries.append(
+                {
+                    "id": pig_id,
+                    "count": count,
+                    "rarity": rarity,
+                    "sort_order": index,
+                    "battle": json.dumps(
+                        {**FALLBACK, "role": "输出", "tags": ["输出", "直伤"]},
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+
+        ordered = _pen_entries({"entries": entries}, level_cap=20)
+
+        self.assertEqual(
+            [pig["id"] for pig in ordered],
+            [
+                "capped-rare",
+                "capped-common",
+                "high-legendary",
+                "high-common",
+                "low-mythic",
+            ],
+        )
+        self.assertGreater(RARITIES["神话"]["rank"], RARITIES["普通"]["rank"])
 
     async def test_current_96_catalog_is_one_card_and_future_expansion_has_navigation(self):
         progress = await self.db.collection(self.user["id"])
