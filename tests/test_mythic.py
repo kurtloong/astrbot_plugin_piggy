@@ -21,7 +21,7 @@ from core.mythic import (
     simulate_mythic,
     weekly_reward_milestones,
 )
-from core.mythic_views import _battle_rows, mythic_battle_message
+from core.mythic_views import _battle_rows, mythic_battle_message, mythic_status_message
 from core.raid import DUNGEONS, _RaidBattle, boss_fighter
 
 NOW = datetime(2026, 10, 20, 4, 0, tzinfo=timezone.utc)
@@ -286,6 +286,46 @@ class MythicEngineTests(unittest.TestCase):
         )
         self.assertFalse(hosted.local)
         self.assertIn("{{image:0}}", hosted.text)
+        actions = [
+            button["action"]["data"]
+            for row in hosted.keyboard["content"]["rows"]
+            for button in row["buttons"]
+        ]
+        self.assertIn("查询钥匙", actions)
+        self.assertIn("开启大秘境 ", actions)
+
+    def test_mythic_team_status_has_join_and_leave_buttons(self):
+        settings = Settings(
+            display={"raid": True}, battle_markdown=False, command_prefix="/"
+        )
+        status = {
+            "unlocked": True,
+            "week": "2026-10-19",
+            "key": {"dungeon": 1, "level": 4},
+            "key_floor": 2,
+            "weekly_rewards": [],
+            "weekly_milestones": [],
+            "raid": {
+                "dungeon": DUNGEONS[0],
+                "key_level": 4,
+                "members": [
+                    {
+                        "user": {"id": 1, "nickname": "队长", "alias": ""},
+                        "pig": {"name": "坦克猪", "role": "坦克"},
+                    }
+                ],
+            },
+        }
+        message = mythic_status_message(
+            settings, {"id": 1, "open_id": "one", "nickname": "队长"}, status
+        )
+        actions = [
+            button["action"]["data"]
+            for row in message.keyboard["content"]["rows"]
+            for button in row["buttons"]
+        ]
+        self.assertIn("/加入大秘境 ", actions)
+        self.assertIn("/退出大秘境", actions)
 
 
 class MythicDatabaseTests(unittest.IsolatedAsyncioTestCase):

@@ -1,6 +1,7 @@
 """Player-facing status text and detailed image reports for 小猪大秘境."""
 
 import math
+from dataclasses import replace
 from pathlib import Path
 
 from .config import Settings
@@ -16,22 +17,34 @@ from .rendering import (
     _paste_art,
     finish,
 )
+from .views import card_message, text_message
 
 MAX_REPORT_BYTES = 10 * 1024 * 1024
+
+
+def _mythic_text(settings: Settings, *args, **kwargs) -> Message:
+    """Hosted mythic reports already require Markdown, so expose their lobby buttons too."""
+    if settings.use_host("raid") and not settings.battle_markdown:
+        settings = replace(settings, battle_markdown=True)
+    return text_message(settings, *args, **kwargs)
 
 
 def _name(user: dict) -> str:
     return user.get("alias") or user.get("nickname") or f"玩家 {user['id']:04d}"
 
 
-def mythic_status_message(status: dict) -> Message:
+def mythic_status_message(settings: Settings, user: dict, status: dict) -> Message:
     if not status["unlocked"]:
-        return Message("小猪大秘境尚未解锁，还需完整通关：" + "、".join(status["missing"]) + "。")
+        return _mythic_text(
+            settings,
+            "小猪大秘境尚未解锁",
+            ["还需完整通关：" + "、".join(status["missing"]) + "。"],
+            buttons=[("猪副本", "猪副本")],
+        )
     key = status["key"]
     from .raid import dungeon
 
-    lines = [
-        "【小猪大秘境】",
+    blocks = [
         f"本周：{status['week']}",
         (
             f"你的钥石：{dungeon(key['dungeon'])['name']} +{key['level']}"
@@ -52,87 +65,135 @@ def mythic_status_message(status: dict) -> Message:
             f"（{'已领' if item['id'] in claimed else '未领'}）"
             for item in milestones
         )
-        lines.append(f"本周限时层数奖励：{progress}")
-    lines.append("每次限时必得自己的参战猪；+7/+12/+17 另得 1/2/3 次当天再抽。")
+        blocks.append(f"本周限时层数奖励：{progress}")
+    blocks.append("每次限时必得自己的参战猪；+7/+12/+17 另得 1/2/3 次当天再抽。")
     raid = status.get("raid")
     if raid:
-        lines += [
-            "",
+        blocks += [
             f"本群组队：{raid['dungeon']['name']} +{raid['key_level']} "
             f"{len(raid['members'])}/4",
+            [
+                f"{index}. {_name(member['user'])} · {member['pig']['name']}"
+                f"（{member['pig']['role']}）"
+                for index, member in enumerate(raid["members"], 1)
+            ],
         ]
-        lines += [
-            f"{index}. {_name(member['user'])} · {member['pig']['name']}（{member['pig']['role']}）"
-            for index, member in enumerate(raid["members"], 1)
-        ]
+        buttons = [("加入大秘境", "加入大秘境 "), ("退出大秘境", "退出大秘境")]
+        hint = "点击“加入大秘境”并补上你的小猪名称，或发送「加入大秘境 你的小猪」。"
     else:
-        lines.append(
-            "发送「开启大秘境 你的小猪」使用钥石组队。"
-            if key
-            else "领取钥石后即可发送「开启大秘境 你的小猪」组队。"
-        )
-    return Message("\n".join(lines))
+        if key:
+            blocks.append("发送「开启大秘境 你的小猪」使用钥石组队。")
+            buttons = [
+                ("开启大秘境", "开启大秘境 "),
+                ("查询钥匙", "查询钥匙"),
+                ("降级钥匙", "降级钥匙"),
+            ]
+            hint = "发送「开启大秘境 你的小猪」开始组队。"
+        else:
+            blocks.append("领取钥石后即可开启大秘境组队。")
+            buttons = [("领取钥匙", "领取钥匙"), ("查询钥匙", "查询钥匙")]
+            hint = "发送「领取钥匙」获得初始钥石。"
+    return _mythic_text(
+        settings,
+        "小猪大秘境",
+        blocks,
+        buttons=buttons,
+        plain_hint=hint,
+    )
 
 
-def mythic_key_message(status: dict) -> Message:
+def mythic_key_message(settings: Settings, user: dict, status: dict) -> Message:
     if not status["unlocked"]:
-        return Message("小猪大秘境尚未解锁，还需完整通关：" + "、".join(status["missing"]) + "。")
+        return mythic_status_message(settings, user, status)
     key = status.get("key")
     if not key:
-        return Message("你目前没有大秘境钥石。发送「领取钥匙」可领取一枚随机副本 +2 钥石。")
+        return _mythic_text(
+            settings,
+            "我的大秘境钥石",
+            ["目前没有钥石，可领取一枚随机副本 +2 钥石。"],
+            buttons=[("领取钥匙", "领取钥匙"), ("小猪大秘境", "小猪大秘境")],
+            plain_hint="发送「领取钥匙」领取初始钥石。",
+        )
     from .raid import DUNGEONS, dungeon
 
     progress = status.get("key_progress", {})
-    lines = [
-        "【我的大秘境钥石】",
+    blocks = [
         f"当前：{dungeon(key['dungeon'])['name']} +{key['level']}",
         f"保底：+{status.get('key_floor', 2)}",
-        "七本限时最高层：",
+        [
+            f"{item['key']}. {item['name']}："
+            f"{('+' + str(progress[item['key']])) if item['key'] in progress else '尚未限时'}"
+            for item in DUNGEONS
+        ],
+        "七本的限时最高层都达到同一层后，该层会成为永久降级保底。",
     ]
-    lines += [
-        f"{item['key']}. {item['name']}："
-        f"{('+' + str(progress[item['key']])) if item['key'] in progress else '尚未限时'}"
-        for item in DUNGEONS
-    ]
-    lines.append("七本的限时最高层都达到同一层后，该层会成为永久降级保底。")
-    return Message("\n".join(lines))
+    return _mythic_text(
+        settings,
+        "我的大秘境钥石",
+        blocks,
+        buttons=[("开启大秘境", "开启大秘境 "), ("降级钥匙", "降级钥匙")],
+        plain_hint="发送「开启大秘境 你的小猪」使用当前钥石。",
+    )
 
 
-def mythic_key_action_message(result: dict, action: str) -> Message:
+def mythic_key_action_message(settings: Settings, user: dict, result: dict, action: str) -> Message:
     from .raid import dungeon
 
     key = result["key"]
     label = f"{dungeon(key['dungeon'])['name']} +{key['level']}"
     if action == "claim":
-        return Message(
-            f"已领取大秘境钥石：{label}。"
-            if result["created"]
-            else f"你已经有一枚钥石：{label}，不能重复领取。"
+        text = (
+            f"已领取大秘境钥石：{label}。" if result["created"] else f"已有钥石：{label}。"
+        )
+        return _mythic_text(
+            settings,
+            "大秘境钥石",
+            [text],
+            buttons=[("开启大秘境", "开启大秘境 "), ("查询钥匙", "查询钥匙")],
+            plain_hint="发送「开启大秘境 你的小猪」开始组队。",
         )
     if result["changed"]:
-        return Message(
+        text = (
             f"钥石已从 +{result['old_level']} 降为 +{key['level']}："
             f"{dungeon(key['dungeon'])['name']}。当前保底为 +{result['floor']}。"
         )
-    return Message(f"钥石已经处于保底 +{result['floor']}，不能继续降级：{label}。")
+    else:
+        text = f"钥石已经处于保底 +{result['floor']}，不能继续降级：{label}。"
+    return _mythic_text(
+        settings,
+        "大秘境钥石",
+        [text],
+        buttons=[("开启大秘境", "开启大秘境 "), ("查询钥匙", "查询钥匙")],
+        plain_hint="发送「开启大秘境 你的小猪」开始组队。",
+    )
 
 
-def mythic_lobby_message(result: dict, kind: str) -> Message:
+def mythic_lobby_message(settings: Settings, result: dict, kind: str) -> Message:
     raid = result["raid"]
     if kind == "cancelled":
-        return Message(f"「{raid['dungeon']['name']} +{raid['key_level']}」大秘境队伍已解散。")
-    if kind == "leave":
-        return Message("你已退出大秘境队伍。")
-    lines = [
-        f"【{raid['dungeon']['name']} +{raid['key_level']}】",
+        return _mythic_text(
+            settings,
+            f"「{raid['dungeon']['name']} +{raid['key_level']}」队伍已解散",
+            ["队长退出，组队已经取消。"],
+            buttons=[("小猪大秘境", "小猪大秘境"), ("再次组队", "开启大秘境 ")],
+        )
+    title = "已退出大秘境队伍" if kind == "leave" else f"【{raid['dungeon']['name']} +{raid['key_level']}】"
+    blocks = [
         f"队长：{_name(raid['leader_user'])}",
+        [
+            f"{index}. {_name(member['user'])} · {member['pig']['name']}"
+            f"（{member['pig']['role']}）"
+            for index, member in enumerate(raid["members"], 1)
+        ],
+        f"当前 {len(raid['members'])}/4，满员后自动完成整趟大秘境模拟。",
     ]
-    lines += [
-        f"{index}. {_name(member['user'])} · {member['pig']['name']}（{member['pig']['role']}）"
-        for index, member in enumerate(raid["members"], 1)
-    ]
-    lines.append(f"当前 {len(raid['members'])}/4，满员后自动完成整趟大秘境模拟。")
-    return Message("\n".join(lines))
+    return _mythic_text(
+        settings,
+        title,
+        blocks,
+        buttons=[("加入大秘境", "加入大秘境 "), ("退出大秘境", "退出大秘境")],
+        plain_hint="发送「加入大秘境 你的小猪」加入。",
+    )
 
 
 def _battle_rows(report: dict) -> list[tuple[str, str]]:
@@ -354,10 +415,16 @@ def mythic_battle_message(
     settings: Settings, root: Path, battle: dict, *, test: bool = False
 ) -> Message:
     card = render_mythic_report(root, battle, test=test)
-    hosted = settings.use_host("raid")
     title = "小猪大秘境测试战报" if test else "小猪大秘境战报"
-    text = f"![{title} #{card.width}px #{card.height}px]({{{{image:0}}}})" if hosted else ""
-    return Message(text, (card.data,), local=not hosted)
+    owner = battle.get("raid", {}).get("leader_user") or {"open_id": ""}
+    return card_message(
+        settings,
+        owner,
+        card,
+        title,
+        "raid",
+        buttons=[("查询钥匙", "查询钥匙"), ("再次组队", "开启大秘境 ")],
+    )
 
 
 def mythic_rankings_message(board: dict, total: bool = False) -> Message:
