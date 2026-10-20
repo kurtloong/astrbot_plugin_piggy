@@ -517,11 +517,20 @@ class MigrationTests(unittest.IsolatedAsyncioTestCase):
             rows = await db.run(lambda c: c.execute("SELECT id,battle FROM pigs").fetchall())
             self.assertEqual([tuple(r) for r in rows], [("pig", "")])
             version = await db.run(lambda c: c.execute("PRAGMA user_version").fetchone()[0])
-            self.assertEqual(version, 5)
+            self.assertEqual(version, 7)
             tables = await db.run(
                 lambda c: {r[0] for r in c.execute("SELECT name FROM sqlite_master")}
             )
-            self.assertTrue({"requests", "battle_records"} <= tables)
+            self.assertTrue(
+                {
+                    "requests",
+                    "battle_records",
+                    "mythic_raids",
+                    "mythic_records",
+                    "mythic_weekly_rewards",
+                }
+                <= tables
+            )
 
 
 if __name__ == "__main__":

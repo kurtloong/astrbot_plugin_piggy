@@ -425,7 +425,7 @@ def render_collection(
     if atlas:
         text("彩色 · 已解锁    问号 · 待发现", 58, footer + 19, 17, SUB)
     else:
-        text("按职业分组 · 同种猪越多等级越高 · 发送「小猪玩法」", 58, footer + 19, 17, ACCENT)
+        text("按职业分组 · 默认按等级、稀有度排序 · 发送「小猪玩法」", 58, footer + 19, 17, ACCENT)
     text(f"{page:02d} / {pages:02d}", 888, footer + 16, 21, bold=True)
     return finish(image)
 

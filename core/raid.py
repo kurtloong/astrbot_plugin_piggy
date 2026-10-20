@@ -257,6 +257,7 @@ class _RaidUnit(_Unit):
         self.possessed = False
         self.lured = False
         self.marked = False
+        self.min_hp = self.hp
 
     def stat(self, key: str) -> float:
         if key in self.zeroed or (key == "dodge" and self.blind):
@@ -291,6 +292,12 @@ class _RaidBattle(_Battle):
         self.notes = []
         self.falls = []
         self.field_events = []
+        # Mythic-dungeon reinforcement events.  The route planner decides
+        # whether this encounter contains an ADD and gives it a hard budget;
+        # the battle only attributes the event to the pig whose action woke it.
+        self.add_events = []
+        self._add_budget = max(0, int(cfg.get("add_budget", 0)))
+        self._hero_actions = 0
         self.void_note = ""
         self.acting = None
         self._stat_source = None
@@ -299,13 +306,18 @@ class _RaidBattle(_Battle):
         # Effective HP restored and damage actually borne (including shields).
         self.healed = {}
         self.taken = {}
+        self.hero_falls = {hero.seat: 0 for hero in self.heroes if hero.seat is not None}
         # Stable internal ordering is also used as an AI tie-breaker.
         self.everyone = []
         # A balanced four-role party earns one automatic limit break per boss.
         # Eligibility is fixed from the starting roster; deaths and temporary
         # removal only affect who is currently able to cast it.
         roles = [hero.role for hero in self.heroes]
-        self.ultimate_eligible = len(roles) == PARTY_SIZE and set(roles) == ULTIMATE_ROLES
+        self.ultimate_eligible = (
+            len(roles) == PARTY_SIZE
+            and set(roles) == ULTIMATE_ROLES
+            and not cfg.get("disable_ultimate")
+        )
         self.ultimate_used = False
         self.ultimate_round = None
         self.ultimate_role = None
@@ -328,6 +340,68 @@ class _RaidBattle(_Battle):
         for unit in self.heroes + [self.boss]:
             self._enlist(unit, "boss" if unit is self.boss else "hero")
         self._configure()
+        for data in cfg.get("starting_foes") or ():
+            reinforcement = _RaidUnit(data, 1)
+            self.foes.append(reinforcement)
+            self._enlist(reinforcement, "minion")
+
+    def _try_add_event(self, unit):
+        names = tuple(self.cfg.get("add_names") or ())
+        self._hero_actions += 1
+        if self._add_budget <= 0 or not names or not unit.alive or not self.boss.alive:
+            return
+        if self._hero_actions < max(1, int(self.cfg.get("add_trigger_action", 1))):
+            return
+        self._add_budget -= 1
+        add_units = tuple(self.cfg.get("add_units") or ())
+        name = "、".join(data["name"] for data in add_units) if add_units else self.rng.choice(names)
+        added_hp = int(
+            sum(data["stats"]["hp"] for data in add_units)
+            if add_units
+            else self.cfg.get("add_wave_hp", 0)
+        )
+        for data in add_units:
+            reinforcement = _RaidUnit(data, 1)
+            self.foes.append(reinforcement)
+            self._enlist(reinforcement, "minion")
+            for skill in reinforcement.data["skills"]:
+                if skill["passive"]:
+                    for effect in skill["effects"]:
+                        self.apply_passive(reinforcement, effect)
+        event = {
+            "round": self.round,
+            "seat": unit.seat,
+            "trigger": unit.label,
+            "name": name,
+            "added_hp": added_hp,
+            "pressure": 0,
+            "mode": "boss" if add_units else "wave",
+            "pigs": list(self.cfg.get("add_pigs") or ()),
+        }
+        self.add_events.append(event)
+        if add_units:
+            text = f"{unit.label} 的行动惊动了猪圈里的{name}，随机 ADD 作为小怪加入 Boss 战"
+        else:
+            text = f"{unit.label} 的行动惊动了猪圈里的{name}，当前战斗后将追加一整波小怪"
+        self.say(text)
+
+    def _mythic_affix_round_start(self):
+        affixes = set(self.cfg.get("mythic_affixes") or ())
+        if "volcanic" in affixes and self.round % 5 == 0:
+            heroes = self.present_heroes()
+            if heroes:
+                target = self.rng.choice(heroes)
+                damage = round(self.hurt(target, target.max_hp * 0.06))
+                self.say(f"【词缀·火山】{target.label} 脚下喷发，受到 {damage} 点特殊伤害")
+
+    def _mythic_affix_round_end(self):
+        if "grievous" not in set(self.cfg.get("mythic_affixes") or ()):
+            return
+        wounded = [hero for hero in self.present_heroes() if hero.hp < hero.max_hp * 0.5]
+        if not wounded:
+            return
+        total = sum(round(self.hurt(hero, hero.max_hp * 0.03)) for hero in wounded)
+        self.say(f"【词缀·重伤】{len(wounded)} 只低生命小猪的伤口恶化，共受到 {total} 点特殊伤害")
 
     def _enlist(self, unit, kind: str):
         unit.uid = len(self.everyone)
@@ -787,6 +861,7 @@ class _RaidBattle(_Battle):
             return 0.0
         was_alive = unit.alive
         dealt = super().hurt(unit, amount, source=source, attacker=attacker)
+        unit.min_hp = min(unit.min_hp, unit.hp)
         if unit.side == 0 and dealt > 0:
             self.taken[id(unit)] = self.taken.get(id(unit), 0.0) + dealt
         credited = attacker if attacker is not None else self._stat_source or self.acting
@@ -820,6 +895,7 @@ class _RaidBattle(_Battle):
         if was_alive and not unit.alive:
             self.falls.append(f"{unit.label} 倒下了")
             if unit.side == 0 and unit.seat is not None:
+                self.hero_falls[unit.seat] = self.hero_falls.get(unit.seat, 0) + 1
                 self.mech.hero_fell(self, unit)
         return dealt
 
@@ -1100,7 +1176,9 @@ class _RaidBattle(_Battle):
                     self._award_tank_damage_poise(tank, damage)
 
     def decided(self):
-        if not self.boss.alive:
+        if not self.boss.alive and (
+            not self.cfg.get("require_all_foes") or not any(foe.alive for foe in self.foes)
+        ):
             return 0
         if not self.alive_heroes():
             return 1
@@ -1130,6 +1208,11 @@ class _RaidBattle(_Battle):
                     self.say(f"{unit.label} 被动「{skill['name']}」生效")
         self.mech.setup(self)
         self.mech.assess_build(self)
+        for affix in self.cfg.get("mythic_affix_details") or ():
+            self.say(f"【词缀·{affix['name']}】{affix['description']}")
+        blessing = self.cfg.get("mythic_blessing")
+        if blessing:
+            self.say(f"【祝福·{blessing['name']}】{blessing['description']}")
         self.note(f"{self.boss.label} 拥有 {self.poise_max:.0f} 点韧性；协同作战可制造破防窗口")
         self.flush()
         winner, timeout = None, False
@@ -1140,6 +1223,7 @@ class _RaidBattle(_Battle):
             for hero in self.heroes:
                 hero.blind = False
             self.mech.round_start(self)
+            self._mythic_affix_round_start()
             self.flush()
             winner = self.decided()
             if winner is not None:
@@ -1183,6 +1267,8 @@ class _RaidBattle(_Battle):
                         break
                     if index == 0:
                         self.turn(unit, enemy)
+                        if unit.side == 0 and unit.seat is not None and unit.used_skills:
+                            self._try_add_event(unit)
                     elif not unit.stun:
                         # Boss overclock, zombie's extra lunge and the sneeze
                         # event grant a separate action, not another link in the
@@ -1199,6 +1285,7 @@ class _RaidBattle(_Battle):
                 break
             self.acting = None
             self.mech.round_end(self)
+            self._mythic_affix_round_end()
             self._recover_poise()
             for unit in self.heroes + self.foes:
                 unit.away = max(0, unit.away - 1)
@@ -1225,10 +1312,12 @@ class _RaidBattle(_Battle):
                     "seat": h.seat,
                     "hp": round(max(0, h.hp)),
                     "max_hp": h.max_hp,
+                    "min_hp": round(max(0, h.min_hp)),
                     "alive": h.alive,
                     "dealt": round(self.dealt.get(id(h), 0)),
                     "healed": round(self.healed.get(id(h), 0)),
                     "taken": round(self.taken.get(id(h), 0)),
+                    "falls": self.hero_falls.get(h.seat, 0),
                 }
                 for h in self.heroes
             ],
@@ -1255,6 +1344,7 @@ class _RaidBattle(_Battle):
                 "tags": self.mech.CORE_TAGS,
             },
             "field_events": self.field_events,
+            "add_events": self.add_events,
             "ultimate": {
                 "eligible": self.ultimate_eligible,
                 "used": self.ultimate_used,
