@@ -421,6 +421,37 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.shop_exchange(OfficialEvent("s4", text="商店交换 猪"))
         self.assertIn("用法：商店交换 编号 你的小猪", last())
 
+    async def test_dummy_test_defaults_to_ten_rounds_and_accepts_override(self):
+        await self.plugin.initialize()
+        db = self.plugin.db
+        user = await db.identify("app", "member", "group-a", "")
+        await db.run(
+            lambda c: c.execute(
+                "INSERT INTO collections VALUES(?,'pig',3,0,0)", (user["id"],)
+            )
+        )
+
+        original = self.module.simulate_dummy
+        with patch.object(self.module, "simulate_dummy", wraps=original) as simulate:
+            await self.plugin.dummy_test(OfficialEvent("dummy-1", text="测试小猪 猪"))
+            payload = self.plugin.transport.request.await_args.args[1]
+            self.assertEqual(payload["msg_type"], 7)
+            self.assertEqual(simulate.call_args.args[1], 10)
+
+            await self.plugin.dummy_test(OfficialEvent("dummy-2", text="测试小猪 猪 3"))
+            payload = self.plugin.transport.request.await_args.args[1]
+            self.assertEqual(payload["msg_type"], 7)
+            self.assertEqual(simulate.call_args.args[1], 3)
+
+            await self.plugin.dummy_test(
+                OfficialEvent("dummy-3", text="测试小猪 猪 AOE 4")
+            )
+            payload = self.plugin.transport.request.await_args.args[1]
+            self.assertEqual(payload["msg_type"], 7)
+            self.assertEqual(simulate.call_args.args[1], 4)
+            self.assertEqual(simulate.call_args.args[3], 3)
+        self.assertEqual(self.plugin.transport.upload_image.await_count, 3)
+
     async def test_taming_the_wild_pig_lets_today_draw_again(self):
         await self.plugin.initialize()
         db = self.plugin.db

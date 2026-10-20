@@ -1090,6 +1090,140 @@ def render_raid_poster(root: Path, poster: dict) -> Card:
     return finish(canvas.image)
 
 
+def render_dummy_poster(root: Path, poster: dict) -> Card:
+    """Training report using the raid poster's cards, statistics and round log."""
+    log_size, log_step, log_width = 22, 34, 940
+    round_tag = re.compile(r"^(R\d+) ")
+    measure = Canvas(root, WIDTH, 1)
+    casts = []
+    for entry in poster["casts"]:
+        match = round_tag.match(entry)
+        tag = match.group(1) if match else ""
+        body = entry[match.end() :] if match else entry
+        for index, line in enumerate(
+            measure.wrap(body, log_size, log_width - (68 if tag else 0))
+        ):
+            casts.append((tag, line, index == 0, entry))
+    measure.image.close()
+
+    rounds = poster["damage_by_round"]
+    targets = poster.get("targets", 1)
+    target_damage = poster.get("damage_by_target") or [poster["total_damage"]]
+    target_top = 700
+    round_top = target_top + (142 if targets > 1 else 0)
+    round_bottom = round_top + 72 + len(rounds) * 42
+    casts_top = round_bottom + 34
+    height = casts_top + 70 + max(1, len(casts)) * log_step + 130
+    canvas = Canvas(root, WIDTH, height)
+    canvas.text("PIGGY  /  TRAINING", 58, 34, 18, ACCENT, True)
+    canvas.text("训练木桩", 54, 76, 56, bold=True)
+    canvas.text(poster["subtitle"], 58, 158, 24, SUB, width=960)
+
+    canvas.draw.rounded_rectangle((56, 223, 1024, 523), radius=30, fill=BORDER)
+    canvas.draw.rounded_rectangle((56, 220, 1024, 520), radius=30, fill="#ffffff")
+    canvas.draw.rounded_rectangle((80, 244, 430, 496), radius=22, fill="#f9f4ed")
+    _paste_art(canvas, root, poster["asset"], (98, 258, 314, 224))
+    canvas.text(poster["pig"], 476, 252, 38, TEXT, True, width=500)
+    canvas.text(
+        " · ".join(
+            value
+            for value in (
+                f"Lv{poster['level']}",
+                poster.get("role", ""),
+                poster.get("style", ""),
+            )
+            if value
+        ),
+        476,
+        310,
+        23,
+        ACCENT,
+        True,
+        width=500,
+    )
+    _tag(
+        canvas,
+        f"{targets} 目标 · {poster['rounds']} 回合" if targets > 1 else f"{poster['rounds']} 回合",
+        476,
+        358,
+        TEXT,
+        20,
+    )
+    canvas.text(
+        "三目标木桩 · 不还手 · 不会倒下"
+        if targets > 1
+        else "标准木桩 · 不还手 · 不会倒下",
+        476,
+        420,
+        20,
+        SUB,
+        width=500,
+    )
+
+    stats_top = 558
+    canvas.draw.rounded_rectangle((56, stats_top, 1024, stats_top + 108), radius=26, fill=PANEL)
+    stats = (
+        ("AOE 总伤害" if targets > 1 else "总伤害", str(poster["total_damage"])),
+        ("AOE DPS" if targets > 1 else "DPS", f"{poster['dps']:.1f}"),
+        ("最高单回合", str(max(rounds, default=0))),
+    )
+    for index, (label, value) in enumerate(stats):
+        x = 86 + index * 310
+        canvas.text(label, x, stats_top + 18, 19, SUB)
+        canvas.text(value, x, stats_top + 49, 34, TEXT if index != 1 else ACCENT, True, 275)
+
+    if targets > 1:
+        canvas.text("目标伤害", 58, target_top, 28, bold=True)
+        card_w, gap = 301, 16
+        for index, damage in enumerate(target_damage):
+            x = 56 + index * (card_w + gap)
+            canvas.draw.rounded_rectangle(
+                (x, target_top + 48, x + card_w, target_top + 120), radius=20, fill=PANEL
+            )
+            canvas.text(f"木桩 {'ABC'[index]}", x + 20, target_top + 62, 19, SUB, True)
+            canvas.text(str(damage), x + 132, target_top + 57, 27, TEXT, True, width=145)
+            canvas.text(
+                f"DPS {damage / poster['rounds']:.1f}",
+                x + 132,
+                target_top + 88,
+                16,
+                ACCENT,
+                width=145,
+            )
+
+    canvas.text("逐回合伤害", 58, round_top, 28, bold=True)
+    best = max(rounds, default=0) or 1
+    for index, damage in enumerate(rounds, 1):
+        y = round_top + 58 + (index - 1) * 42
+        canvas.text(f"R{index}", 70, y, 20, ACCENT, True, width=54)
+        _hp_bar(canvas, 138, y + 7, 680, damage, best, ACCENT)
+        canvas.text(str(damage), 842, y - 1, 21, TEXT, index == rounds.index(best) + 1, 160)
+
+    canvas.text("施法记录", 58, casts_top, 28, bold=True)
+    if not casts:
+        canvas.text("本次测试没有施放技能", 70, casts_top + 60, log_size, SUB)
+    for index, (tag, line, first, entry) in enumerate(casts):
+        y = casts_top + 60 + index * log_step
+        x = 70 + (68 if tag else 0)
+        if tag and first:
+            canvas.text(tag, 70, y, log_size, ACCENT, True)
+        canvas.text(line, x, y, log_size, TEXT if tag else SUB, "暴击" in entry)
+
+    footer = height - 78
+    canvas.draw.line((56, footer, 1024, footer), fill=BORDER, width=2)
+    canvas.text(
+        "AOE DPS 为三目标合计每回合伤害 · 持续与延迟伤害均计入 · 测试不会消耗小猪"
+        if targets > 1
+        else "DPS 为每回合平均伤害 · 持续与延迟伤害均计入 · 测试不会消耗小猪",
+        58,
+        footer + 22,
+        20,
+        ACCENT,
+        width=966,
+    )
+    return finish(canvas.image)
+
+
 def _raid_footer(canvas, measure_lines: list[str], top: int):
     for index, line in enumerate(measure_lines):
         canvas.text(line, 70, top + index * 34, 21, SUB, width=950)

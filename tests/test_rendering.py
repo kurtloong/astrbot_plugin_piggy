@@ -3,10 +3,11 @@ import random
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
-from core.rendering import Canvas, Typeset, finish
+from core.rendering import Canvas, Typeset, finish, render_dummy_poster
 
 
 class RenderingTests(unittest.TestCase):
@@ -53,6 +54,46 @@ class RenderingTests(unittest.TestCase):
         noisy = Image.frombytes("RGB", (300, 300), bytes(rng.randrange(256) for _ in range(270000)))
         with Image.open(io.BytesIO(finish(noisy).data)) as card:
             self.assertEqual(card.mode, "RGB")
+
+    def test_dummy_poster_contains_raid_style_stats_and_cast_log(self):
+        labels = []
+        original = ImageDraw.ImageDraw.text
+
+        def record(canvas, xy, text, *args, **kwargs):
+            labels.append(str(text))
+            return original(canvas, xy, text, *args, **kwargs)
+
+        poster = {
+            "subtitle": "玩家的测试猪 · 3 回合 DPS 测试",
+            "pig": "测试猪",
+            "asset": "",
+            "level": 5,
+            "role": "输出",
+            "style": "爆发",
+            "rounds": 3,
+            "targets": 3,
+            "total_damage": 600,
+            "dps": 200.0,
+            "damage_by_round": [100, 200, 300],
+            "damage_by_target": [300, 150, 150],
+            "casts": ["R1 测试猪「普攻」，造成 100 伤害", "R2 测试猪「爆发」，造成 200 伤害"],
+        }
+        with patch.object(ImageDraw.ImageDraw, "text", record):
+            card = render_dummy_poster(self.root, poster)
+
+        self.assertGreater(card.height, 1000)
+        joined = "".join(labels)
+        for label in (
+            "PIGGY  /  TRAINING",
+            "训练木桩",
+            "AOE 总伤害",
+            "AOE DPS",
+            "目标伤害",
+            "木桩 A",
+            "逐回合伤害",
+            "施法记录",
+        ):
+            self.assertIn(label, joined)
 
 
 if __name__ == "__main__":
