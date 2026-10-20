@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.battle import FALLBACK, fighter, validate_entry
-from core.config import PiggyError
+from core.config import PiggyError, Settings
 from core.database import Database
 from core.mythic import (
     MIN_LEVEL,
@@ -277,10 +277,15 @@ class MythicEngineTests(unittest.TestCase):
         ]
         report = fake_report(members, {}, 1, 2, 7)
         report["phases"][0]["log"] = [f"第 {index} 条详细战斗日志" for index in range(250)]
-        message = mythic_battle_message(Path.cwd(), report, test=True)
+        message = mythic_battle_message(Settings(display={"raid": False}), Path.cwd(), report, test=True)
         self.assertEqual(message.images[0][:8], b"\x89PNG\r\n\x1a\n")
         self.assertLessEqual(len(message.images[0]), 10 * 1024 * 1024)
         self.assertTrue(message.local)
+        hosted = mythic_battle_message(
+            Settings(display={"raid": True}), Path.cwd(), report, test=True
+        )
+        self.assertFalse(hosted.local)
+        self.assertIn("{{image:0}}", hosted.text)
 
 
 class MythicDatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -599,7 +604,9 @@ class MythicDatabaseTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(bonus, [3, 3, 3, 3])
         self.assertEqual(weekly_rows, 16)
-        message = mythic_battle_message(Path.cwd(), result["battle"])
+        message = mythic_battle_message(
+            Settings(display={"raid": False}), Path.cwd(), result["battle"]
+        )
         self.assertLessEqual(len(message.images[0]), 10 * 1024 * 1024)
 
         await self.db.open_mythic(

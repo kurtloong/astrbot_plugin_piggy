@@ -779,7 +779,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             {"dungeon_key": 3, "key_level": 8, "seed": 29},
         )
         self.assertEqual(report.call_args.kwargs, {"test": True})
-        self.assertIs(report.call_args.args[1], preview)
+        self.assertIs(report.call_args.args[0], self.plugin.settings)
+        self.assertIs(report.call_args.args[2], preview)
         payload = self.plugin.transport.request.await_args.args[1]
         self.assertEqual(payload["content"], "大秘境测试战报")
 

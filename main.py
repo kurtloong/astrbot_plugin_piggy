@@ -850,7 +850,9 @@ class PiggyPlugin(Star):
             report = await self.db.test_mythic(
                 user, dungeon_key=dungeon_key, key_level=key_level, seed=seed
             )
-            return await asyncio.to_thread(mythic_battle_message, self.root, report, test=True)
+            return await asyncio.to_thread(
+                mythic_battle_message, settings, self.root, report, test=True
+            )
         if command == "mythic_leave":
             result = await self.db.leave_mythic(app_id, group, uid)
             return mythic_lobby_message(
@@ -877,7 +879,9 @@ class PiggyPlugin(Star):
             level_cap=settings.battle_level_cap,
         )
         if result["started"]:
-            return await asyncio.to_thread(mythic_battle_message, self.root, result["battle"])
+            return await asyncio.to_thread(
+                mythic_battle_message, settings, self.root, result["battle"]
+            )
         return mythic_lobby_message(result, "join")
 
     async def _failure(self, event, text: str):
