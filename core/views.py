@@ -38,6 +38,7 @@ from .rendering import (
     render_collection,
     render_duel_history,
     render_duel_poster,
+    render_dummy_poster,
     render_raid_detail,
     render_raid_list,
     render_raid_poster,
@@ -798,6 +799,31 @@ def guide_message(settings: Settings, user: dict, favorite: dict | None) -> Mess
         blocks,
         buttons=[("小猪属性", "小猪属性 "), ("猪副本", "猪副本"), ("绝境战", "绝境战")],
     )
+
+
+async def dummy_test_message(
+    settings: Settings, root: Path, user: dict, unit: dict, result: dict
+) -> Message:
+    mode = "三目标 AOE" if result["targets"] > 1 else "单目标"
+    poster = {
+        "subtitle": (
+            f"{display_name(user)}的{unit['name']} · {mode} · {result['rounds']} 回合 DPS 测试"
+        ),
+        "pig": unit["name"],
+        "asset": unit.get("asset", ""),
+        "level": unit["level"],
+        "role": unit.get("role"),
+        "style": unit.get("style"),
+        "rounds": result["rounds"],
+        "targets": result["targets"],
+        "total_damage": result["total_damage"],
+        "dps": result["dps"],
+        "damage_by_round": result["damage_by_round"],
+        "damage_by_target": result["damage_by_target"],
+        "casts": result["casts"],
+    }
+    card = await asyncio.to_thread(render_dummy_poster, root, poster)
+    return card_message(settings, user, card, "小猪木桩战报", "raid")
 
 
 def _skill_line(skill: dict, slot: int, level: int) -> str:

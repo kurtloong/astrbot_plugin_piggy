@@ -3076,3 +3076,107 @@ class _Battle:
 
 def simulate(a: dict, b: dict, seed: int) -> dict:
     return _Battle(a, b, seed).run()
+
+
+DUMMY_DEFAULT_ROUNDS = 10
+DUMMY_MAX_ROUNDS = 50
+DUMMY_MAX_HP = 10_000
+
+
+class _DummyBattle(_Battle):
+    """A fixed-length, read-only rotation test against an inert target.
+
+    The dummy never loses its full-health state, so execute and missing-health
+    bonuses do not make results depend on an arbitrary health pool.  Damage is
+    still returned through the normal combat path, including dots, delayed
+    damage, marks, crits and defence reduction.
+    """
+
+    def __init__(self, fighter_data: dict, rounds: int, seed: int, targets: int = 1):
+        def dummy_data(index: int) -> dict:
+            label = "训练木桩" if targets == 1 else f"训练木桩{'ABC'[index]}"
+            return {
+                "label": label,
+                "role": "坦克",
+                "stats": {
+                    "hp": DUMMY_MAX_HP,
+                    "atk": 1,
+                    "def": 0,
+                    "spd": 1,
+                    "crit": 0,
+                    "dodge": 0,
+                },
+                "skills": [],
+            }
+        super().__init__(fighter_data, dummy_data(0), seed)
+        self.dummies = [self.units[1]] + [_Unit(dummy_data(index)) for index in range(1, targets)]
+        self.test_rounds = rounds
+        self.damage_by_round = [0.0 for _ in range(rounds)]
+        self.damage_by_target = [0.0 for _ in range(targets)]
+
+    def foes_of(self, unit: _Unit) -> list[_Unit]:
+        return self.dummies if unit is self.units[0] else [self.units[0]]
+
+    def act(self, unit: _Unit, enemy: _Unit):
+        if unit in self.dummies:
+            return
+        super().act(unit, enemy)
+
+    def _raw_hurt(self, unit: _Unit, amount: float, attacker: _Unit | None = None) -> float:
+        if unit not in self.dummies:
+            return super()._raw_hurt(unit, amount, attacker=attacker)
+        if amount <= 0:
+            return 0.0
+        dealt = amount * (1 + self._expose_bonus(unit) / 100)
+        absorbed = min(unit.shield, dealt)
+        unit.shield -= absorbed
+        # Keep the target at full health while preserving the amount that a
+        # real target would have taken.  Shield absorption also counts as
+        # damage, matching regular battle accounting.
+        if 1 <= self.round <= self.test_rounds:
+            self.damage_by_round[self.round - 1] += dealt
+            self.damage_by_target[self.dummies.index(unit)] += dealt
+        return dealt
+
+    def run(self) -> dict:
+        fighter_unit, dummy = self.units
+        for skill in fighter_unit.data["skills"]:
+            if skill["passive"]:
+                for effect in skill["effects"]:
+                    self.apply_passive(fighter_unit, effect)
+                self.say(f"{fighter_unit.label} 被动「{skill['name']}」生效")
+        for self.round in range(1, self.test_rounds + 1):
+            self.turn(fighter_unit, dummy)
+            for target in self.dummies:
+                self.turn(target, fighter_unit)
+        damage_by_round = [round(value) for value in self.damage_by_round]
+        damage_by_target = [round(value) for value in self.damage_by_target]
+        total = sum(damage_by_round)
+        # Preserve both report invariants after integer display rounding.
+        damage_by_target[0] += total - sum(damage_by_target)
+        casts = [
+            line
+            for line in self.log
+            if f"{fighter_unit.label}「" in line
+            or f"{fighter_unit.label} 展开技能链：" in line
+        ]
+        return {
+            "rounds": self.test_rounds,
+            "total_damage": total,
+            "dps": total / self.test_rounds,
+            "damage_by_round": damage_by_round,
+            "damage_by_target": damage_by_target,
+            "targets": len(self.dummies),
+            "casts": casts,
+            "log": self.log,
+        }
+
+
+def simulate_dummy(
+    unit: dict, rounds: int = DUMMY_DEFAULT_ROUNDS, seed: int = 0, targets: int = 1
+) -> dict:
+    if not 1 <= rounds <= DUMMY_MAX_ROUNDS:
+        raise ValueError(f"rounds must be between 1 and {DUMMY_MAX_ROUNDS}")
+    if targets not in (1, 3):
+        raise ValueError("targets must be 1 or 3")
+    return _DummyBattle(unit, rounds, seed, targets).run()

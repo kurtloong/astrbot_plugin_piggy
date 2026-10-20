@@ -15,6 +15,7 @@ from core.battle import (
     entry_for,
     fighter,
     simulate,
+    simulate_dummy,
     validate_battle,
     validate_entry,
 )
@@ -180,6 +181,52 @@ class BattleDataTests(unittest.TestCase):
             self.assertLessEqual(result["rounds"], MAX_ROUNDS)
             self.assertEqual(result, simulate(first, second, index))
             self.assertTrue(result["log"])
+
+    def test_dummy_runs_fixed_rounds_and_reports_casts_and_dps(self):
+        pig = {"id": "dummy-tester", "name": "测试猪"}
+        unit = fighter(pig, validate_entry("dummy-tester", FALLBACK), 5, "测试猪")
+        result = simulate_dummy(unit, rounds=10, seed=2026)
+
+        self.assertEqual(result["rounds"], 10)
+        self.assertEqual(len(result["damage_by_round"]), 10)
+        self.assertEqual(result["total_damage"], sum(result["damage_by_round"]))
+        self.assertAlmostEqual(result["dps"], result["total_damage"] / 10)
+        self.assertTrue(result["casts"])
+        self.assertTrue(all("测试猪" in line for line in result["casts"]))
+        self.assertTrue(any(line.startswith("R10 ") for line in result["casts"]))
+
+    def test_dummy_counts_periodic_damage_without_dying(self):
+        pack = editable_fallback()
+        pack["skills"][1] = {
+            "name": "木桩毒素",
+            "text": "测试持续伤害。",
+            "cd": 1,
+            "effects": [{"type": "dot", "pct": 5, "turns": 2, "label": "毒素"}],
+        }
+        pig = {"id": "dot-tester", "name": "毒猪"}
+        unit = fighter(pig, validate_entry("dot-tester", pack), 2, "毒猪")
+        result = simulate_dummy(unit, rounds=10, seed=9)
+
+        self.assertEqual(len(result["damage_by_round"]), 10)
+        self.assertGreater(result["total_damage"], 0)
+        self.assertTrue(any("受到毒素影响" in line for line in result["log"]))
+        self.assertFalse(any("训练木桩 倒下" in line for line in result["log"]))
+
+    def test_three_target_dummy_counts_cleave_for_each_target(self):
+        pack = editable_fallback()
+        pack["skills"][0]["effects"][0]["cleave"] = 50
+        pig = {"id": "aoe-tester", "name": "群攻猪"}
+        unit = fighter(pig, validate_entry("aoe-tester", pack), 1, "群攻猪")
+
+        single = simulate_dummy(unit, rounds=3, seed=12, targets=1)
+        aoe = simulate_dummy(unit, rounds=3, seed=12, targets=3)
+
+        self.assertEqual(aoe["targets"], 3)
+        self.assertEqual(len(aoe["damage_by_target"]), 3)
+        self.assertEqual(aoe["total_damage"], sum(aoe["damage_by_target"]))
+        self.assertEqual(aoe["damage_by_target"][1], aoe["damage_by_target"][2])
+        self.assertGreater(aoe["damage_by_target"][0], aoe["damage_by_target"][1])
+        self.assertGreater(aoe["total_damage"], single["total_damage"])
 
     def test_each_role_pool_has_multiple_functional_combat_profiles(self):
         # MMO roles intentionally do not share a cross-role 1v1 win-rate target.

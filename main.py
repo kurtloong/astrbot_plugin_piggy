@@ -16,7 +16,14 @@ from astrbot.core.platform.sources.qqofficial.qqofficial_message_event import (
 from botpy.message import GroupMessage
 
 from .core.avatars import Avatars
-from .core.battle import level_for
+from .core.battle import (
+    DUMMY_DEFAULT_ROUNDS,
+    DUMMY_MAX_ROUNDS,
+    entry_for,
+    fighter,
+    level_for,
+    simulate_dummy,
+)
 from .core.catalog import (
     initialize_battle,
     initialize_catalog,
@@ -52,6 +59,7 @@ from .core.views import (
     duel_history_message,
     duel_ranking_message,
     duel_replay_message,
+    dummy_test_message,
     guide_message,
     raid_battle_message,
     raid_detail_message,
@@ -83,6 +91,7 @@ MENTION_ID = re.compile(
 BATTLE_COMMANDS = {
     "guide",
     "stats",
+    "dummy_test",
     "duel",
     "duel_accept",
     "duel_decline",
@@ -585,6 +594,39 @@ class PiggyPlugin(Star):
             count = await self.db.pig_count(user["id"], pig["id"])
             personality = await self.db.pig_personality(user["id"], pig["id"])
             return stats_message(settings, user, pig, count, settings.battle_level_cap, personality)
+        if command == "dummy_test":
+            if not words:
+                raise PiggyError("用法：测试小猪 小猪名字 [AOE] [回合数]")
+            if settings.use_host("raid"):
+                settings.check_host()
+            rounds = DUMMY_DEFAULT_ROUNDS
+            name_words = list(words)
+            if len(name_words) > 1 and name_words[-1].isdigit():
+                rounds = int(name_words.pop())
+            targets = 1
+            aoe_words = {"aoe", "群体", "3目标", "三目标"}
+            modes = [word for word in name_words if word.casefold() in aoe_words]
+            if modes:
+                targets = 3
+                name_words = [word for word in name_words if word.casefold() not in aoe_words]
+            if not 1 <= rounds <= DUMMY_MAX_ROUNDS:
+                raise PiggyError(f"木桩测试回合数需要在 1–{DUMMY_MAX_ROUNDS} 之间。")
+            pig = await self.db.find_pig(" ".join(name_words))
+            count = await self.db.pig_count(user["id"], pig["id"])
+            if count < 1:
+                raise PiggyError("你的猪圈里没有这只小猪，换一只测试吧。")
+            personality = await self.db.pig_personality(user["id"], pig["id"])
+            unit = fighter(
+                pig,
+                entry_for(pig.get("battle")),
+                level_for(count, settings.battle_level_cap),
+                f"{player_name(user)}的{pig['name']}",
+                personality=personality,
+            )
+            result = await asyncio.to_thread(
+                simulate_dummy, unit, rounds, secrets.randbits(32), targets
+            )
+            return await dummy_test_message(settings, self.root, user, unit, result)
         if command in ("grant_pig", "grant_draw"):
             return await self._grant(event, app_id, command, words)
         if command in ("duel", "trade"):
@@ -1098,6 +1140,11 @@ class PiggyPlugin(Star):
     async def stats(self, event: AstrMessageEvent):
         """查看小猪的等级、属性和技能。用法：小猪属性 小猪名字"""
         await self._handle(event, "stats", command_words(event, ("小猪属性",)))
+
+    @filter.command("测试小猪")
+    async def dummy_test(self, event: AstrMessageEvent):
+        """测试小猪单体或三目标 DPS。用法：测试小猪 小猪名字 [AOE] [回合数]"""
+        await self._handle(event, "dummy_test", command_words(event, ("测试小猪",)))
 
     async def duel(self, event: AstrMessageEvent):
         """向群友发起斗猪，败者失去出战的小猪。用法：斗猪 @对方 你的小猪"""
