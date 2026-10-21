@@ -228,6 +228,16 @@ class BattleDataTests(unittest.TestCase):
         self.assertGreater(aoe["damage_by_target"][0], aoe["damage_by_target"][1])
         self.assertGreater(aoe["total_damage"], single["total_damage"])
 
+    def test_three_target_cast_log_reports_cleave_damage(self):
+        pack = editable_fallback()
+        pack["skills"][0]["effects"][0]["cleave"] = 40
+        pig = {"id": "cleave-log", "name": "溅射猪"}
+        unit = fighter(pig, validate_entry("cleave-log", pack), 1, "溅射猪")
+
+        result = simulate_dummy(unit, rounds=1, seed=7, targets=3)
+
+        self.assertTrue(any("向其他 2 个目标溅射" in line for line in result["casts"]))
+
     def test_each_role_pool_has_multiple_functional_combat_profiles(self):
         # MMO roles intentionally do not share a cross-role 1v1 win-rate target.
         # Keep a compact same-role smoke sample to catch dead kits, deterministic
