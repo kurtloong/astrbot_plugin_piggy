@@ -2985,7 +2985,8 @@ class _Battle:
         else:
             base = unit.stat(scale) * 1.6
         hits = effect.get("hits", 1)
-        total, crits, misses, voids, landed = 0.0, 0, 0, 0, 0
+        total, splash_total, crits, misses, voids, landed = 0.0, 0.0, 0, 0, 0, 0
+        splash_targets: set[int] = set()
         self.void_note = ""
         combo_spent = 0
         if effect.get("combo_bonus") and unit.combo:
@@ -3052,7 +3053,14 @@ class _Battle:
             if effect.get("cleave"):
                 for foe in self.foes_of(unit):
                     if foe is not enemy and foe.alive:
-                        self.hurt(foe, dealt * effect["cleave"] / 100, attacker=unit)
+                        splashed = self.hurt(
+                            foe,
+                            dealt * effect["cleave"] / 100,
+                            attacker=unit,
+                        )
+                        if splashed > 0:
+                            splash_total += splashed
+                            splash_targets.add(id(foe))
         if not enemy.alive and total > 0:
             unit.flags["killed"] = True
         self._leech_pool += total
@@ -3065,6 +3073,8 @@ class _Battle:
             text = f"{landed} 段命中，共{text}"
         if crits:
             text += "（暴击）"
+        if splash_total:
+            text += f"，向其他 {len(splash_targets)} 个目标溅射共 {round(splash_total)} 伤害"
         if effect.get("drain"):
             healed = self.heal(unit, total * effect["drain"] / 100)
             if healed:
