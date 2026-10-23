@@ -1016,6 +1016,7 @@ class Database:
             conn.execute("BEGIN IMMEDIATE")
             self._despair_expire(conn, app_id, group_id, stamp)
             self._raid_expire(conn, app_id, group_id, stamp)
+            self._mythic_expire(conn, app_id, group_id, stamp)
             if self._group_despair(conn, app_id, group_id):
                 raise PiggyError("本群已经有一支绝境战队伍正在组队。")
             regular = self._group_raid(conn, app_id, group_id)
@@ -1756,6 +1757,7 @@ class Database:
             conn.execute("BEGIN IMMEDIATE")
             self._raid_expire(conn, app_id, group_id, stamp)
             self._despair_expire(conn, app_id, group_id, stamp)
+            self._mythic_expire(conn, app_id, group_id, stamp)
             if self._group_despair(conn, app_id, group_id):
                 raise PiggyError("本群已有绝境战队伍，结束后才能开启普通副本。")
             if self._group_mythic(conn, app_id, group_id):
@@ -3072,6 +3074,8 @@ class Database:
         def create(conn):
             conn.execute("BEGIN IMMEDIATE")
             self._mythic_expire(conn, app_id, group_id, stamp)
+            self._raid_expire(conn, app_id, group_id, stamp)
+            self._despair_expire(conn, app_id, group_id, stamp)
             if self._group_mythic(conn, app_id, group_id):
                 raise PiggyError("本群已经有一支大秘境队伍，发送「加入大秘境 你的小猪」加入吧。")
             if self._group_raid(conn, app_id, group_id) or self._group_despair(conn, app_id, group_id):
