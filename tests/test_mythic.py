@@ -2,7 +2,7 @@ import copy
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -508,6 +508,29 @@ class MythicDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await self.db.open_mythic(
                 "app", "group", self.users[0]["id"], self.hero_ids[0], now=NOW
             )
+
+    async def test_expired_mythic_lobby_does_not_keep_group_occupied(self):
+        await self._claim_leader_key()
+        opened = await self.db.open_mythic(
+            "app", "group", self.users[0]["id"], self.hero_ids[0], now=NOW, seed=7
+        )
+
+        regular = await self.db.open_raid(
+            "app",
+            "group",
+            self.users[0]["id"],
+            1,
+            self.hero_ids[0],
+            now=NOW + timedelta(minutes=11),
+        )
+
+        status = await self.db.run(
+            lambda conn: conn.execute(
+                "SELECT status FROM mythic_raids WHERE id=?", (opened["raid"]["id"],)
+            ).fetchone()[0]
+        )
+        self.assertEqual(status, "cancelled")
+        self.assertEqual(regular["raid"]["status"], "forming")
 
     async def test_level_five_gate_is_rechecked_on_join_and_departure(self):
         await self._claim_leader_key()
